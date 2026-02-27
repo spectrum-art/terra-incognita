@@ -1,0 +1,15 @@
+[package]
+name = "distributions"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "distributions"
+path = "src/main.rs"
+
+[dependencies]
+terra-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }

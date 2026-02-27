@@ -1,0 +1,29 @@
+# Rust build output
+target/
+Cargo.lock
+
+# wasm-pack output
+crates/terra-wasm/pkg/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Data files (large, not committed — see data/sources.md)
+data/samples/
+data/checksums.txt
+
+# Editor / OS artefacts
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/settings.json
+
+# Python artefacts (used during project setup only)
+__pycache__/
+*.pyc
+
+# Windows alternate data streams (WSL artefact)
+*:Zone.Identifier

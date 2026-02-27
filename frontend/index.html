@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terra Incognita — Procedural Planet Generator</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #0a0a0f;
+        color: #e0e0e0;
+        font-family: system-ui, sans-serif;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+      }
+      #sidebar {
+        width: 280px;
+        flex-shrink: 0;
+        padding: 1.5rem 1rem;
+        background: #111118;
+        border-right: 1px solid #222;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      #sidebar h1 {
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #8af;
+        margin: 0 0 0.5rem;
+      }
+      #canvas-container {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #05050a;
+      }
+      canvas {
+        max-width: 100%;
+        max-height: 100%;
+        image-rendering: pixelated;
+      }
+      #score-panel {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        background: rgba(0,0,0,0.7);
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-size: 0.75rem;
+        min-width: 180px;
+        display: none;
+      }
+      #score-panel.visible { display: block; }
+      #generate-btn {
+        width: 100%;
+        padding: 0.6rem;
+        background: #3a6;
+        border: none;
+        border-radius: 4px;
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      #generate-btn:hover { background: #4b7; }
+      #generate-btn:disabled { background: #444; cursor: not-allowed; }
+      #status { font-size: 0.75rem; color: #888; min-height: 1.2em; }
+    </style>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <h1>Terra Incognita</h1>
+      <div id="sliders-container">
+        <!-- Populated by sliders.ts (Phase 7, P7.3) -->
+        <p style="color:#666;font-size:0.8rem;">UI sliders — Phase 7</p>
+      </div>
+      <button id="generate-btn" disabled>Generate</button>
+      <div id="status">WASM loading…</div>
+    </aside>
+
+    <div id="canvas-container">
+      <canvas id="main-canvas" width="512" height="512"></canvas>
+      <div id="score-panel">
+        <!-- Populated by score_panel.ts (Phase 7, P7.5) -->
+        <strong>Realism Score</strong><br/>Phase 7
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

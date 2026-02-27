@@ -1,0 +1,24 @@
+[package]
+name = "terra-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+threading = ["terra-core/threading"]
+
+[dependencies]
+terra-core = { workspace = true }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = "0.6"
+anyhow = { workspace = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
