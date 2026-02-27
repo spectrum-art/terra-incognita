@@ -8,41 +8,28 @@
 # To regenerate after download:
 #   cd data && find raw/ -type f -name "*.tif" -o -name "*.zip" | sort | xargs sha256sum > checksums.txt
 #
-# ─── MERIT-DEM tiles ──────────────────────────────────────────────────────────
-# Alpine (Himalayas)
-PENDING  raw/merit/n25e080_dem.tif
-PENDING  raw/merit/n25e085_dem.tif
-PENDING  raw/merit/n30e080_dem.tif
-PENDING  raw/merit/n30e085_dem.tif
-# FluvialHumid (Congo Basin margins)
-PENDING  raw/merit/s00e015_dem.tif
-PENDING  raw/merit/s00e020_dem.tif
-PENDING  raw/merit/s05e015_dem.tif
-PENDING  raw/merit/s05e020_dem.tif
-PENDING  raw/merit/s05e025_dem.tif
-# Cratonic (Ahaggar Massif)
-PENDING  raw/merit/n20e005_dem.tif
-PENDING  raw/merit/n20e010_dem.tif
-PENDING  raw/merit/n25e005_dem.tif
-# FluvialArid (Colorado Plateau)
-PENDING  raw/merit/n35w115_dem.tif
-PENDING  raw/merit/n35w110_dem.tif
-# Coastal (US Atlantic coastal plain)
-PENDING  raw/merit/n35w080_dem.tif
-PENDING  raw/merit/n30w080_dem.tif
-PENDING  raw/merit/n35w085_dem.tif
+# ─── MERIT-DEM archives (30°×30° bundles, .tar with internal subdir) ─────────
+# Archive → region:  dem_tif_n30e060, dem_tif_n30e090 → Himalaya (Alpine)
+#                    dem_tif_n00e000 → Congo (FluvialHumid, 0-30°N strip)
+#                    dem_tif_n30e000 → Ahaggar (Cratonic)
+#                    dem_tif_n30w120 → Colorado Plateau (FluvialArid)
+#                    dem_tif_n30w090 → Atlantic Coastal (Coastal)
+# Each archive extracts to dem_tif_{tile}/{tile2}_dem.tif (multiple 5°×5° TIFs)
+PENDING  raw/merit/dem_tif_n30e060.tar
+PENDING  raw/merit/dem_tif_n30e090.tar
+PENDING  raw/merit/dem_tif_n00e000.tar
+PENDING  raw/merit/dem_tif_n30e000.tar
+PENDING  raw/merit/dem_tif_n30w120.tar
+PENDING  raw/merit/dem_tif_n30w090.tar
 #
-# ─── Geomorpho90m — geomorphon 10-class raster ────────────────────────────────
-# 15°×15° tiles covering all five regions
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N15E075_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N15E090_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_S15E015_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_S15E030_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N15E000_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N30W120_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N30W105_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N30W090_c_20181019.tif
-PENDING  raw/geomorpho90m/geomorpho90m_geom_merit_dem_egm96_wgs84_N30W075_c_20181019.tif
+# ─── Geomorpho90m archives (30°×30° bundles, .tar.gz, flat structure) ────────
+# Same tile footprints as MERIT above; extracts to geom_90M_{tile2}.tif (flat)
+PENDING  raw/geomorpho90m/geom_90M_n30e060.tar.gz
+PENDING  raw/geomorpho90m/geom_90M_n30e090.tar.gz
+PENDING  raw/geomorpho90m/geom_90M_n00e000.tar.gz
+PENDING  raw/geomorpho90m/geom_90M_n30e000.tar.gz
+PENDING  raw/geomorpho90m/geom_90M_n30w120.tar.gz
+PENDING  raw/geomorpho90m/geom_90M_n30w090.tar.gz
 #
-# ─── Köppen-Geiger Climate Classification ─────────────────────────────────────
-PENDING  raw/koppen/Beck_KG_V1_present_0p0083.tif
+# ─── Köppen-Geiger Climate Classification (Beck et al. 2023 v3, 1991-2020) ────
+PENDING  raw/koppen/koppen_geiger_0p00833333.tif

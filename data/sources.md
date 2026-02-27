@@ -10,43 +10,47 @@ Run `data/download.sh` after completing the registration steps below.
 ### 1.1 MERIT-DEM (elevation source)
 - **Version**: MERIT-DEM v1.0.3 (2019)
 - **Resolution**: 3 arc-seconds (~90m at equator)
-- **Format**: GeoTIFF, 5°×5° tiles, WGS84 / EGM96
-- **Registration**: Required. Free academic use.
-  - URL: <https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/>
-  - Complete the "Data Request Form" and save credentials to environment variables:
-    ```bash
-    export MERIT_USER="your_email@example.com"
-    export MERIT_PASS="your_password"
-    ```
+- **Format**: `.tar` archive per 30°×30° bundle; each archive extracts to a subdirectory
+  containing ~36 individual 5°×5° GeoTIFFs (`{tile}_dem.tif`, Float32, nodata=-9999).
+  Archive naming: `dem_tif_{tile}.tar`; subdir naming: `dem_tif_{tile}/`.
+- **Download**: Manual — automated download is no longer supported.
+  1. Register (free academic use) at: <https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/>
+  2. Download the 6 archives listed in §2 from the data portal after registration.
+  3. Place archives in `data/raw/merit/` (do not extract — sampler handles extraction).
+- **Tile naming**: 30°×30° bundle footprints match Geomorpho90m. Internal 5°×5° tiles use
+  SW-corner convention: `n30e060` = 30–35°N, 60–65°E; `s05e015` = 5–10°S, 15–20°E.
+  Run `download.sh merit` to verify all archives are present.
 - **Citation**: Yamazaki D. et al. (2017) A high-accuracy map of global terrain elevations.
   Geophysical Research Letters 44(11):5844-5853. DOI: 10.1002/2017GL072874
-- **Tile naming**: SW-corner convention. `n25e080` = 25-30°N, 80-85°E. `s05e020` = 5-10°S, 20-25°E.
-  `n35w110` = 35-40°N, 105-110°W (W-longitude tiles extend east from named corner).
 
 ### 1.2 Geomorpho90m — Geomorphon 10-class raster
 - **Variable**: `geom` (10-class geomorphon landform classification)
 - **Resolution**: 3 arc-seconds (~90m), co-registered with MERIT-DEM
-- **Format**: Cloud-Optimised GeoTIFF (COG), 15°×15° tiles
-- **Access**: OpenTopography portal — no registration required for download.
+- **Format**: `.tar.gz` archive per 30°×30° bundle; each archive extracts flat (~35 files)
+  to individual 5°×5° GeoTIFFs (`geom_90M_{tile}.tif`, Byte/u8, nodata=0, classes 1–10).
+  Archive naming: `geom_90M_{tile}.tar.gz`; no subdirectory on extraction.
+- **Download**: Manual — OpenTopography S3 direct download is non-functional (returns 403).
+  1. Go to: <https://portal.opentopography.org/dataspace/dataset?opentopoID=OTDS.012020.4326.1>
+  2. Download the 6 archives listed in §2 (geom variable, 90m resolution).
+  3. Place archives in `data/raw/geomorpho90m/` (do not extract — sampler handles extraction).
+  Run `download.sh geomorpho90m` to verify all archives are present.
   - Dataset DOI: 10.5069/G91R6NPX
-  - Portal: <https://portal.opentopography.org/dataspace/dataset?opentopoID=OTDS.012020.4326.1>
-  - Direct tile access (verify current URL at portal before use):
-    ```
-    https://opentopography.s3.sdsc.edu/dataspace/OTDS.012020.4326.1/raster/geom/
-    ```
-  - Tile naming: 15°×15° tiles named by SW corner, e.g. `geomorpho90m_geom_merit_dem_egm96_wgs84_S15E015_c_20181019.tif`
 - **Citation**: Amatulli G. et al. (2020) Geomorpho90m, empirical evaluation and accuracy assessment
   of global morpho-terrain derivatives. Scientific Data 7:162. DOI: 10.1038/s41597-020-0479-6
 
 ### 1.3 Köppen-Geiger Climate Classification
-- **Version**: Beck et al. (2018) 1km resolution global map
-- **Resolution**: 30 arc-seconds (~1km) — resample to 90m for co-registration
-- **Format**: GeoTIFF, single global file (or regional tiles)
+- **Version**: Beck et al. (2023) v3 — 1991-2020 present-day map
+- **Resolution**: 0.00833333° (~1km, 30 arc-seconds) — resample to 90m for co-registration
+- **Format**: GeoTIFF; zip contains multiple period subdirs and resolutions
+- **File used**: `koppen_geiger_0p00833333.tif` — extract from `koppen_geiger_tif.zip` and place
+  directly in `data/raw/koppen/` (the `1991_2020/` subdirectory from the zip can be ignored).
+- **Class coding**: Same 30-class integer scheme as V1 (1=Af, 2=Am, …, 30=EF) — all
+  TerrainClass assignment rules in §4 remain valid without modification.
 - **Access**: No registration required.
-  - Figshare: <https://figshare.com/articles/dataset/Present_and_future_Köppen-Geiger_climate_classification_maps_at_1-km_resolution/6396959>
-  - Direct download: `present.zip` (~350MB) from the Figshare page above.
-- **Citation**: Beck H.E. et al. (2018) Present and future Köppen-Geiger climate classification maps at
-  1-km resolution. Scientific Data 5:180214. DOI: 10.1038/sdata.2018.214
+  - Figshare: <https://figshare.com/articles/dataset/High-resolution_1_km_K_ppen-Geiger_maps_for_1901_2099_based_on_constrained_CMIP6_projections/21789074>
+  - Download `koppen_geiger_tif.zip` (~1.3GB) from the Figshare page above.
+- **Citation**: Beck H.E. et al. (2023) High-resolution (1 km) Köppen-Geiger maps for 1901–2099
+  based on constrained CMIP6 projections. Scientific Data 10:724. DOI: 10.1038/s41597-023-02549-6
 - **Usage**: Intersect with Geomorpho90m geomorphon raster in P1.3 (classifier tool) to assign
   definitive TerrainClass labels. Köppen zone + dominant geomorphon class → TerrainClass.
 
@@ -57,13 +61,13 @@ Run `data/download.sh` after completing the registration steps below.
 Five regions, one per TerrainClass. See `data/regions.json` for machine-readable definitions
 (bounding boxes, tile IDs, filter rules).
 
-| ID | TerrainClass | Tectonic Context | Location | MERIT Tiles | Est. Usable Tiles |
+| ID | TerrainClass | Tectonic Context | Location | 30°×30° Tile | Est. Usable Tiles |
 |---|---|---|---|---|---|
-| `himalaya` | Alpine | ActiveCompressional | Central Himalayas 25-35°N 78-92°E | n25e080 n25e085 n30e080 n30e085 | ~150 |
-| `congo` | FluvialHumid | CratonicShield | Congo Basin margins 8°S-2°N 15-28°E | s00e015 s00e020 s05e015 s05e020 s05e025 | ~120 |
-| `ahaggar` | Cratonic | CratonicShield | Ahaggar Massif 20-27°N 4-12°E | n20e005 n20e010 n25e005 | ~80 |
-| `colorado_plateau` | FluvialArid | PassiveExtensional | Colorado Plateau 35-38°N 107-113°W | n35w115 n35w110 | ~80 |
-| `atlantic_coastal` | Coastal | PassiveMargin | US Atlantic coastal plain 34-38°N 75-82°W | n35w080 n30w080 n35w085 | ~150 |
+| `himalaya` | Alpine | ActiveCompressional | Central Himalayas 25-35°N 78-92°E | n30e060 n30e090 | ~150 |
+| `congo` | FluvialHumid | CratonicShield | Congo Basin margins 8°S-2°N 15-28°E | n00e000 | ~120 |
+| `ahaggar` | Cratonic | CratonicShield | Ahaggar Massif 20-27°N 4-12°E | n30e000 | ~80 |
+| `colorado_plateau` | FluvialArid | PassiveExtensional | Colorado Plateau 35-38°N 107-113°W | n30w120 | ~80 |
+| `atlantic_coastal` | Coastal | PassiveMargin | US Atlantic coastal plain 34-38°N 75-82°W | n30w090 | ~150 |
 
 All regions yield ≥50 usable tiles after classification filtering. See `data/regions.json` for
 per-region filter rules applied during P1.3.
@@ -84,25 +88,28 @@ data/
   targets/          # Generated by tools/distributions (Phase 1.4) — committed
 ```
 
-**Step 1: Register for MERIT-DEM** (one-time, takes ~24h for approval)
-  → <https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/>
-
-**Step 2: Download Köppen-Geiger** (no registration, ~350MB)
+**Step 1: Download Köppen-Geiger** (no registration, automated)
   ```bash
   ./data/download.sh koppen
   ```
 
-**Step 3: Download Geomorpho90m geomorphon tiles** (~2GB for 5 regions)
+**Step 2: Download Geomorpho90m tiles manually** (6 tiles, 30°×30°)
+  → <https://portal.opentopography.org/dataspace/dataset?opentopoID=OTDS.012020.4326.1>
+  Download tile IDs: `n30e060 n30e090 n00e000 n30e000 n30w120 n30w090`
+  Place `geom_90M_{tile}.tif` files in `data/raw/geomorpho90m/`, then:
   ```bash
-  ./data/download.sh geomorpho90m
+  ./data/download.sh geomorpho90m   # verifies presence only
   ```
 
-**Step 4: Download MERIT-DEM tiles** (requires credentials from Step 1, ~4GB)
+**Step 3: Download MERIT-DEM tiles manually** (same 6 tile IDs, registration required)
+  → <https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/>
+  Download tile IDs: `n30e060 n30e090 n00e000 n30e000 n30w120 n30w090`
+  Place `{tile}_dem.tif` files in `data/raw/merit/`, then:
   ```bash
-  MERIT_USER=your@email.com MERIT_PASS=yourpassword ./data/download.sh merit
+  ./data/download.sh merit          # verifies presence only
   ```
 
-**Step 5: Verify checksums**
+**Step 4: Verify checksums**
   ```bash
   ./data/download.sh verify
   ```

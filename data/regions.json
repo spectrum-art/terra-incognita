@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "description": "Five reference sampling regions for Phase 1 data acquisition. One per terrain class. Each region must yield ≥50 non-overlapping 512×512 tiles after Phase 1.3 classification.",
-  "naming_convention": "MERIT-DEM tiles are named by their SW corner: n25e080 = 25-30°N 80-85°E. S-hemisphere: s05e020 = 5-10°S 20-25°E. W-hemisphere: n35w110 = 35-40°N 105-110°W.",
+  "naming_convention": "Both MERIT-DEM and Geomorpho90m use matching 30°×30° tile footprints. Tile IDs use SW-corner convention: n30e060 = 30-60°N 60-90°E, n00e000 = 0-30°N 0-30°E, n30w120 = 30-60°N 120-90°W.",
   "regions": [
     {
       "id": "himalaya",
@@ -14,8 +14,8 @@
         "min_lon": 78.0,
         "max_lon": 92.0
       },
-      "merit_tiles": ["n25e080", "n25e085", "n30e080", "n30e085"],
-      "geomorpho90m_tiles": ["N15E075", "N15E090"],
+      "merit_tiles": ["n30e060", "n30e090"],
+      "geomorpho90m_tiles": ["n30e060", "n30e090"],
       "koppen_zones": ["ET", "Dwb", "Cwb"],
       "min_samples_target": 50,
       "estimated_available_tiles": 200,
@@ -37,8 +37,8 @@
         "min_lon": 15.0,
         "max_lon": 28.0
       },
-      "merit_tiles": ["s00e015", "s00e020", "s05e015", "s05e020", "s05e025"],
-      "geomorpho90m_tiles": ["S15E015", "S15E030"],
+      "merit_tiles": ["n00e000"],
+      "geomorpho90m_tiles": ["n00e000"],
       "koppen_zones": ["Af", "Am"],
       "min_samples_target": 50,
       "estimated_available_tiles": 300,
@@ -60,8 +60,8 @@
         "min_lon": 4.0,
         "max_lon": 12.0
       },
-      "merit_tiles": ["n20e005", "n20e010", "n25e005"],
-      "geomorpho90m_tiles": ["N15E000", "N15E015"],
+      "merit_tiles": ["n00e000"],
+      "geomorpho90m_tiles": ["n00e000"],
       "koppen_zones": ["BWh"],
       "min_samples_target": 50,
       "estimated_available_tiles": 150,
@@ -70,7 +70,7 @@
         "Target rocky hammada and ancient lava plateau surfaces",
         "Identify by roughness < 80m and Geomorpho90m 'flat' + 'slope' class dominance"
       ],
-      "notes": "3 MERIT tiles give ~360 candidate slots. Ahaggar proper (Tamanrasset province) is compact; expand to n20e000 (Tassili n'Ajjer) if 50 tiles not achievable. Geomorphon distribution should show flat + slope dominance with very low valley/pit frequency."
+      "notes": "Shares tile n00e000 with congo region; bboxes are non-overlapping so output windows do not conflict. Ahaggar proper (Tamanrasset province) is compact; n00e000 covers 0-30°N 0-30°E which fully contains the 20-27°N 4-12°E bbox. Geomorphon distribution should show flat + slope dominance with very low valley/pit frequency."
     },
     {
       "id": "colorado_plateau",
@@ -83,8 +83,8 @@
         "min_lon": -113.0,
         "max_lon": -107.0
       },
-      "merit_tiles": ["n35w115", "n35w110"],
-      "geomorpho90m_tiles": ["N30W120", "N30W105"],
+      "merit_tiles": ["n30w120"],
+      "geomorpho90m_tiles": ["n30w120"],
       "koppen_zones": ["BWk", "BSk"],
       "min_samples_target": 50,
       "estimated_available_tiles": 100,
@@ -93,7 +93,7 @@
         "Exclude tiles containing Colorado River channel corridor (fluvial incision anomaly)",
         "Target mesa-canyon interfluves: flat tops + incised valleys at 1500-2200m ASL"
       ],
-      "notes": "2 MERIT tiles give ~240 candidate slots at this latitude (cell size slightly smaller than equatorial tiles). Target tile bbox 35-38°N is sufficient; only the southern half of n35w115 and n35w110 is needed. Canyonlands, Capitol Reef, and Zion sub-regions are ideal. Avoid the Rocky Mountain Front Range (Alpine contamination at eastern edge)."
+      "notes": "Tile n30w120 (30-60°N, 120-90°W) fully contains the region. Target the 35-38°N strip within the tile; Canyonlands, Capitol Reef, and Zion sub-regions are ideal. Avoid the Rocky Mountain Front Range (Alpine contamination at eastern edge)."
     },
     {
       "id": "atlantic_coastal",
@@ -106,8 +106,8 @@
         "min_lon": -82.0,
         "max_lon": -75.0
       },
-      "merit_tiles": ["n35w080", "n30w080", "n35w085"],
-      "geomorpho90m_tiles": ["N30W090", "N30W075"],
+      "merit_tiles": ["n30w090"],
+      "geomorpho90m_tiles": ["n30w090"],
       "koppen_zones": ["Cfa", "Csa"],
       "min_samples_target": 50,
       "estimated_available_tiles": 180,

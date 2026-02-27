@@ -13,3 +13,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+tiff  = "0.9"   # pure-Rust TIFF/GeoTIFF decoder (F32 + u8 support)
+tar   = "0.4"   # pure-Rust .tar reader
+flate2 = "1"    # pure-Rust gzip decompressor for .tar.gz

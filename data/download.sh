@@ -7,15 +7,12 @@
 #   ./data/download.sh [merit|geomorpho90m|koppen|verify|all]
 #
 # Prerequisites:
-#   - curl or wget
-#   - gdal_translate  (for Geomorpho90m COG clips)
 #   - sha256sum
 #
-# MERIT-DEM requires registration at:
-#   https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/
-# Set credentials via environment variables BEFORE running the merit step:
-#   export MERIT_USER="your@email.com"
-#   export MERIT_PASS="yourpassword"
+# Both MERIT-DEM and Geomorpho90m must be downloaded MANUALLY (automated
+# download is no longer supported for either dataset — see data/sources.md).
+# Place extracted TIF files in data/raw/merit/ and data/raw/geomorpho90m/
+# before running this script. Köppen-Geiger still downloads automatically.
 # =============================================================================
 
 set -euo pipefail
@@ -71,15 +68,17 @@ fetch_cog_clip() {
 # ─── Köppen-Geiger ────────────────────────────────────────────────────────────
 download_koppen() {
     log "=== Downloading Köppen-Geiger classification ==="
-    # Beck et al. (2018) — present-day 1km global map
-    # Available from Figshare: https://figshare.com/articles/6396959
-    # The zip contains Beck_KG_V1_present_0p0083.tif (~350MB)
-    local KOPPEN_ZIP="${RAW_DIR}/koppen/Beck_KG_V1_present.zip"
-    local KOPPEN_TIF="${RAW_DIR}/koppen/Beck_KG_V1_present_0p0083.tif"
+    # Beck et al. (2023) v3 — 1991-2020 present-day 1km global map
+    # Available from Figshare: https://figshare.com/articles/dataset/21789074
+    # The zip contains multiple period subfolders and resolutions; extract the
+    # 1991_2020/koppen_geiger_0p00833333.tif and place it directly in raw/koppen/:
+    #   unzip -j koppen_geiger_tif.zip "1991_2020/koppen_geiger_0p00833333.tif" -d raw/koppen/
+    local KOPPEN_ZIP="${RAW_DIR}/koppen/koppen_geiger_tif.zip"
+    local KOPPEN_TIF="${RAW_DIR}/koppen/koppen_geiger_0p00833333.tif"
 
-    # NOTE: Figshare direct download URLs are versioned. Verify the URL below
-    # at https://figshare.com/articles/dataset/6396959 before running.
-    local KOPPEN_URL="https://figshare.com/ndownloader/files/12407516"
+    # NOTE: Figshare direct download URLs are versioned. Verify the file ID below
+    # at https://figshare.com/articles/dataset/21789074 before running.
+    local KOPPEN_URL="https://figshare.com/ndownloader/articles/21789074"
 
     if [[ ! -f "${KOPPEN_TIF}" ]]; then
         fetch "${KOPPEN_URL}" "${KOPPEN_ZIP}"
@@ -92,114 +91,62 @@ download_koppen() {
 
 # ─── Geomorpho90m ─────────────────────────────────────────────────────────────
 download_geomorpho90m() {
-    log "=== Downloading Geomorpho90m geomorphon tiles ==="
-    require_cmd gdal_translate
+    log "=== Geomorpho90m: checking for manually downloaded tiles ==="
+    # Automated download is no longer viable (OpenTopography S3 returns 403).
+    # Download the 6 archives below manually — see data/sources.md §1.2 for instructions.
+    # Each archive is .tar.gz; sampler extracts internally. Do NOT pre-extract.
+    # Place archives in: ${RAW_DIR}/geomorpho90m/
 
-    # Geomorpho90m is served as COG tiles on OpenTopography.
-    # Base URL — verify at https://portal.opentopography.org/dataspace/dataset?opentopoID=OTDS.012020.4326.1
-    # before running. The path below is the expected S3/CDN path; it may need updating.
-    local BASE_URL="https://opentopography.s3.sdsc.edu/dataspace/OTDS.012020.4326.1/raster/geom"
+    local all_present=true
+    # Archive → region:  n30e060,n30e090 → Himalaya
+    #                    n00e000         → Congo
+    #                    n30e000         → Ahaggar
+    #                    n30w120         → Colorado Plateau
+    #                    n30w090         → Atlantic Coastal
+    for tile_id in n30e060 n30e090 n00e000 n30e000 n30w120 n30w090; do
+        local archive="${RAW_DIR}/geomorpho90m/geom_90M_${tile_id}.tar.gz"
+        if [[ -f "${archive}" ]]; then
+            log "Found: geom_90M_${tile_id}.tar.gz"
+        else
+            warn "Missing: ${archive}"
+            all_present=false
+        fi
+    done
 
-    # Tile naming: geomorpho90m_geom_merit_dem_egm96_wgs84_{TILE}_c_20181019.tif
-    # 15°×15° tiles named by SW corner (N/S + lat, E/W + lon, 2-digit lat, 3-digit lon)
-    # Example: N15E075 = 15-30°N, 75-90°E
-
-    # Function to fetch one geomorphon tile by its 15° tile ID
-    fetch_geom_tile() {
-        local tile_id="$1"
-        local filename="geomorpho90m_geom_merit_dem_egm96_wgs84_${tile_id}_c_20181019.tif"
-        local url="${BASE_URL}/${filename}"
-        local dest="${RAW_DIR}/geomorpho90m/${filename}"
-        fetch "${url}" "${dest}"
-    }
-
-    # Tiles needed to cover all 5 regions (see data/regions.json)
-    # Alpine (Himalayas 25-35°N 78-92°E) → 15° tiles: N15E075, N15E090
-    fetch_geom_tile "N15E075"
-    fetch_geom_tile "N15E090"
-    # FluvialHumid (Congo 8°S-2°N 15-28°E) → S15E015, S15E030
-    fetch_geom_tile "S15E015"
-    fetch_geom_tile "S15E030"
-    # Cratonic (Ahaggar 20-27°N 4-12°E) → N15E000 (covers 15-30°N 0-15°E)
-    fetch_geom_tile "N15E000"
-    # FluvialArid (Colorado Plateau 35-38°N 107-113°W) → N30W120, N30W105
-    fetch_geom_tile "N30W120"
-    fetch_geom_tile "N30W105"
-    # Coastal (Atlantic 34-38°N 75-82°W) → N30W090, N30W075
-    fetch_geom_tile "N30W090"
-    fetch_geom_tile "N30W075"
-
-    log "Geomorpho90m download complete."
-    warn "If URLs returned 404, verify current tile paths at the OpenTopography portal"
-    warn "and update BASE_URL in this script accordingly."
+    if ! "${all_present}"; then
+        die "One or more Geomorpho90m archives missing. See data/sources.md §1.2 for download instructions."
+    fi
+    log "All Geomorpho90m archives present."
 }
 
 # ─── MERIT-DEM ────────────────────────────────────────────────────────────────
 download_merit() {
-    log "=== Downloading MERIT-DEM tiles ==="
+    log "=== MERIT-DEM: checking for manually downloaded tiles ==="
+    # MERIT-DEM automated download is no longer supported in this script.
+    # Download the 6 archives below manually — see data/sources.md §1.1 for instructions.
+    # Each archive is .tar (not .tar.gz); sampler extracts internally. Do NOT pre-extract.
+    # Place archives in: ${RAW_DIR}/merit/
 
-    if [[ -z "${MERIT_USER:-}" ]] || [[ -z "${MERIT_PASS:-}" ]]; then
-        die "MERIT-DEM requires credentials. Set MERIT_USER and MERIT_PASS environment variables.
-     Register at: https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/"
-    fi
-
-    # MERIT-DEM download URL pattern (post-registration).
-    # Each tile is a tar archive containing [tile_id]_dem.tif
-    # URL format verified at time of writing; re-check if downloads fail.
-    local BASE_URL="https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/data"
-
-    fetch_merit_tile() {
-        local tile_id="$1"
-        local tar_file="${RAW_DIR}/merit/${tile_id}_dem.tar"
-        local tif_file="${RAW_DIR}/merit/${tile_id}_dem.tif"
-
-        if [[ -f "${tif_file}" ]]; then
-            log "Already extracted: ${tile_id}_dem.tif"
-            return 0
-        fi
-
-        local url="${BASE_URL}/${tile_id}/${tile_id}_dem.tar"
-        log "Downloading MERIT tile: ${tile_id}"
-        if command -v curl >/dev/null 2>&1; then
-            curl -fL --retry 3 --user "${MERIT_USER}:${MERIT_PASS}" \
-                -o "${tar_file}.tmp" "${url}" && mv "${tar_file}.tmp" "${tar_file}"
+    local all_present=true
+    # Archive → region:  n30e060,n30e090 → Himalaya
+    #                    n00e000         → Congo
+    #                    n30e000         → Ahaggar
+    #                    n30w120         → Colorado Plateau
+    #                    n30w090         → Atlantic Coastal
+    for tile_id in n30e060 n30e090 n00e000 n30e000 n30w120 n30w090; do
+        local archive="${RAW_DIR}/merit/dem_tif_${tile_id}.tar"
+        if [[ -f "${archive}" ]]; then
+            log "Found: dem_tif_${tile_id}.tar"
         else
-            wget -q --tries=3 --user="${MERIT_USER}" --password="${MERIT_PASS}" \
-                -O "${tar_file}.tmp" "${url}" && mv "${tar_file}.tmp" "${tar_file}"
+            warn "Missing: ${archive}"
+            all_present=false
         fi
+    done
 
-        log "Extracting ${tile_id}..."
-        tar -xf "${tar_file}" -C "${RAW_DIR}/merit/" && rm "${tar_file}"
-    }
-
-    # ── Alpine: Central Himalayas ──────────────────────────────────────────────
-    fetch_merit_tile "n25e080"
-    fetch_merit_tile "n25e085"
-    fetch_merit_tile "n30e080"
-    fetch_merit_tile "n30e085"
-
-    # ── FluvialHumid: Congo Basin margins ─────────────────────────────────────
-    fetch_merit_tile "s00e015"
-    fetch_merit_tile "s00e020"
-    fetch_merit_tile "s05e015"
-    fetch_merit_tile "s05e020"
-    fetch_merit_tile "s05e025"
-
-    # ── Cratonic: Ahaggar Massif ───────────────────────────────────────────────
-    fetch_merit_tile "n20e005"
-    fetch_merit_tile "n20e010"
-    fetch_merit_tile "n25e005"
-
-    # ── FluvialArid: Colorado Plateau ─────────────────────────────────────────
-    fetch_merit_tile "n35w115"
-    fetch_merit_tile "n35w110"
-
-    # ── Coastal: US Atlantic coastal plain ────────────────────────────────────
-    fetch_merit_tile "n35w080"
-    fetch_merit_tile "n30w080"
-    fetch_merit_tile "n35w085"
-
-    log "MERIT-DEM download complete."
+    if ! "${all_present}"; then
+        die "One or more MERIT-DEM archives missing. See data/sources.md §1.1 for download instructions."
+    fi
+    log "All MERIT-DEM archives present."
 }
 
 # ─── Checksum verification ────────────────────────────────────────────────────
