@@ -10,9 +10,10 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Data files (large, not committed — see data/sources.md)
+# Data files (large binaries, not committed — see data/sources.md)
+data/raw/*
+!data/raw/.gitkeep
 data/samples/
-data/checksums.txt
 
 # Editor / OS artefacts
 .DS_Store
