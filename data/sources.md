@@ -58,16 +58,21 @@ Run `data/download.sh` after completing the registration steps below.
 
 ## 2. Sampling Regions
 
-Five regions, one per TerrainClass. See `data/regions.json` for machine-readable definitions
-(bounding boxes, tile IDs, filter rules).
+Six regions across five TerrainClasses (FluvialHumid has two: Congo lowland + Ucayali upland).
+See `data/regions.json` for machine-readable definitions (bounding boxes, tile IDs, filter rules).
 
 | ID | TerrainClass | Tectonic Context | Location | 30°×30° Tile | Est. Usable Tiles |
 |---|---|---|---|---|---|
 | `himalaya` | Alpine | ActiveCompressional | Central Himalayas 25-35°N 78-92°E | n30e060 n30e090 | ~150 |
 | `congo` | FluvialHumid | CratonicShield | Congo Basin margins 8°S-2°N 15-28°E | n00e000 | ~120 |
-| `ahaggar` | Cratonic | CratonicShield | Ahaggar Massif 20-27°N 4-12°E | n30e000 | ~80 |
+| `ucayali` | FluvialHumid | ActiveCompressional | Amazon headwaters, Ucayali zone 5-10°S 72-78°W | s30w090 | ~80-120 |
+| `ahaggar` | Cratonic | CratonicShield | Ahaggar Massif 20-27°N 4-12°E | n00e000 | ~80 |
 | `colorado_plateau` | FluvialArid | PassiveExtensional | Colorado Plateau 35-38°N 107-113°W | n30w120 | ~80 |
 | `atlantic_coastal` | Coastal | PassiveMargin | US Atlantic coastal plain 34-38°N 75-82°W | n30w090 | ~150 |
+
+FluvialHumid intentionally samples two distinct environments: Congo (lowland floodplain,
+broad slow channels) and Ucayali (upland dissected Subandean ridges, dense tributary networks).
+The combined distribution captures the full range of humid fluvial terrain.
 
 All regions yield ≥50 usable tiles after classification filtering. See `data/regions.json` for
 per-region filter rules applied during P1.3.
@@ -95,16 +100,16 @@ data/
 
 **Step 2: Download Geomorpho90m tiles manually** (6 tiles, 30°×30°)
   → <https://portal.opentopography.org/dataspace/dataset?opentopoID=OTDS.012020.4326.1>
-  Download tile IDs: `n30e060 n30e090 n00e000 n30e000 n30w120 n30w090`
-  Place `geom_90M_{tile}.tif` files in `data/raw/geomorpho90m/`, then:
+  Download tile IDs: `n30e060 n30e090 n00e000 n30w120 n30w090 s30w090`
+  Place `.tar.gz` archives in `data/raw/geomorpho90m/`, then:
   ```bash
   ./data/download.sh geomorpho90m   # verifies presence only
   ```
 
 **Step 3: Download MERIT-DEM tiles manually** (same 6 tile IDs, registration required)
   → <https://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/>
-  Download tile IDs: `n30e060 n30e090 n00e000 n30e000 n30w120 n30w090`
-  Place `{tile}_dem.tif` files in `data/raw/merit/`, then:
+  Download tile IDs: `n30e060 n30e090 n00e000 n30w120 n30w090 s30w090`
+  Place `.tar` archives in `data/raw/merit/`, then:
   ```bash
   ./data/download.sh merit          # verifies presence only
   ```

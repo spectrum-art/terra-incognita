@@ -99,11 +99,11 @@ download_geomorpho90m() {
 
     local all_present=true
     # Archive → region:  n30e060,n30e090 → Himalaya
-    #                    n00e000         → Congo
-    #                    n30e000         → Ahaggar
+    #                    n00e000         → Congo + Ahaggar (non-overlapping bboxes)
     #                    n30w120         → Colorado Plateau
     #                    n30w090         → Atlantic Coastal
-    for tile_id in n30e060 n30e090 n00e000 n30e000 n30w120 n30w090; do
+    #                    s30w090         → Ucayali (Amazon headwaters, second FluvialHumid)
+    for tile_id in n30e060 n30e090 n00e000 n30w120 n30w090 s30w090; do
         local archive="${RAW_DIR}/geomorpho90m/geom_90M_${tile_id}.tar.gz"
         if [[ -f "${archive}" ]]; then
             log "Found: geom_90M_${tile_id}.tar.gz"
@@ -129,11 +129,11 @@ download_merit() {
 
     local all_present=true
     # Archive → region:  n30e060,n30e090 → Himalaya
-    #                    n00e000         → Congo
-    #                    n30e000         → Ahaggar
+    #                    n00e000         → Congo + Ahaggar (non-overlapping bboxes)
     #                    n30w120         → Colorado Plateau
     #                    n30w090         → Atlantic Coastal
-    for tile_id in n30e060 n30e090 n00e000 n30e000 n30w120 n30w090; do
+    #                    s30w090         → Ucayali (Amazon headwaters, second FluvialHumid)
+    for tile_id in n30e060 n30e090 n00e000 n30w120 n30w090 s30w090; do
         local archive="${RAW_DIR}/merit/dem_tif_${tile_id}.tar"
         if [[ -f "${archive}" ]]; then
             log "Found: dem_tif_${tile_id}.tar"

@@ -96,6 +96,30 @@
       "notes": "Tile n30w120 (30-60°N, 120-90°W) fully contains the region. Target the 35-38°N strip within the tile; Canyonlands, Capitol Reef, and Zion sub-regions are ideal. Avoid the Rocky Mountain Front Range (Alpine contamination at eastern edge)."
     },
     {
+      "id": "ucayali",
+      "terrain_class": "FluvialHumid",
+      "tectonic_context": "ActiveCompressional",
+      "description": "Amazon headwaters — Ucayali zone, eastern Andes sub-Andean fold-and-thrust belt, Peru. High MAP (2000-3000mm), strongly dissected ridges, dense dendritic drainage. Complements Congo which samples lowland floodplain; Ucayali samples upland humid fluvial terrain with well-developed valley networks visible at 90m.",
+      "bbox": {
+        "min_lat": -10.0,
+        "max_lat": -5.0,
+        "min_lon": -78.0,
+        "max_lon": -72.0
+      },
+      "merit_tiles": ["s30w090"],
+      "geomorpho90m_tiles": ["s30w090"],
+      "koppen_zones": ["Af", "Am"],
+      "min_samples_target": 50,
+      "estimated_available_tiles": 150,
+      "filter_rules": [
+        "Exclude tiles with mean elevation > 3000m (glaciated Andean peaks, not FluvialHumid)",
+        "Exclude tiles with local relief (max-min) < 80m — lowland flats near Ucayali river channel itself",
+        "Target 200-2500m ASL on sub-Andean flanks where humid fluvial dissection is strongest",
+        "Exclude tiles where Andes crest is dominant (slope mode > 20°) — these classify as Alpine"
+      ],
+      "notes": "Bundle s30w090 (0-30°S, 60-90°W) contains the relevant s10w075 (5-10°S, 70-75°W) and s10w080 (5-10°S, 75-80°W) internal 5°×5° tiles. Download dem_tif_s30w090.tar and geom_90M_s30w090.tar.gz from the same portals as the other tiles. Expected ~80-120 usable windows after filtering Andes peaks and lowland flats."
+    },
+    {
       "id": "atlantic_coastal",
       "terrain_class": "Coastal",
       "tectonic_context": "PassiveMargin",
