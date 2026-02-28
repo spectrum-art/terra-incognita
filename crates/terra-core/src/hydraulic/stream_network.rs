@@ -1,6 +1,5 @@
-/// Stream network extraction and Strahler ordering.
-/// Phase 6, Task P6.2.
-
+//! Stream network extraction and Strahler ordering.
+//! Phase 6, Task P6.2.
 use super::flow_routing::FlowField;
 
 pub struct StreamSegment {

@@ -1,6 +1,5 @@
-/// Subduction arc generation from age field initiation sites.
-/// Phase 4, Task P4.4.
-
+//! Subduction arc generation from age field initiation sites.
+//! Phase 4, Task P4.4.
 pub struct SubductionArc {
     pub center_lat: f64,
     pub center_lon: f64,

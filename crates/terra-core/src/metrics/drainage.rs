@@ -1,6 +1,5 @@
-/// Drainage density from a generated heightfield.
-/// Phase 2, Task P2.9.
-
+//! Drainage density from a generated heightfield.
+//! Phase 2, Task P2.9.
 pub struct DrainageDensityResult {
     /// Total stream-network length divided by tile area (km / km²).
     pub density_km_per_km2: f32,

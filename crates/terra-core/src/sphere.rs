@@ -1,5 +1,5 @@
-/// Spherical geometry utilities for plate simulation.
-/// All operations on the unit sphere using f64 precision.
+//! Spherical geometry utilities for plate simulation.
+//! All operations on the unit sphere using f64 precision.
 
 /// A point on the unit sphere in Cartesian coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]

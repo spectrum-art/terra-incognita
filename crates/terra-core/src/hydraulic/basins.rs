@@ -1,6 +1,5 @@
-/// Drainage basin delineation and per-basin statistics.
-/// Phase 6, Task P6.6.
-
+//! Drainage basin delineation and per-basin statistics.
+//! Phase 6, Task P6.6.
 use super::flow_routing::FlowField;
 
 pub struct DrainageBasin {

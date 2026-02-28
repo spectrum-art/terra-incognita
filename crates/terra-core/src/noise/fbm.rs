@@ -1,6 +1,5 @@
-/// Fractional Brownian Motion noise synthesis.
-/// Phase 3, Task P3.1.
-
+//! Fractional Brownian Motion noise synthesis.
+//! Phase 3, Task P3.1.
 pub struct Fbm {
     pub h: f32,
     pub octaves: u32,

@@ -1,5 +1,5 @@
-/// Structural grain vector field derived from plate boundary geometry.
-/// Phase 4, Task P4.7.
+//! Structural grain vector field derived from plate boundary geometry.
+//! Phase 4, Task P4.7.
 
 /// (angle in radians, intensity 0-1) at each grid point.
 pub struct GrainField {

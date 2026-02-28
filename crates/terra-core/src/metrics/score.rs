@@ -1,6 +1,5 @@
-/// Weighted realism scoring system aggregating all 10 metrics.
-/// Phase 2, Task P2.11.
-
+//! Weighted realism scoring system aggregating all 10 metrics.
+//! Phase 2, Task P2.11.
 use crate::noise::params::TerrainClass;
 
 /// Per-metric score result.

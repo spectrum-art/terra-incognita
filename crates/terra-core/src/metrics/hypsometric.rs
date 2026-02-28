@@ -1,6 +1,5 @@
-/// Hypsometric integral and CDF.
-/// Phase 2, Task P2.7.
-
+//! Hypsometric integral and CDF.
+//! Phase 2, Task P2.7.
 use crate::heightfield::HeightField;
 
 pub struct HypsometricResult {

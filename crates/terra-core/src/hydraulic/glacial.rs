@@ -1,6 +1,5 @@
-/// Glacial carving: U-valley profiles, overdeeepened basins, cirques.
-/// Phase 6, Task P6.5.
-
+//! Glacial carving: U-valley profiles, overdeeepened basins, cirques.
+//! Phase 6, Task P6.5.
 use crate::heightfield::HeightField;
 use crate::noise::params::GlacialClass;
 use super::flow_routing::FlowField;

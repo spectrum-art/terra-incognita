@@ -1,5 +1,5 @@
-/// Spherical coordinate types and tile addressing.
-/// All coordinate math uses f64 for precision.
+//! Spherical coordinate types and tile addressing.
+//! All coordinate math uses f64 for precision.
 
 /// A point on the sphere in geographic coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]

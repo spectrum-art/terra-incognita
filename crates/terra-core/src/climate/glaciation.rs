@@ -1,6 +1,5 @@
-/// Glaciation mask: None / Former / Actively Glaciated.
-/// Phase 5, Task P5.5.
-
+//! Glaciation mask: None / Former / Actively Glaciated.
+//! Phase 5, Task P5.5.
 use crate::noise::params::GlacialClass;
 
 pub fn compute_glaciation_mask(

@@ -1,6 +1,5 @@
-/// D8 flow direction and accumulation.
-/// Phase 6, Task P6.1.
-
+//! D8 flow direction and accumulation.
+//! Phase 6, Task P6.1.
 use crate::heightfield::HeightField;
 
 pub struct FlowField {

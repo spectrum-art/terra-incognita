@@ -1,6 +1,5 @@
-/// Boundary-first plate simulation: ridge segment placement.
-/// Phase 4, Task P4.2.
-
+//! Boundary-first plate simulation: ridge segment placement.
+//! Phase 4, Task P4.2.
 pub struct RidgeSegment {
     pub start_lat: f64,
     pub start_lon: f64,

@@ -1,7 +1,6 @@
-/// Stream power erosion: dz = -K * A^0.5 * S
-/// Parameters m=0.5, n=1.0 per Howard (1994).
-/// Phase 6, Task P6.3.
-
+//! Stream power erosion: dz = -K * A^0.5 * S
+//! Parameters m=0.5, n=1.0 per Howard (1994).
+//! Phase 6, Task P6.3.
 use crate::heightfield::HeightField;
 use super::flow_routing::FlowField;
 

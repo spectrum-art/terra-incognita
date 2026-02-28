@@ -1,7 +1,6 @@
-/// Geomorphon landform classification (Jasiewicz & Stepinski 2013).
-/// 498-class canonical forms mapped to 10 landform classes.
-/// Phase 2, Task P2.8.
-
+//! Geomorphon landform classification (Jasiewicz & Stepinski 2013).
+//! 498-class canonical forms mapped to 10 landform classes.
+//! Phase 2, Task P2.8.
 use crate::heightfield::HeightField;
 use crate::noise::params::TerrainClass;
 
