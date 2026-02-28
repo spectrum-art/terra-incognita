@@ -173,14 +173,22 @@ Used in P1.5 (validate_targets tool). Computed distributions must fall within:
 
 | Metric | Class | Literature Target | Source |
 |---|---|---|---|
-| Hurst Exponent | Alpine | 0.75-0.90 | SRTM analysis, Gagnon et al. 2006 |
-| Hurst Exponent | FluvialHumid | 0.70-0.85 | Gagnon et al. 2006 |
-| Bifurcation Ratio | FluvialHumid | 3.0-5.0 | Horton (1945), Schumm (1956) |
-| Bifurcation Ratio | FluvialArid | 3.0-5.5 | Abrahams (1984) |
-| Geomorphon valley+hollow % | Alpine | 15-35% | Jasiewicz & Stepinski (2013) |
-| Geomorphon flat+slope % | Cratonic | 55-80% | Geomorpho90m reference stats |
-| Hypsometric Integral | Alpine | 0.45-0.65 | Strahler (1952) |
-| Hypsometric Integral | FluvialHumid | 0.35-0.55 | Strahler (1952) |
-| Hypsometric Integral | Coastal | 0.30-0.45 | Strahler (1952) |
+| Hurst Exponent | Alpine | 0.75–0.90 | Gagnon et al. (2006), SRTM variogram |
+| Hurst Exponent | FluvialHumid | 0.70–0.85 | Gagnon et al. (2006) [known deviation — see notes.md §3a] |
+| Geomorphon valley+hollow % | Alpine | 15–35% | Jasiewicz & Stepinski (2013) |
+| Geomorphon flat+slope % | Cratonic | 55–80% | Geomorpho90m reference (Amatulli et al. 2020) |
+| Hypsometric Integral | Alpine | 0.45–0.65 | Strahler (1952) [known deviation — see notes.md §3b] |
+| Hypsometric Integral | FluvialHumid | 0.35–0.55 | Strahler (1952) |
+| Hypsometric Integral | Coastal | 0.30–0.45 | Strahler (1952) [known deviation — see notes.md §3c] |
 
-Document version 1.1 | Updated for Phase 1 acquisition planning
+**Note on Drainage Density**: Bifurcation Ratio was replaced by Drainage Density in P1.4
+(D8 Strahler ordering is invalid at 46 km tile scale). No literature target exists for
+geomorphon-based drainage density proxy at 90 m resolution; class-specific empirical values
+from data/targets/*.json are authoritative. See data/targets/notes.md §1 for explanation
+of the FluvialHumid/FluvialArid inversion.
+
+**Note on Bifurcation Ratio rows removed**: Horton/Schumm/Abrahams Rb targets (3.0–5.5)
+apply to fully-resolved stream networks, not 46 km tile fragments. Removal documented in
+DEV_NOTES.md.
+
+Document version 1.2 | Updated P1.4: drainage density replaces bifurcation ratio; P1.4+: Ucayali added
