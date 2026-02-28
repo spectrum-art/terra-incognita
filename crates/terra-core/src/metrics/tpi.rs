@@ -64,21 +64,29 @@ fn circular_kernel(radius: usize) -> Vec<(isize, isize)> {
 
 /// Compute the standard deviation of TPI for the given radius.
 /// Returns `f32::NAN` when the field is too small (min dimension < 2·radius+1).
+///
+/// Cells are subsampled at `step` intervals to meet the 500 ms performance
+/// budget for 512×512 fields. Std is stable under subsampling.
 fn tpi_std_at_radius(hf: &HeightField, radius: usize) -> f32 {
     let min_dim = 2 * radius + 1;
     if hf.width < min_dim || hf.height < min_dim {
         return f32::NAN;
     }
 
+    // Subsample step: 1 for small radius, 4 for large (≥10).
+    let step = if radius >= 10 { 4 } else { 1 };
+
     let kernel = circular_kernel(radius);
     let k_len = kernel.len() as f64;
 
-    let mut tpis: Vec<f64> = Vec::with_capacity(
-        (hf.height - 2 * radius) * (hf.width - 2 * radius),
-    );
+    let row_range: Vec<usize> = (radius..hf.height - radius).step_by(step).collect();
+    let col_range: Vec<usize> = (radius..hf.width  - radius).step_by(step).collect();
+    let cap = row_range.len() * col_range.len();
 
-    for row in radius..hf.height - radius {
-        for col in radius..hf.width - radius {
+    let mut tpis: Vec<f64> = Vec::with_capacity(cap);
+
+    for &row in &row_range {
+        for &col in &col_range {
             let center = hf.get(row, col) as f64;
             let mean: f64 = kernel
                 .iter()

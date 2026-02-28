@@ -12,8 +12,13 @@ pub mod slope;
 pub mod tpi;
 
 pub use aspect::{compute_aspect, AspectResult};
+pub use drainage::{compute_drainage_density, DrainageDensityResult};
+pub use geomorphons::{classify_geomorphons, Geomorphon, GeomorphonResult};
 pub use hurst::{compute_hurst, HurstResult};
+pub use hypsometric::{compute_hypsometric, HypsometricResult};
+pub use morans::{compute_morans_i, compute_morans_i_from_heightfield};
 pub use multifractal::{compute_multifractal, MultifractalResult};
 pub use roughness_elev::{compute_roughness_elev, RoughnessElevResult};
+pub use score::{compute_realism_score, MetricScore, RealismScore};
 pub use slope::{compute_slope, SlopeResult};
 pub use tpi::{compute_tpi, TpiResult};

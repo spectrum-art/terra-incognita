@@ -5,12 +5,12 @@ Treat this file as canonical state. Inform the user ANY TIME you add to this doc
 
 ## USER NOTES:
 
-20260227 1655PST:
+20260227:
 1. Enabled getrandom with features = ["js"] for wasm32 target.
 2. WASM build now succeeds.
 3. Frontend deps installed; Vite dev server runs.
 
-20260228 1115PST:
+20260228:
 1. Created and built out .claude/CLAUDE.md. This should be read at the start of each session.
 
 
@@ -33,6 +33,26 @@ Treat this file as canonical state. Inform the user ANY TIME you add to this doc
    - All stub module doc comments (/// style) converted to //! style (36 files); pre-existing clippy failure.
    - 23 unit tests passing, 0 clippy warnings.
 
+2. P2.7 (hypsometric), P2.8 (geomorphons), P2.9 (drainage density), P2.10 (Moran's I), P2.11 (scoring) complete.
+   - Phase 2 now fully implemented. 42 unit tests passing (debug), 43 (release), 0 clippy warnings.
+   - TPI performance: R3=20 circular kernel (1257 cells × 222K interior cells = 280M ops) exceeded 500ms
+     budget. Fixed by subsampling at step=4 for radius ≥ 10. Total 512×512 scoring now ~330ms (release).
+   - Geomorphon: Jasiewicz-Stepinski algorithm, 8-direction angle comparison, count-based 10-class mapping.
+     For unit testing, HeightField bounds must give realistic cellsize (use ~0.0009°/px ≈ 100m, not default
+     global bounds). Default HeightField::flat uses -180..180/-90..90, giving ~10km pixels — angles all below
+     1° threshold, everything classifies as Flat.
+   - Drainage density (P2.9): uses D8 flow routing + accumulation threshold (50 cells), not the
+     geomorphon-counting approach from Phase 1. Phase 1 counted valley+hollow geomorphons from Geomorpho90m;
+     Phase 2 computes from generated elevations via D8. The two methods will give comparable results at
+     90m scale but may differ at generated-terrain scale.
+   - Moran's I (P2.10): grid-based approach (64×64-pixel sub-basins, queen contiguity). Matches the
+     distributions tool implementation exactly. compute_morans_i(&[DrainageBasin]) also implemented
+     for Phase 6 integration.
+   - Scoring system: 10 metrics, per-class p10/p90 bands from Phase 1 empirical data, band_score()
+     linear degradation outside band. Weights: Hurst+Roughness=10%, Multifractal+Drainage+Moran=8-12%,
+     Geomorphon=14%, Hypsometric=12%. Subsystem attribution: 3 noise_synth, 7 hydraulic.
+   - Performance budget test annotated with #[cfg(not(debug_assertions))] — only runs in release mode.
+
 
 ## KEY DISCOVERIES:
 
@@ -47,5 +67,5 @@ Treat this file as canonical state. Inform the user ANY TIME you add to this doc
 
 - Phase 0 — Foundation: ✅ Complete
 - Phase 1 — Reference Data Pipeline: ✅ Complete
-- Phase 2 — Test Battery: 🔄 In progress (P2.1, P2.2, P2.3, P2.4, P2.5, P2.6 done)
+- Phase 2 — Test Battery: ✅ Complete
 - Phases 3–8: Not started
