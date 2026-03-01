@@ -12,12 +12,15 @@ Treat this file as canonical state. Inform the user ANY TIME you add to this doc
 
 20260228:
 1. Created and built out .claude/CLAUDE.md. This should be read at the start of each session.
+2. Corrected two errors building frontend:
+   - src/export.ts:12 - cast blob to ArrayBuffer to fix 'not assignable' error
+   - src/render.ts:17 - added underscore prefix to mode to suppress 'declared but never read' error pending full implementation in P7.4
 
 
 ## ASSISTANT NOTES:
 
 20260227:
-1. P1.4 complete. Distributions tool generates data/targets/*.json from 946 SRTM windows.
+1. P1.4 complete. Distributions tool generates data/targets/*.json from 9146 SRTM windows.
    - Hurst: short-lag variogram (lags 2-8 px, no detrend). Alpine H=0.767 ✓
    - Bifurcation ratio replaced with drainage_density (D8 Strahler invalid at 46km tile scale).
    - drainage_density = valley+hollow geomorphon cells × 0.09km / tile_area_km²
@@ -150,6 +153,31 @@ is out of scope for Phase 3.
    - 512×512 simulation < 500ms (310ms measured) ✓
 
 
+20260228 (continued):
+5. P5.1–P5.5 (Climate Layer) complete. 142 tests passing, 0 clippy warnings.
+
+   **Pipeline**: `simulate_climate(seed, water_abundance, climate_diversity, glaciation, &regime_field, w, h) -> ClimateLayer`
+   P5.1 latitude bands → P5.3 noise perturbation → P5.2 orographic correction → P5.4 seasonality → P5.5 glaciation mask.
+
+   **P5.1 Latitudinal bands**: Three-Gaussian formula (ITCZ at 0°, arid at 28°, temperate at 50°) + polar floor.
+   At water_abundance=0.55: equatorial MAP ≈ 2200mm, subtropical ≈ 450mm, temperate ≈ 850mm.
+
+   **P5.2 Orographic correction**: Mountain belts identified from `ActiveCompressional` regime cells.
+   Longitude sweep (influence radius = width/8, min 4 cells) to detect windward / leeward. Multipliers:
+   windward 1.8×, leeward 0.45× (ratio = 0.25 → 75% below windward, exceeds 40% threshold).
+   Prevailing wind model: trade winds <30° (westward), westerlies 30–60° (eastward), polar easterlies ≥60°.
+
+   **P5.3 Noise**: 3-octave fBm, base_freq = 2/N, amplitude = ±40% × climate_diversity. Multiplicative
+   on MAP field. At climate_diversity=0: flat 1.0 (no perturbation, enables clean unit tests).
+
+   **P5.4 Seasonality**: `seasonality = lat_contribution × map_dampen`. lat_contribution = (|lat|/90)^0.7;
+   map_dampen = 1 − (MAP/2500)^1 × 0.8. Guarantees: MAP > 2500mm → seasonality ≤ 0.20 < 0.80.
+
+   **P5.5 Glaciation**: Latitude-only threshold. active_threshold = 90 − slider×60°.
+   Former band extends slider×30° equatorward. At slider=0.1: active above 84° (well above 60° threshold).
+
+   **All 5 roadmap end states passing** (integration tests in climate::tests).
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
@@ -157,4 +185,5 @@ is out of scope for Phase 3.
 - Phase 2 — Test Battery: ✅ Complete
 - Phase 3 — Noise Synthesis: ✅ Complete
 - Phase 4 — Plate Simulation: ✅ Complete
-- Phases 5–8: Not started
+- Phase 5 — Climate Layer: ✅ Complete
+- Phases 6–8: Not started
