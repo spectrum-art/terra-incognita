@@ -1,4 +1,4 @@
-//! Diagnostic visualizer — writes four PNG debug images to data/debug/.
+//! Diagnostic visualizer — writes six PNG debug images to data/debug/.
 //! Not part of the main pipeline; no tests, no clippy target.
 
 use std::fs;
@@ -6,6 +6,8 @@ use std::path::Path;
 
 use terra_core::climate::simulate_climate;
 use terra_core::generator::GlobalParams;
+use terra_core::hydraulic::apply_hydraulic_shaping;
+use terra_core::noise::{generate_tile, params::{GlacialClass, NoiseParams}};
 use terra_core::plates::{simulate_plates, TectonicRegime};
 
 const W: usize = 512;
@@ -144,6 +146,73 @@ fn main() {
         let path = out_dir.join("orographic_map.png");
         img.save(&path).expect("failed to save orographic_map.png");
         println!("Wrote {}", path.display());
+    }
+
+    // ── 5 & 6. Hydraulic diagnostics ────────────────────────────────────────
+    // Generate a 512×512 FluvialHumid tile, apply hydraulic shaping, then
+    // render flow accumulation (log-blue) and the stream network overlay.
+    {
+        println!("Generating heightfield for hydraulic diagnostics (512×512)…");
+        let np = NoiseParams::default(); // FluvialHumid, h=0.75
+        let tile_w = 512usize;
+        let tile_h = 512usize;
+        let mut hf = generate_tile(&np, params.seed as u32, tile_w, tile_h,
+                                   0.0, 1.0, 0.0, 1.0);
+
+        println!("Applying hydraulic shaping…");
+        let result = apply_hydraulic_shaping(
+            &mut hf,
+            np.terrain_class,
+            &[],
+            GlacialClass::None,
+        );
+
+        // ── 5. flow_accumulation.png (log-blue) ──────────────────────────────
+        {
+            // log10(1 + accum) normalised to [0, 1] → blue channel intensity.
+            let max_log = result.flow.accumulation.iter()
+                .map(|&a| (1.0 + a as f64).ln())
+                .fold(0.0f64, f64::max)
+                .max(1.0);
+            let mut img = image::RgbImage::new(tile_w as u32, tile_h as u32);
+            for r in 0..tile_h {
+                for c in 0..tile_w {
+                    let a = result.flow.accumulation[r * tile_w + c] as f64;
+                    let t = ((1.0 + a).ln() / max_log).clamp(0.0, 1.0) as f32;
+                    let b = (255.0 * t) as u8;
+                    // White background → blue highlights where flow is high.
+                    let rv = (255.0 * (1.0 - t)) as u8;
+                    img.put_pixel(c as u32, r as u32, image::Rgb([rv, rv, b]));
+                }
+            }
+            let path = out_dir.join("flow_accumulation.png");
+            img.save(&path).expect("failed to save flow_accumulation.png");
+            println!("Wrote {}", path.display());
+        }
+
+        // ── 6. stream_network.png (streams in blue on grayscale hillshade) ───
+        {
+            // Simple hillshade: normalise elevation to [0, 255] grayscale.
+            let min_z = hf.data.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_z = hf.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let z_range = (max_z - min_z).max(1.0);
+            let mut img = image::RgbImage::new(tile_w as u32, tile_h as u32);
+            for r in 0..tile_h {
+                for c in 0..tile_w {
+                    let idx = r * tile_w + c;
+                    let shade = ((hf.data[idx] - min_z) / z_range * 255.0) as u8;
+                    let px = if result.network.stream_cells[idx] {
+                        image::Rgb([0u8, 80, 220]) // blue stream
+                    } else {
+                        image::Rgb([shade, shade, shade])
+                    };
+                    img.put_pixel(c as u32, r as u32, px);
+                }
+            }
+            let path = out_dir.join("stream_network.png");
+            img.save(&path).expect("failed to save stream_network.png");
+            println!("Wrote {}", path.display());
+        }
     }
 
     println!("Done.");

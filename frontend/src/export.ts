@@ -9,7 +9,7 @@ export function exportAs16BitPng(_data: Float32Array, _width: number, _height: n
 }
 
 export function exportAsFloat32Binary(_data: Float32Array): void {
-  const blob = new Blob([_data.buffer], { type: "application/octet-stream" });
+  const blob = new Blob([_data.buffer as ArrayBuffer], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

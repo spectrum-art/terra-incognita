@@ -1,5 +1,5 @@
 pub mod aspect;
-mod gradient;
+pub(crate) mod gradient;
 pub mod drainage;
 pub mod geomorphons;
 pub mod hurst;

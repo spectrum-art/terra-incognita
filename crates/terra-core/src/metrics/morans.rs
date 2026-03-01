@@ -159,10 +159,10 @@ mod tests {
     #[test]
     fn moran_i_basin_interface_finite() {
         let basins = vec![
-            DrainageBasin { id: 0, area_cells: 100, hypsometric_integral: 0.4, elongation_ratio: 0.7, circularity: 0.6 },
-            DrainageBasin { id: 1, area_cells: 120, hypsometric_integral: 0.5, elongation_ratio: 0.8, circularity: 0.7 },
-            DrainageBasin { id: 2, area_cells: 90,  hypsometric_integral: 0.3, elongation_ratio: 0.6, circularity: 0.5 },
-            DrainageBasin { id: 3, area_cells: 110, hypsometric_integral: 0.6, elongation_ratio: 0.9, circularity: 0.8 },
+            DrainageBasin { id: 0, area_cells: 100, hypsometric_integral: 0.4, elongation_ratio: 0.7, circularity: 0.6, mean_slope: 0.1 },
+            DrainageBasin { id: 1, area_cells: 120, hypsometric_integral: 0.5, elongation_ratio: 0.8, circularity: 0.7, mean_slope: 0.2 },
+            DrainageBasin { id: 2, area_cells: 90,  hypsometric_integral: 0.3, elongation_ratio: 0.6, circularity: 0.5, mean_slope: 0.1 },
+            DrainageBasin { id: 3, area_cells: 110, hypsometric_integral: 0.6, elongation_ratio: 0.9, circularity: 0.8, mean_slope: 0.3 },
         ];
         let r = compute_morans_i(&basins);
         assert!(r.is_finite(), "4-basin Moran's I should be finite, got {r}");

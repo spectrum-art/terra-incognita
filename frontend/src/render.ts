@@ -14,7 +14,7 @@ export function renderHeightField(
   data: Float32Array,
   width: number,
   height: number,
-  mode: RenderMode = "grayscale"
+  _mode: RenderMode = "grayscale"
 ): void {
   canvas.width = width;
   canvas.height = height;

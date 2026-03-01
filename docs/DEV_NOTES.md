@@ -223,6 +223,55 @@ is out of scope for Phase 3.
    **Regression test**: `plates::tests::polar_rows_not_uniformly_compressional`
    verifies seeds 42, 7, and 99 all pass. 146 tests, 0 clippy warnings.
 
+20260228 (continued):
+8. P6.1–P6.6 + integration (Phase 6 — Hydraulic Shaping) complete. 166 tests passing, 0 clippy warnings.
+
+   **Pipeline**: `apply_hydraulic_shaping(hf, terrain_class, erodibility, glacial_class) -> HydraulicResult`
+   P6.1 flow routing → P6.2 stream network → P6.3 stream power erosion → P6.4 mass wasting → P6.5 glacial carving → P6.6 basin delineation.
+
+   **P6.1 Flow routing** (`flow_routing.rs`): Priority-flood pit filling (Barnes 2014 min-heap on border cells).
+   D8 routing on filled surface. Accumulation via high→low topological sort. `OrdF64` newtype for `BinaryHeap<Reverse<...>>`.
+   Direction codes: 0=sink/flat, 1=N, 2=NE, …, 8=NW.
+
+   **P6.2 Stream network** (`stream_network.rs`): `extract_stream_network(flow, a_min) -> StreamNetwork`.
+   Strahler ordering via ascending-accumulation pass. Head cells (no stream donors) → order 1.
+   Confluence with ≥2 donors at max_order → max_order+1, else max_order.
+   A_min constants: Alpine=200, FluvialHumid=100, FluvialArid=300, Cratonic=500, Coastal=400.
+   Test note: V-valley topology always produces Strahler order ≤ 2 (single mainstem); unit test uses
+   a directly-constructed 4×5 FlowField encoding an explicit binary-tree topology (2 order-2 tributaries
+   each fed by 2 order-1 headwaters, merging at a junction) to verify order-3 extraction.
+
+   **P6.3 Stream power** (`stream_power.rs`): dz = −K·√A·S per iteration (Howard 1994, m=0.5, n=1).
+   Clip at −10 m/iteration. Empty erodibility → uniform K=0.5. Returns final FlowField.
+
+   **P6.4 Mass wasting** (`mass_wasting.rs`): Horn-gradient slope detection. High→low processing order.
+   Transfer to steepest D8 downslope neighbour: `transfer = ((z0−z1) − tan_repose·dist) / 2`.
+   Only interior cells are sources; border cells can be receivers.
+   Test note: symmetric spike has Horn gradient = 0 at the peak (N/S symmetric → dz_dy=0, E/W=0).
+   Tests redesigned to use a one-sided cliff (col6 at cliff_h, col7=10000 retaining wall) that
+   forces westward transfer to col5.
+
+   **P6.5 Glacial carving** (`glacial.rs`): Parabolic U-valley cross-section (±8 cells east-west
+   sweep, k = (z_wall−z_floor)/8²). Overdeepened basins (D8 sinks in glacial mask → local D8 min).
+   Cirques at high-elevation glacial heads (top 20%, hemispherical bowl radius=5, depth=5% z_range).
+   `is_glacial_head`: opposite direction code = (m+4) % 8.
+
+   **P6.6 Basin delineation** (`basins.rs`): BFS backwards from outlets through reverse donor graph.
+   Unassigned cells (isolated sinks) → single-cell basins. Per-basin HI, elongation_ratio,
+   circularity, mean_slope. `DrainageBasin` struct: id, area_cells, hypsometric_integral,
+   elongation_ratio, circularity, mean_slope.
+
+   **Integration** (`hydraulic/mod.rs`): Per-class parameter table (A_min, erosion_iters, angle_of_repose).
+   `HydraulicResult { flow, network, basins }`.
+   Test note: simple ramp creates 1-D flow (each row drains independently); accumulation ≤ cols−1.
+   `stream_network_non_empty_after_shaping` uses a V-valley terrain where centre-column
+   accumulation ≈ rows × (cols/2) >> A_min.
+
+   **Visualize tool** extended with 2 new PNG outputs (hydraulic diagnostics, 512×512 FluvialHumid tile):
+   - flow_accumulation.png — log₁₀(1+accum) normalised, white→blue gradient
+   - stream_network.png — stream cells in blue (#0050DC) on grayscale elevation hillshade
+
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
@@ -231,4 +280,5 @@ is out of scope for Phase 3.
 - Phase 3 — Noise Synthesis: ✅ Complete
 - Phase 4 — Plate Simulation: ✅ Complete
 - Phase 5 — Climate Layer: ✅ Complete
-- Phases 6–8: Not started
+- Phase 6 — Hydraulic Shaping: ✅ Complete (166 tests, 0 clippy warnings)
+- Phases 7–8: Not started
