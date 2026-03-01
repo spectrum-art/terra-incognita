@@ -327,6 +327,39 @@ is out of scope for Phase 3.
      (WSL2 runs CPU-bound code at 9-10× slower than native Linux — pre-existing constraint)
 
 
+20260301:
+11. Phase 8, Iteration 0 — geomorphon_l1 bug fix (scale mismatch).
+
+   **Bug confirmed**: `classify_geomorphons` was called in `score.rs` with `flat_threshold_deg=1.0`
+   regardless of the HeightField's actual pixel size. Phase 1 reference data was computed at 90m/pixel
+   with 1.0° threshold → sensitivity of 1.57m absolute elevation difference per pixel. The generator
+   produces a 512×256 planet map at ~78,200m/pixel. At that scale, the 1.0° threshold required
+   >1,365m elevation difference between adjacent pixels — impossible for FluvialHumid (500m range) or
+   any other class at that scale. Result: 100% of cells classified as Flat, giving L1 = 0.5475 (matches
+   reported 0.548) regardless of any parameter that does not change terrain class or elevation range.
+
+   **Why L1 was invariant across tectonic_activity and surface_age**: neither of those sliders changes
+   `terrain_class` (which depends on mountain_prevalence and water_abundance). Same class → same
+   all-Flat histogram → same L1. It was not a coincidence; it was mathematically guaranteed.
+
+   **Fix** (`metrics/score.rs`): auto-scale `flat_threshold_deg` based on actual cellsize:
+   ```
+   flat_deg = atan(1.57 / cellsize_m) in degrees, clamped [0.001, 2.0]
+   ```
+   This preserves the same absolute elevation sensitivity (1.57m per pixel) as Phase 1.
+   For the 78km planet grid: flat_deg ≈ 0.001°.
+
+   **Diagnostic confirmation** (ta=0.0 vs ta=1.0 with fixed threshold, release build):
+   - ta=0.0: L1=0.514, Flat=10.5%, Hollow=31.0%, Spur=25.6%, Slope=22.6%
+   - ta=1.0: L1=0.605, Flat=2.4%, Hollow=36.4%, Spur=18.4%, Slope=32.1%
+   Histograms are meaningfully different — the metric is now responsive to parameters.
+
+   **Remaining L1 gap**: L1 ≈ 0.51–0.61 vs target < 0.15. The generated distributions over-weight
+   Hollow/Spur relative to the FluvialHumid reference [Flat=45%, Slope=18%, Valley=6.5%]. This is a
+   calibration problem (Phase 8 iteration 3) — the erosion/shaping parameters need adjustment.
+
+   **State**: 167 tests passing, 0 clippy warnings, npm build clean.
+
 20260228 (continued):
 10. Pre-Phase 8 slider wiring audit. All 8 sliders are now correctly wired.
 
@@ -367,4 +400,4 @@ is out of scope for Phase 3.
 - Phase 5 — Climate Layer: ✅ Complete
 - Phase 6 — Hydraulic Shaping: ✅ Complete (166 tests, 0 clippy warnings)
 - Phase 7 — End-to-End Pipeline + Browser UI: ✅ Complete (167 tests, 0 clippy warnings)
-- Phase 8: Not started
+- Phase 8: In progress — P8 iteration 0 (bug fix) complete; Hurst and TPI calibration pending

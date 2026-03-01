@@ -184,7 +184,13 @@ pub fn compute_realism_score(
     let aspect_r   = compute_aspect(hf);
     let tpi_r      = compute_tpi(hf);
     let hyps_r     = compute_hypsometric(hf);
-    let geom_r     = classify_geomorphons(hf, 3, 1.0, terrain_class);
+    // Auto-scale flat threshold to match Phase 1 reference sensitivity.
+    // Phase 1 data was at 90 m/pixel with flat_threshold=1.0° → 1.57 m absolute.
+    // At planetary scale (~78 km/pixel) we scale so the same absolute elevation
+    // difference triggers a non-flat response.
+    let cs = super::gradient::cellsize_m(hf);
+    let flat_deg = ((1.57_f64 / cs).atan().to_degrees() as f32).clamp(0.001, 2.0);
+    let geom_r     = classify_geomorphons(hf, 3, flat_deg, terrain_class);
     let drain_r    = compute_drainage_density(hf);
     let morans_val = compute_morans_i_from_heightfield(hf);
 
