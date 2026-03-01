@@ -322,6 +322,14 @@ fn derive_noise_params(
 }
 
 /// Derive a representative TerrainClass from the global sliders.
+///
+/// Priority order (first match wins):
+///   1. Alpine      — mountain_prevalence > 0.65
+///   2. Cratonic    — mountain_prevalence < 0.20 AND tectonic_activity < 0.30
+///   3. FluvialArid — water_abundance < 0.30
+///   4. Coastal     — water_abundance > 0.70 AND mountain_prevalence < 0.25
+///      (low-relief, water-rich; analogous to DB §12.2 mean_elev<200m + humid)
+///   5. FluvialHumid — catch-all
 fn classify_terrain(params: &GlobalParams) -> TerrainClass {
     if params.mountain_prevalence > 0.65 {
         TerrainClass::Alpine
@@ -329,6 +337,8 @@ fn classify_terrain(params: &GlobalParams) -> TerrainClass {
         TerrainClass::Cratonic
     } else if params.water_abundance < 0.30 {
         TerrainClass::FluvialArid
+    } else if params.water_abundance > 0.70 && params.mountain_prevalence < 0.25 {
+        TerrainClass::Coastal
     } else {
         TerrainClass::FluvialHumid
     }
@@ -368,6 +378,44 @@ mod tests {
         }
         let mean_h = h_vals.iter().sum::<f32>() / h_vals.len() as f32;
         println!("mean H = {mean_h:.3}  target [0.357, 0.629]");
+    }
+
+    /// Diagnostic: 5-seed full score check for all five terrain classes.
+    /// Run with: cargo test --package terra-core --release -- diagnostic_all_classes --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diagnostic_all_classes_5seeds() {
+        use crate::metrics::score::compute_realism_score;
+        let gen = PlanetGenerator::new();
+        let seeds = [42u64, 1337, 99999, 271828, 314159];
+
+        // Param overrides that produce each terrain class.
+        let classes: &[(&str, Box<dyn Fn(&mut GlobalParams)>)] = &[
+            ("Alpine",       Box::new(|p: &mut GlobalParams| { p.mountain_prevalence = 0.75; })),
+            ("Cratonic",     Box::new(|p: &mut GlobalParams| { p.mountain_prevalence = 0.15; p.tectonic_activity = 0.20; })),
+            ("FluvialArid",  Box::new(|p: &mut GlobalParams| { p.water_abundance = 0.20; })),
+            ("Coastal",      Box::new(|p: &mut GlobalParams| { p.water_abundance = 0.80; p.mountain_prevalence = 0.22; })),
+            ("FluvialHumid", Box::new(|_: &mut GlobalParams| {})),
+        ];
+
+        println!();
+        for (name, setup) in classes {
+            let mut totals = Vec::new();
+            for &seed in &seeds {
+                let mut p = GlobalParams::default();
+                p.seed = seed;
+                setup(&mut p);
+                let result = gen.generate(&p);
+                let tc = classify_terrain(&p);
+                let score = compute_realism_score(&result.heightfield, tc);
+                totals.push(score.total);
+            }
+            let mean = totals.iter().sum::<f32>() / totals.len() as f32;
+            let scores_str: Vec<String> = totals.iter().map(|s| format!("{:.1}", s)).collect();
+            let status = if mean >= 75.0 { "✓" } else { "✗ BELOW TARGET" };
+            println!("  {name:<14} seeds=[{}]  mean={:.1}  {status}",
+                scores_str.join(", "), mean);
+        }
     }
 
     /// Generate with default params, confirm non-flat output and no panic.
