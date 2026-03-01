@@ -86,6 +86,92 @@ pub fn great_circle_arc_points(a: Vec3, b: Vec3, n: usize) -> Vec<Vec3> {
     (0..n).map(|i| slerp(a, b, i as f64 / (n - 1).max(1) as f64)).collect()
 }
 
+/// Angular distance (radians) from point `p` to the nearest point on the
+/// great-circle arc from `a` to `b`.  All inputs must be unit vectors.
+pub fn point_to_arc_distance(p: Vec3, a: Vec3, b: Vec3) -> f64 {
+    let n_raw = a.cross(b);
+    if n_raw.length() < 1e-12 {
+        // a and b are antipodal or coincident.
+        return great_circle_distance_rad(p, a).min(great_circle_distance_rad(p, b));
+    }
+    let n = n_raw.normalize();
+    let p_dot_n = p.dot(n);
+
+    // Closest point on the full great circle: remove the out-of-plane component,
+    // then renormalize.
+    let proj = Vec3 {
+        x: p.x - n.x * p_dot_n,
+        y: p.y - n.y * p_dot_n,
+        z: p.z - n.z * p_dot_n,
+    };
+    let proj_len = proj.length();
+    if proj_len < 1e-12 {
+        // p is at a pole of this great circle.
+        return great_circle_distance_rad(p, a);
+    }
+    let q = proj.normalize();
+
+    // q is on the arc if dist(a,q) + dist(q,b) ≈ dist(a,b).
+    let arc_len = great_circle_distance_rad(a, b);
+    let aq = great_circle_distance_rad(a, q);
+    let qb = great_circle_distance_rad(q, b);
+    if (aq + qb - arc_len).abs() < 1e-6 {
+        great_circle_distance_rad(p, q)
+    } else {
+        great_circle_distance_rad(p, a).min(great_circle_distance_rad(p, b))
+    }
+}
+
+/// Find an intersection of two great-circle arcs on the unit sphere.
+/// Returns a point that lies within both arcs, or `None` if they do not intersect.
+pub fn arc_intersection(a1: Vec3, a2: Vec3, b1: Vec3, b2: Vec3) -> Option<Vec3> {
+    let na = a1.cross(a2).normalize();
+    let nb = b1.cross(b2).normalize();
+    let i_raw = na.cross(nb);
+    if i_raw.length() < 1e-12 {
+        return None; // great circles are coplanar (same or antipodal)
+    }
+    let i = i_raw.normalize();
+    let neg_i = Vec3 { x: -i.x, y: -i.y, z: -i.z };
+
+    let arc_a_len = great_circle_distance_rad(a1, a2);
+    let arc_b_len = great_circle_distance_rad(b1, b2);
+
+    for candidate in [i, neg_i] {
+        let on_a = (great_circle_distance_rad(a1, candidate)
+            + great_circle_distance_rad(candidate, a2)
+            - arc_a_len)
+            .abs()
+            < 1e-6;
+        if !on_a {
+            continue;
+        }
+        let on_b = (great_circle_distance_rad(b1, candidate)
+            + great_circle_distance_rad(candidate, b2)
+            - arc_b_len)
+            .abs()
+            < 1e-6;
+        if on_b {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Offset point `p` on the unit sphere by `offset_rad` radians perpendicular to
+/// `tangent` (a unit vector in the tangent plane at `p`).  `sign` is ±1.0.
+pub fn perpendicular_offset(p: Vec3, tangent: Vec3, offset_rad: f64, sign: f64) -> Vec3 {
+    // p × tangent is perpendicular to both; magnitude 1 when they are unit and orthogonal.
+    let perp = p.cross(tangent).normalize();
+    let s = offset_rad * sign;
+    Vec3 {
+        x: p.x * s.cos() + perp.x * s.sin(),
+        y: p.y * s.cos() + perp.y * s.sin(),
+        z: p.z * s.cos() + perp.z * s.sin(),
+    }
+    .normalize()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +201,75 @@ mod tests {
         let s1 = slerp(a, b, 1.0);
         assert!((s0.x - a.x).abs() < 1e-9);
         assert!((s1.x - b.x).abs() < 1e-9);
+    }
+
+    #[test]
+    fn point_to_arc_distance_at_endpoint() {
+        let a = Vec3::from_latlon(0.0, 0.0);
+        let b = Vec3::from_latlon(0.0, 90.0);
+        // p is at a, so distance should be 0
+        let d = point_to_arc_distance(a, a, b);
+        assert!(d < 1e-9, "distance at endpoint should be ~0, got {d}");
+    }
+
+    #[test]
+    fn point_to_arc_distance_perpendicular() {
+        // Arc from equator (0°,0°) to equator (0°,90°).
+        // Point at (10°N, 45°E) is above the midpoint; distance should be close to 10° in radians.
+        let a = Vec3::from_latlon(0.0, 0.0);
+        let b = Vec3::from_latlon(0.0, 90.0);
+        let p = Vec3::from_latlon(10.0, 45.0);
+        let d = point_to_arc_distance(p, a, b);
+        let expected = 10.0_f64.to_radians();
+        assert!(
+            (d - expected).abs() < 0.005,
+            "perpendicular distance should be ≈10°, got {:.4}°",
+            d.to_degrees()
+        );
+    }
+
+    #[test]
+    fn arc_intersection_crossing_arcs() {
+        // Two arcs that cross: equatorial segment and a meridional segment.
+        let a1 = Vec3::from_latlon(0.0, -45.0);
+        let a2 = Vec3::from_latlon(0.0, 45.0);
+        let b1 = Vec3::from_latlon(-45.0, 0.0);
+        let b2 = Vec3::from_latlon(45.0, 0.0);
+        let result = arc_intersection(a1, a2, b1, b2);
+        assert!(result.is_some(), "crossing arcs should intersect");
+        let p = result.unwrap();
+        // Intersection should be near (0°, 0°)
+        let (lat, lon) = p.to_latlon();
+        assert!(lat.abs() < 0.01 && lon.abs() < 0.01, "got ({lat:.3}, {lon:.3})");
+    }
+
+    #[test]
+    fn arc_intersection_parallel_arcs() {
+        // Two arcs on the same great circle → None
+        let a1 = Vec3::from_latlon(0.0, 0.0);
+        let a2 = Vec3::from_latlon(0.0, 90.0);
+        let b1 = Vec3::from_latlon(0.0, 100.0);
+        let b2 = Vec3::from_latlon(0.0, 170.0);
+        let result = arc_intersection(a1, a2, b1, b2);
+        assert!(result.is_none(), "non-overlapping arcs on same great circle should not intersect");
+    }
+
+    #[test]
+    fn perpendicular_offset_preserves_unit_length() {
+        let p = Vec3::from_latlon(45.0, 30.0);
+        let tangent = Vec3::from_latlon(45.0, 120.0).cross(p).normalize();
+        let q = perpendicular_offset(p, tangent, 0.1, 1.0);
+        assert!((q.length() - 1.0).abs() < 1e-12, "offset point must be on unit sphere");
+    }
+
+    #[test]
+    fn perpendicular_offset_distance() {
+        let p = Vec3::from_latlon(0.0, 0.0);
+        // Tangent along the equator (east direction at origin)
+        let tangent = Vec3::from_latlon(0.0, 90.0).cross(p).normalize();
+        // Should NOT be zero (tangent ⊥ p check)
+        let q = perpendicular_offset(p, tangent, 0.05, 1.0);
+        let d = great_circle_distance_rad(p, q);
+        assert!((d - 0.05).abs() < 1e-9, "offset distance should be 0.05 rad, got {d:.6}");
     }
 }
