@@ -202,6 +202,31 @@ mod tests {
         );
     }
 
+    /// ✓ Polar rows are not a uniform ActiveCompressional band.
+    ///
+    /// Regression test for the degenerate-pole bug: with vertex-based coordinates,
+    /// all cells in row 0 mapped to (0,0,1) and received the same regime, producing
+    /// a full-width red band in the diagnostic PNG.  With cell-centred coordinates
+    /// each cell has a distinct sphere position, so the top row must not be uniformly
+    /// ActiveCompressional for any of the three test seeds.
+    #[test]
+    fn polar_rows_not_uniformly_compressional() {
+        for seed in [42u64, 7, 99] {
+            let sim = run(seed, 0.5, 64, 32);
+            let w = sim.regime_field.width;
+            // Row 0 = north polar row.
+            let top_regimes: Vec<TectonicRegime> =
+                (0..w).map(|c| sim.regime_field.get(0, c)).collect();
+            let all_compressional = top_regimes
+                .iter()
+                .all(|&r| r == TectonicRegime::ActiveCompressional);
+            assert!(
+                !all_compressional,
+                "seed={seed}: entire north-polar row is ActiveCompressional (pole band bug)"
+            );
+        }
+    }
+
     /// ✓ Full plate simulation < 500 ms for 5 plates on a 512×512 grid (release only).
     #[cfg(not(debug_assertions))]
     #[test]

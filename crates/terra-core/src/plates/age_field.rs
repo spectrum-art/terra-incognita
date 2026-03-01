@@ -99,9 +99,14 @@ pub fn find_subduction_sites(
 }
 
 /// Convert a grid cell to a unit-sphere point.
+///
+/// Uses **cell-centred** coordinates: row 0 maps to ~89.6°N (not 90°),
+/// row `height-1` to ~89.6°S.  This prevents degenerate pole mapping where
+/// all columns of the top or bottom row would collapse to the same Vec3 point,
+/// which caused uniform-regime bands spanning the full grid width.
 pub fn cell_to_vec3(r: usize, c: usize, width: usize, height: usize) -> Vec3 {
-    let lat_deg = 90.0 - r as f64 * 180.0 / (height - 1).max(1) as f64;
-    let lon_deg = -180.0 + c as f64 * 360.0 / (width - 1).max(1) as f64;
+    let lat_deg = 90.0 - (r as f64 + 0.5) * 180.0 / height as f64;
+    let lon_deg = -180.0 + (c as f64 + 0.5) * 360.0 / width as f64;
     Vec3::from_latlon(lat_deg, lon_deg)
 }
 

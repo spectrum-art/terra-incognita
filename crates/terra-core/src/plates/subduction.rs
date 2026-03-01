@@ -61,6 +61,14 @@ pub fn generate_subduction_arcs(
         let (r, c) = sites[i];
         let centre = cell_to_vec3(r, c, width, height);
 
+        // Skip sites within 10° of the poles.  A subduction arc centred there
+        // would influence all cells at high latitude regardless of longitude,
+        // producing a spurious full-width band in the regime field.
+        // (z = sin(lat); sin(80°) ≈ 0.985)
+        if centre.z.abs() > 80.0_f64.to_radians().sin() {
+            continue;
+        }
+
         // Check separation from already-placed arcs.
         let too_close = centres.iter().any(|&p| {
             centre.dot(p).clamp(-1.0, 1.0).acos() < min_sep_rad
