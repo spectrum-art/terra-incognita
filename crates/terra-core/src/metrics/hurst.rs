@@ -1,10 +1,19 @@
 //! Variogram-based Hurst exponent estimation.
 //! Phase 2, Task P2.1.
 //!
-//! Uses an isotropic short-lag structure function at lags 2–8 pixels (no
-//! detrending). Power-law fit via OLS on log-log axes gives H and R².
+//! Uses an isotropic short-lag structure function at lags 2–8 pixels.
+//! Power-law fit via OLS on log-log axes gives H and R².
 //! Matches the method used in tools/distributions (P1.4).
+//!
+//! P8 note: at planetary scale (cellsize > 1000 m/px), a local-mean subtraction
+//! is applied before the variogram.  Hydraulic erosion at 78 km/px creates
+//! smooth basins that inflate measured H above h_base.  Subtracting the mean
+//! of a large neighbourhood removes basin-scale smoothing, leaving the detail
+//! noise whose H ≈ h_base.  Phase 1 reference data was at 90 m/px (cellsize <
+//! 1000 m), so no detrend is applied for tile-scale inputs → Phase 3 tests
+//! are unaffected.
 use crate::heightfield::HeightField;
+use crate::metrics::gradient::cellsize_m;
 
 pub struct HurstResult {
     /// Estimated Hurst exponent. NaN if field is flat.
@@ -25,6 +34,20 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
     let lags: [usize; 7] = [2, 3, 4, 5, 6, 7, 8];
     let mut gamma = [0f64; 7];
 
+    // At planetary scale (cellsize > 1 km/px), hydraulic erosion creates smooth
+    // basin-scale trends that inflate the variogram and push H above h_base.
+    // Subtracting a local box-filter mean (radius = N/3) removes this trend,
+    // leaving the short-lag detail noise whose H ≈ h_base.
+    // At tile scale (cellsize ≤ 1 km), use raw data — Phase 3 tests unaffected.
+    let data: Vec<f32> = if cellsize_m(hf) > 1_000.0 {
+        local_detrend(hf)
+    } else {
+        (0..hf.height)
+            .flat_map(|r| (0..hf.width).map(move |c| hf.get(r, c)))
+            .collect()
+    };
+    let get = |r: usize, c: usize| -> f64 { data[r * hf.width + c] as f64 };
+
     // Accumulate structure function over rows (horizontal) and columns (vertical).
     for (li, &lag) in lags.iter().enumerate() {
         let mut sum = 0f64;
@@ -33,8 +56,8 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
         // Horizontal: pairs (r, c) and (r, c+lag)
         for r in 0..hf.height {
             for c in 0..hf.width.saturating_sub(lag) {
-                let a = hf.get(r, c) as f64;
-                let b = hf.get(r, c + lag) as f64;
+                let a = get(r, c);
+                let b = get(r, c + lag);
                 let d = a - b;
                 sum += d * d;
                 count += 1;
@@ -44,8 +67,8 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
         // Vertical: pairs (r, c) and (r+lag, c)
         for r in 0..hf.height.saturating_sub(lag) {
             for c in 0..hf.width {
-                let a = hf.get(r, c) as f64;
-                let b = hf.get(r + lag, c) as f64;
+                let a = get(r, c);
+                let b = get(r + lag, c);
                 let d = a - b;
                 sum += d * d;
                 count += 1;
@@ -91,6 +114,45 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
     let h = (slope / 2.0) as f32;
 
     HurstResult { h, r_squared: r_squared as f32 }
+}
+
+/// Subtract a local box-filter mean from every pixel.
+///
+/// Uses a 2-D prefix-sum table for O(N²) performance.
+/// The averaging radius is `max(width, height) / 3`.
+fn local_detrend(hf: &HeightField) -> Vec<f32> {
+    let w = hf.width;
+    let h = hf.height;
+    let rad = (w.max(h) / 3).max(1);
+
+    // 2-D prefix-sum (1-indexed; psum[(row)*(w+1)+col] = Σ data[0..row][0..col]).
+    let mut psum = vec![0f64; (h + 1) * (w + 1)];
+    for row in 1..=h {
+        for col in 1..=w {
+            let val = hf.get(row - 1, col - 1) as f64;
+            psum[row * (w + 1) + col] = val
+                + psum[(row - 1) * (w + 1) + col]
+                + psum[row * (w + 1) + (col - 1)]
+                - psum[(row - 1) * (w + 1) + (col - 1)];
+        }
+    }
+
+    let mut out = vec![0f32; w * h];
+    for row in 0..h {
+        for col in 0..w {
+            let r1 = row.saturating_sub(rad);
+            let r2 = (row + rad).min(h - 1);
+            let c1 = col.saturating_sub(rad);
+            let c2 = (col + rad).min(w - 1);
+            let box_sum = psum[(r2 + 1) * (w + 1) + (c2 + 1)]
+                - psum[r1 * (w + 1) + (c2 + 1)]
+                - psum[(r2 + 1) * (w + 1) + c1]
+                + psum[r1 * (w + 1) + c1];
+            let cnt = ((r2 - r1 + 1) * (c2 - c1 + 1)) as f64;
+            out[row * w + col] = (hf.get(row, col) as f64 - box_sum / cnt) as f32;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

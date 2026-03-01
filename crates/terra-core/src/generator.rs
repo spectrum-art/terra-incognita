@@ -341,6 +341,35 @@ fn classify_terrain(params: &GlobalParams) -> TerrainClass {
 mod tests {
     use super::*;
 
+    /// Diagnostic: 5-seed Hurst and full score check after h_base calibration.
+    #[test]
+    #[ignore]
+    fn diagnostic_hurst_5seeds() {
+        use crate::metrics::{compute_hurst, score::compute_realism_score};
+        let gen = PlanetGenerator::new();
+        let seeds = [42u64, 1337, 99999, 271828, 314159];
+        let mut h_vals = Vec::new();
+        println!("\n--- Hurst 5-seed diagnostic (FluvialHumid, default params) ---");
+        for seed in seeds {
+            let mut p = GlobalParams::default();
+            p.seed = seed;
+            let result = gen.generate(&p);
+            let tc = classify_terrain(&p);
+            let h = compute_hurst(&result.heightfield).h;
+            let score = compute_realism_score(&result.heightfield, tc);
+            let h_s = score.metrics.iter().find(|m| m.name == "hurst").map(|m| m.score_0_1).unwrap_or(0.0);
+            println!("seed={seed:6}  class={tc:?}  H={h:.3}  hurst_score={:.1}%  total={:.1}",
+                h_s * 100.0, score.total);
+            for m in &score.metrics {
+                print!("  {}: {:.3}({:.0}%)", m.name, m.raw_value, m.score_0_1 * 100.0);
+            }
+            println!();
+            h_vals.push(h);
+        }
+        let mean_h = h_vals.iter().sum::<f32>() / h_vals.len() as f32;
+        println!("mean H = {mean_h:.3}  target [0.357, 0.629]");
+    }
+
     /// Generate with default params, confirm non-flat output and no panic.
     #[test]
     fn generate_seed42_default_params_non_flat() {

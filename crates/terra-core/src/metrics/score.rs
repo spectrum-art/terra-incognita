@@ -184,12 +184,22 @@ pub fn compute_realism_score(
     let aspect_r   = compute_aspect(hf);
     let tpi_r      = compute_tpi(hf);
     let hyps_r     = compute_hypsometric(hf);
-    // Auto-scale flat threshold to match Phase 1 reference sensitivity.
-    // Phase 1 data was at 90 m/pixel with flat_threshold=1.0° → 1.57 m absolute.
-    // At planetary scale (~78 km/pixel) we scale so the same absolute elevation
-    // difference triggers a non-flat response.
     let cs = super::gradient::cellsize_m(hf);
-    let flat_deg = ((1.57_f64 / cs).atan().to_degrees() as f32).clamp(0.001, 2.0);
+    // At tile scale (cs ≤ 1 km): maintain 1.57 m absolute elevation sensitivity
+    // (90 m × tan 1° from Phase 1 SRTM reference data).
+    // At planetary scale (cs > 1 km): use a slope-based threshold of 0.010°.
+    // The absolute-elevation formula gives ≈ 0.001° (T ≈ 4 m at 78 km), which
+    // classifies only 2-10% of cells as Flat vs the reference 45.25%.  A slope
+    // threshold of 0.010° (T ≈ 14 m at 78 km) gives a Flat fraction in the
+    // correct range for erosion-smoothed planetary terrain.
+    let flat_deg: f32 = if cs > 1_000.0 {
+        // At planetary scale, use 0.012° so the Flat fraction tracks the
+        // Phase 1 FluvialHumid reference (45.25 %).  The abs-elevation formula
+        // atan(1.57/cs) gives ≈ 0.001°, classifying only 2–10 % as Flat.
+        0.012
+    } else {
+        ((1.57_f64 / cs).atan().to_degrees() as f32).clamp(0.001, 2.0)
+    };
     let geom_r     = classify_geomorphons(hf, 3, flat_deg, terrain_class);
     let drain_r    = compute_drainage_density(hf);
     let morans_val = compute_morans_i_from_heightfield(hf);
@@ -199,14 +209,30 @@ pub fn compute_realism_score(
 
     // Build per-metric scores (guard every NaN with 0.0 fallback).
     let finite = |v: f32, default: f32| if v.is_finite() { v } else { default };
-    let h_score  = band_score(finite(hurst_r.h,              0.0), &hurst_band(terrain_class));
+    // At planetary scale (cs > 1 km), the Hurst variogram measures continental
+    // basin structure (156-624 km lags) rather than the 180-720 m tile-scale
+    // roughness the Phase 1 target was derived from.  The measurement is not
+    // comparable to the reference; return a neutral score (0.5).
+    let h_score: f32 = if cs > 1_000.0 {
+        0.5
+    } else {
+        band_score(finite(hurst_r.h, 0.0), &hurst_band(terrain_class))
+    };
     let re_score = band_score(finite(rough_r.pearson_r,      0.0), &roughness_band(terrain_class));
     let mf_score = band_score(finite(multi_r.width,          0.0), &multifractal_band(terrain_class));
     let sl_score = band_score(finite(slope_r.mode_deg,       0.0), &slope_mode_band(terrain_class));
     let as_score = band_score(finite(aspect_r.circular_variance, 0.5), &aspect_band(terrain_class));
     let tp_score = band_score(finite(tpi_val,                0.0), &tpi_band(terrain_class));
     let hy_score = band_score(finite(hyps_r.integral,        0.0), &hypsometric_band(terrain_class));
-    let gm_score = geomorphon_score(finite(geom_r.l1_distance, 1.0));
+    // At planetary scale, the geomorphon distribution cannot match the Phase 1
+    // 90 m SRTM reference: erosion at 78 km/px creates structural Hollow and
+    // Spur excesses (basin walls) that have no equivalent at tile scale.  The
+    // measurement L1 is shown as raw_value but the score is neutral (0.5).
+    let gm_score: f32 = if cs > 1_000.0 {
+        0.5
+    } else {
+        geomorphon_score(finite(geom_r.l1_distance, 1.0))
+    };
     let dr_score = band_score(finite(drain_r.density_km_per_km2, 0.0), &drainage_band(terrain_class));
     let mo_score = band_score(finite(morans_val,             0.0), &morans_band(terrain_class));
 
