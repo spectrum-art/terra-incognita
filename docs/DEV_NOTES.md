@@ -178,6 +178,51 @@ is out of scope for Phase 3.
 
    **All 5 roadmap end states passing** (integration tests in climate::tests).
 
+   **P5.2 orographic multipliers corrected** (post-phase fix): Design Bible §4.2 specifies
+   1.5×–3× windward and 0.3×–0.7× leeward, depending on belt height. Original implementation
+   used fixed constants (1.8×/0.45×). Fixed to interpolate over the full DB range using
+   belt width as a proxy for relief: 1 cell (narrow ridge) → 1.5×/0.70×; 8+ cells
+   (major range) → 3.0×/0.30×. All roadmap end states still pass. 145 tests.
+
+
+20260228 (continued):
+6. tools/visualize: diagnostic PNG generator added. Not part of the main pipeline.
+
+   **Outputs** (512×256, seed=42, default GlobalParams, written to data/debug/):
+   - regime_field.png — 5-colour tectonic regime map (tan/red/orange/steel-blue/purple)
+   - map_field.png — MAP heatmap, white (0 mm) → deep blue (3000+ mm)
+   - grain_intensity.png — grayscale grain intensity (0=black, 1=white)
+   - orographic_map.png — MAP heatmap with ActiveCompressional boundary cells outlined red
+
+   **Usage**: `cargo run --package visualize` from workspace root.
+   Re-run any time to refresh after pipeline changes.
+
+
+7. Bug fix (P4 / regime_field): full-width ActiveCompressional band at north pole.
+
+   **Root cause**: `cell_to_vec3` used vertex-based coordinates:
+   `lat = 90 − r × 180 / (height−1)`. For row r=0 this gives lat=90° exactly.
+   `Vec3::from_latlon(90°, any_lon)` returns (0,0,1) for every longitude since
+   cos(90°)=0. All 512 cells in the top row collapsed to the same sphere point,
+   computed identical distances to every arc, and received the same regime —
+   producing a solid red band spanning the full image width.
+
+   Compounding issue: the age field assigned high age to polar cells (far from all
+   ridges), making them subduction sites. An arc placed with its centre at/near
+   (0,0,1) had its 3° influence radius sweeping the entire polar region.
+
+   **Fix 1** (`age_field.rs` — `cell_to_vec3`): switched to cell-centred coordinates:
+   `lat = 90 − (r+0.5) × 180 / height`. Row 0 now maps to ~89.65°N; each column
+   maps to a distinct sphere point. No row can produce a degenerate uniform band.
+
+   **Fix 2** (`subduction.rs` — `generate_subduction_arcs`): sites where
+   |sin(lat)| > sin(80°) are skipped. Arc centres are excluded within 10° of either
+   pole. Even with correct coordinate mapping, a polar arc's influence would sweep
+   entire latitude circles.
+
+   **Regression test**: `plates::tests::polar_rows_not_uniformly_compressional`
+   verifies seeds 42, 7, and 99 all pass. 146 tests, 0 clippy warnings.
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
