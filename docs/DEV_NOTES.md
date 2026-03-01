@@ -327,6 +327,36 @@ is out of scope for Phase 3.
      (WSL2 runs CPU-bound code at 9-10× slower than native Linux — pre-existing constraint)
 
 
+20260228 (continued):
+10. Pre-Phase 8 slider wiring audit. All 8 sliders are now correctly wired.
+
+   **debug_params endpoint**: `derive_debug_params(&GlobalParams) -> DebugParams` in generator.rs.
+   Analytical — no full simulation. Exposed as `debug_params(JsValue)` in WASM.
+   Debug button appears at `?debug=1` in URL; logs `console.table()` of resolved params.
+
+   **Audit results** (before fixes):
+
+   | Slider | Before | Fix |
+   |---|---|---|
+   | tectonic_activity | DEAD — not wired anywhere | Scale grain_intensity by (0.3+ta*1.4); scale elevation by (0.5+ta*1.5) |
+   | water_abundance | Climate MAP only; erosion not scaled | Scale erodibility field by (0.3+wa*1.4); terrain class flips to FluvialArid at wa<0.30 |
+   | surface_age | Stored in NoiseParams but generate_tile() never reads it | h_base -= age*0.10; grain_intensity *= (1-age*0.40); erosion *= (0.3+age*1.4) |
+   | climate_diversity | Climate MAP noise only; h_variance fixed at 0.15 | h_variance = 0.10 + cd*0.15 (range 0.10–0.25) |
+   | glaciation | dominant_glacial_class() thresholds too high → returned None at default 0.30 | Direct slider threshold (>0.65 Active, >0.25 Former, else None); removed dominant_glacial_class() |
+   | continental_fragmentation | Wired ✓ | No change |
+   | mountain_prevalence | Terrain class threshold + h_base only | Added mountain_height_scale = 0.7+mp*0.6 applied to heightfield |
+   | seed | Wired ✓ | No change |
+
+   **Parameter ranges at extremes** (all-min vs all-max):
+   - All-min: Cratonic, gc=None, h_base=0.650, h_var=0.100, gi_scale=0.300, uplift=0.50×, mtn=0.70×, eros=0.090, 2 ridges
+   - All-max: Alpine, gc=Active, h_base=0.750, h_var=0.250, gi_scale=1.020, uplift=2.00×, mtn=1.30×, eros=2.000, 10 ridges
+
+   **Wiring interaction notes**:
+   - surface_age and tectonic_activity partially counteract each other's effect on grain_intensity (old+active = 1.02, vs old+quiet = 0.60 or fresh+active = 1.70).
+   - water_abundance=0 → terrain_class flips to FluvialArid (elevation range 2000m vs 500m for FluvialHumid) — this is the largest single-slider effect on base elevation.
+   - Combined uplift at default params: tectonic(1.25) × mountain(1.00) = 1.25× of class elevation range.
+
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
