@@ -71,7 +71,10 @@ pub fn generate(params_js: JsValue) -> Result<JsValue, JsValue> {
     let params: GlobalParams = serde_wasm_bindgen::from_value(params_js)
         .map_err(|e| JsValue::from_str(&format!("Invalid params: {e}")))?;
 
+    // Use JS Date.now() for timing — std::time::Instant panics on wasm32.
+    let t0 = js_sys::Date::now();
     let result = PlanetGenerator::new().generate(&params);
+    let generation_time_ms = (js_sys::Date::now() - t0) as u64;
 
     let js_result = PlanetResultJs {
         heights: result.heightfield.data,
@@ -80,7 +83,7 @@ pub fn generate(params_js: JsValue) -> Result<JsValue, JsValue> {
         width: terra_core::generator::GRID_WIDTH as u32,
         height: terra_core::generator::GRID_HEIGHT as u32,
         score: score_to_js(result.score),
-        generation_time_ms: result.generation_time_ms,
+        generation_time_ms,
     };
 
     serde_wasm_bindgen::to_value(&js_result)

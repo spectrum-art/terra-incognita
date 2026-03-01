@@ -81,7 +81,6 @@ impl PlanetGenerator {
     ///   4. Hydraulic shaping
     ///   5. Realism scoring
     pub fn generate(&self, params: &GlobalParams) -> PlanetResult {
-        let start = std::time::Instant::now();
 
         // ── 1. Plate simulation ─────────────────────────────────────────────
         let plates = simulate_plates(
@@ -129,14 +128,14 @@ impl PlanetGenerator {
         // ── 5. Realism scoring ──────────────────────────────────────────────
         let score = compute_realism_score(&hf, noise_params.terrain_class);
 
-        let generation_time_ms = start.elapsed().as_millis() as u64;
-
         PlanetResult {
             heightfield: hf,
             regime_field: plates.regime_field.data,
             map_field: climate.map_field,
             score,
-            generation_time_ms,
+            // Timing measured by the caller (WASM layer uses js_sys::Date::now();
+            // native callers may set this themselves if needed).
+            generation_time_ms: 0,
         }
     }
 }
