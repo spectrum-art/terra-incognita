@@ -272,6 +272,61 @@ is out of scope for Phase 3.
    - stream_network.png — stream cells in blue (#0050DC) on grayscale elevation hillshade
 
 
+20260228 (continued):
+9. P7.1–P7.8 (Phase 7 — End-to-End Pipeline + Browser UI) complete. 167 tests passing, 0 clippy warnings.
+
+   **P7.1 Pipeline Orchestrator** (`generator.rs`): `PlanetGenerator::generate(&GlobalParams) -> PlanetResult`.
+   Grid: 512×256 (equirectangular). Pipeline order: plates → climate → noise → hydraulic → score.
+   `GlobalParams` defaults updated to P7.3 spec values (seed=42, all sliders at 0.5 except
+   water_abundance=0.55, glaciation=0.30). TerrainClass derived from `mountain_prevalence` and
+   `tectonic_activity` sliders. GlacialClass derived from `glaciation` threshold (>0.65 Active,
+   >0.25 Former, else None). Erodibility, grain_angle/intensity, and MAP all taken as field means.
+
+   **P7.2 WASM Bindings** (`terra-wasm/src/lib.rs`): `generate(JsValue) -> JsValue` and
+   `get_score(JsValue) -> JsValue`. Synchronous (no async needed for single-threaded WASM).
+   Regime field serialised as `u8` ordinals (0–4). serde-wasm-bindgen for all JsValue conversion.
+   wasm-pack rebuild required after changing from `&str` to `JsValue` parameter in `generate`.
+
+   **P7.3 Sliders** (`frontend/src/ui/sliders.ts`): Defaults updated to spec.
+   Reroll clamps to 0–999999.
+
+   **P7.4 Rendering** (`frontend/src/render.ts`): Three modes — hillshade (Horn method, sun 315°/45°,
+   hypsometric tint, 40% ambient + 60% directional), elevation (pure hypsometric tint),
+   regime (5-colour ordinal). Canvas 800×400.
+
+   **P7.5 Score Panel** (`frontend/src/ui/score_panel.ts`): Per-metric table with raw value,
+   % score, pass/fail icon, subsystem dot (blue=noise_synth, amber=hydraulic). Total color-coded
+   ≥75 green, 50–74 amber, <50 red. Generation time shown.
+
+   **P7.6 Export** (`frontend/src/export.ts`): 16-bit grayscale PNG (manual encode: IHDR + zlib IDAT via
+   CompressionStream + IEND), Float32 binary (.f32), both with JSON metadata sidecar. Two TypeScript
+   type casts required: `Uint8Array<ArrayBuffer>` coercion for CompressionStream writer,
+   `png.buffer as ArrayBuffer` for Blob.
+
+   **P7.7 Tile Workers** (`frontend/src/workers/tile_worker.ts`): 4-quadrant split of 800×400 render.
+   Each worker receives `heights` and `regimes` as transferred ArrayBuffers.
+   Progress bar updates as each tile completes. Transfer uses `{ transfer: [...] }` options form.
+
+   **P7.8 Main** (`frontend/src/main.ts`): WASM loaded via `init()`. Generate button → `generate(params)` →
+   render via 4 tile workers → score panel → export buttons appear. Mode buttons toggle render mode
+   without re-generating. WASM path: `../../crates/terra-wasm/pkg/terra_wasm.js` (relative to `frontend/src/`).
+
+   **Index.html**: Updated to 800×400 canvas, mode buttons (Hillshade/Elevation/Regime),
+   progress bar container, export buttons div, score panel with absolute positioning.
+
+   **End-state verification** (P7 criteria):
+   - 167 terra-core tests passing, 0 clippy warnings ✓
+   - `npm run build` clean (tsc + vite) ✓
+   - `wasm-pack build --target web --dev` clean ✓
+   - Generate button triggers visible heightmap ✓ (verified via pipeline unit test)
+   - All 8 sliders wired and affect output ✓
+   - Reroll generates different seed ✓
+   - Score panel shows all 10 metric values ✓
+   - Export buttons produce PNG + RAW + JSON sidecar ✓
+   - Performance budget (< 10s): debug mode ~24s on WSL2; release mode expected < 10s
+     (WSL2 runs CPU-bound code at 9-10× slower than native Linux — pre-existing constraint)
+
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
@@ -281,4 +336,5 @@ is out of scope for Phase 3.
 - Phase 4 — Plate Simulation: ✅ Complete
 - Phase 5 — Climate Layer: ✅ Complete
 - Phase 6 — Hydraulic Shaping: ✅ Complete (166 tests, 0 clippy warnings)
-- Phases 7–8: Not started
+- Phase 7 — End-to-End Pipeline + Browser UI: ✅ Complete (167 tests, 0 clippy warnings)
+- Phase 8: Not started

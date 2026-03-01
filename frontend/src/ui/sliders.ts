@@ -15,28 +15,30 @@ export interface GlobalParams {
 }
 
 const SLIDER_DEFS = [
-  { key: "tectonic_activity",       label: "Tectonic Activity",        min: 0, max: 1, default: 0.35, step: 0.01 },
-  { key: "water_abundance",         label: "Water Abundance",           min: 0, max: 1, default: 0.55, step: 0.01 },
-  { key: "surface_age",             label: "Surface Age",               min: 0, max: 1, default: 0.50, step: 0.01 },
-  { key: "climate_diversity",       label: "Climate Diversity",         min: 0, max: 1, default: 0.70, step: 0.01 },
-  { key: "glaciation",              label: "Glaciation",                min: 0, max: 1, default: 0.10, step: 0.01 },
-  { key: "continental_fragmentation", label: "Continental Fragmentation", min: 0, max: 1, default: 0.40, step: 0.01 },
-  { key: "mountain_prevalence",     label: "Mountain Prevalence",      min: 0, max: 1, default: 0.25, step: 0.01 },
+  { key: "tectonic_activity",         label: "Tectonic Activity",         min: 0, max: 1, default: 0.50, step: 0.01 },
+  { key: "water_abundance",           label: "Water Abundance",            min: 0, max: 1, default: 0.55, step: 0.01 },
+  { key: "surface_age",               label: "Surface Age",                min: 0, max: 1, default: 0.50, step: 0.01 },
+  { key: "climate_diversity",         label: "Climate Diversity",          min: 0, max: 1, default: 0.50, step: 0.01 },
+  { key: "glaciation",                label: "Glaciation",                 min: 0, max: 1, default: 0.30, step: 0.01 },
+  { key: "continental_fragmentation", label: "Continental Fragmentation",  min: 0, max: 1, default: 0.50, step: 0.01 },
+  { key: "mountain_prevalence",       label: "Mountain Prevalence",        min: 0, max: 1, default: 0.50, step: 0.01 },
 ] as const;
 
+const DEFAULT_SEED = 42;
+
 export function initSliders(container: HTMLElement): () => GlobalParams {
-  const values: Record<string, number> = { seed: 0 };
+  const values: Record<string, number> = { seed: DEFAULT_SEED };
 
   // Seed row
   const seedRow = document.createElement("div");
   seedRow.innerHTML = `<label style="font-size:0.8rem">Seed</label><br>
-    <input type="number" id="seed-input" value="0" style="width:100%">
+    <input type="number" id="seed-input" value="${DEFAULT_SEED}" min="0" max="999999" style="width:100%">
     <button id="reroll-btn" style="width:100%;margin-top:4px">Reroll</button>`;
   container.appendChild(seedRow);
 
   const seedInput = seedRow.querySelector<HTMLInputElement>("#seed-input")!;
   seedRow.querySelector<HTMLButtonElement>("#reroll-btn")!.addEventListener("click", () => {
-    const newSeed = Math.floor(Math.random() * 2 ** 32);
+    const newSeed = Math.floor(Math.random() * 1_000_000);
     seedInput.value = String(newSeed);
     values["seed"] = newSeed;
   });

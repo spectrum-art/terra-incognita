@@ -24,7 +24,7 @@
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
+        gap: 0.5rem;
       }
       #sidebar h1 {
         font-size: 1rem;
@@ -38,25 +38,61 @@
         flex: 1;
         position: relative;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
         background: #05050a;
+        gap: 8px;
       }
       canvas {
         max-width: 100%;
-        max-height: 100%;
         image-rendering: pixelated;
+      }
+      #mode-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .mode-btn {
+        padding: 4px 10px;
+        background: #222;
+        border: 1px solid #444;
+        border-radius: 3px;
+        color: #ccc;
+        font-size: 0.75rem;
+        cursor: pointer;
+      }
+      .mode-btn.active {
+        background: #1a3a6a;
+        border-color: #8af;
+        color: #8af;
+      }
+      #progress-bar-container {
+        width: 800px;
+        max-width: 100%;
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        display: none;
+      }
+      #progress-bar {
+        height: 100%;
+        background: #3a6;
+        border-radius: 2px;
+        width: 0%;
+        transition: width 0.1s ease;
       }
       #score-panel {
         position: absolute;
         top: 1rem;
         right: 1rem;
-        background: rgba(0,0,0,0.7);
+        background: rgba(0,0,0,0.85);
         border: 1px solid #333;
         border-radius: 4px;
         padding: 0.75rem;
         font-size: 0.75rem;
-        min-width: 180px;
+        min-width: 200px;
+        max-height: calc(100vh - 2rem);
+        overflow-y: auto;
         display: none;
       }
       #score-panel.visible { display: block; }
@@ -74,25 +110,49 @@
       #generate-btn:hover { background: #4b7; }
       #generate-btn:disabled { background: #444; cursor: not-allowed; }
       #status { font-size: 0.75rem; color: #888; min-height: 1.2em; }
+      #export-buttons {
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      #export-buttons.visible { display: flex; }
+      .export-btn {
+        width: 100%;
+        padding: 0.4rem;
+        background: #1a2a3a;
+        border: 1px solid #335;
+        border-radius: 4px;
+        color: #8af;
+        font-size: 0.78rem;
+        cursor: pointer;
+      }
+      .export-btn:hover { background: #1e3550; }
     </style>
   </head>
   <body>
     <aside id="sidebar">
       <h1>Terra Incognita</h1>
-      <div id="sliders-container">
-        <!-- Populated by sliders.ts (Phase 7, P7.3) -->
-        <p style="color:#666;font-size:0.8rem;">UI sliders — Phase 7</p>
+      <div id="sliders-container"></div>
+      <button id="generate-btn">Generate</button>
+      <div id="status">Ready.</div>
+      <div id="export-buttons">
+        <button class="export-btn" id="btn-png">Download PNG (16-bit)</button>
+        <button class="export-btn" id="btn-raw">Download RAW (.f32)</button>
       </div>
-      <button id="generate-btn" disabled>Generate</button>
-      <div id="status">WASM loading…</div>
     </aside>
 
     <div id="canvas-container">
-      <canvas id="main-canvas" width="512" height="512"></canvas>
-      <div id="score-panel">
-        <!-- Populated by score_panel.ts (Phase 7, P7.5) -->
-        <strong>Realism Score</strong><br/>Phase 7
+      <div id="mode-buttons">
+        <button class="mode-btn active" data-mode="hillshade">Hillshade</button>
+        <button class="mode-btn" data-mode="elevation">Elevation</button>
+        <button class="mode-btn" data-mode="regime">Regime</button>
       </div>
+      <canvas id="main-canvas" width="800" height="400"></canvas>
+      <div id="progress-bar-container">
+        <div id="progress-bar"></div>
+      </div>
+      <div id="score-panel"></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
