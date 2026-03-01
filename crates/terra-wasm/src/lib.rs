@@ -3,7 +3,7 @@
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
-use terra_core::generator::{GlobalParams, PlanetGenerator};
+use terra_core::generator::{derive_debug_params, GlobalParams, PlanetGenerator};
 use terra_core::metrics::score::{compute_realism_score, RealismScore};
 use terra_core::noise::params::TerrainClass;
 use terra_core::plates::regime_field::TectonicRegime;
@@ -123,5 +123,22 @@ pub fn get_score(heightfield_js: JsValue) -> Result<JsValue, JsValue> {
 
     let score = compute_realism_score(&hf, tc);
     serde_wasm_bindgen::to_value(&score_to_js(score))
+        .map_err(|e| JsValue::from_str(&format!("Serialisation error: {e}")))
+}
+
+/// Resolve GlobalParams → internal DebugParams without running the full pipeline.
+///
+/// Use this to verify slider wiring: each slider should change at least one
+/// field when moved from 0 to 1. Prints-to-console from JS:
+/// ```js
+/// console.log(debug_params(params));
+/// ```
+#[wasm_bindgen]
+pub fn debug_params(params_js: JsValue) -> Result<JsValue, JsValue> {
+    let params: GlobalParams = serde_wasm_bindgen::from_value(params_js)
+        .map_err(|e| JsValue::from_str(&format!("Invalid params: {e}")))?;
+
+    let dbg = derive_debug_params(&params);
+    serde_wasm_bindgen::to_value(&dbg)
         .map_err(|e| JsValue::from_str(&format!("Serialisation error: {e}")))
 }

@@ -2,12 +2,12 @@
 //! Phase 7, Task P7.1.
 
 use serde::{Deserialize, Serialize};
-use crate::climate::simulate_climate;
+use crate::climate::{simulate_climate, latitude_bands::map_base_mm};
 use crate::heightfield::HeightField;
 use crate::hydraulic::apply_hydraulic_shaping;
 use crate::metrics::score::{compute_realism_score, RealismScore};
 use crate::noise::{generate_tile, params::{GlacialClass, NoiseParams, TerrainClass}};
-use crate::plates::{simulate_plates, regime_field::TectonicRegime};
+use crate::plates::{simulate_plates, regime_field::TectonicRegime, ridges::n_ridges_from_fragmentation};
 
 // ── Grid size ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +64,94 @@ pub struct PlanetResult {
     pub generation_time_ms: u64,
 }
 
+// ── Debug params ─────────────────────────────────────────────────────────────
+
+/// Lightweight resolved-parameter snapshot for slider audit / diagnostics.
+/// Computed analytically without running the full generation pipeline.
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugParams {
+    pub terrain_class:        String,
+    pub glacial_class:        String,
+    pub h_base:               f32,
+    pub h_variance:           f32,
+    pub erosion_iterations:   u32,
+    pub n_ridges:             usize,
+    pub tectonic_uplift_scale: f32,
+    pub mountain_height_scale: f32,
+    pub map_base_mm_equator:  f32,
+    pub erosion_factor:       f32,
+    pub grain_intensity_scale: f32,
+    pub warp_macro:           f32,
+    pub warp_micro:           f32,
+}
+
+/// Resolve GlobalParams → DebugParams without running the full pipeline.
+pub fn derive_debug_params(p: &GlobalParams) -> DebugParams {
+    let terrain_class = classify_terrain(p);
+    let glacial_class = direct_glacial_class(p.glaciation);
+
+    // Hurst and variance.
+    let h_base = (0.65 + p.mountain_prevalence * 0.20 - p.surface_age * 0.10)
+        .clamp(0.55, 0.90);
+    let h_variance = (0.10 + p.climate_diversity * 0.15).clamp(0.10, 0.25);
+
+    // Per-class erosion iteration counts (mirror hydraulic::params_for_class).
+    let erosion_iterations = match terrain_class {
+        TerrainClass::Alpine       => 30,
+        TerrainClass::FluvialHumid => 50,
+        TerrainClass::FluvialArid  => 20,
+        TerrainClass::Cratonic     => 10,
+        TerrainClass::Coastal      => 25,
+    };
+
+    // Plate parameters (analytical — no simulation).
+    let n_ridges = n_ridges_from_fragmentation(p.continental_fragmentation);
+
+    // Elevation scaling.
+    let tectonic_uplift_scale = 0.5 + p.tectonic_activity * 1.5;
+    let mountain_height_scale = 0.7 + p.mountain_prevalence * 0.6;
+
+    // Climate (equatorial MAP, analytical).
+    let map_base_mm_equator = map_base_mm(0.0, p.water_abundance);
+
+    // Erosion factor applied to erodibility field.
+    let water_scale = 0.3 + p.water_abundance * 1.4;
+    let age_scale   = 0.3 + p.surface_age   * 1.4;
+    let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
+
+    // Grain intensity multipliers from tectonic and age.
+    let tectonic_grain = 0.3 + p.tectonic_activity * 1.4;
+    let age_grain      = 1.0 - p.surface_age * 0.40;
+    let grain_intensity_scale = (tectonic_grain * age_grain).clamp(0.0, 2.0);
+
+    DebugParams {
+        terrain_class:        format!("{terrain_class:?}"),
+        glacial_class:        format!("{glacial_class:?}"),
+        h_base,
+        h_variance,
+        erosion_iterations,
+        n_ridges,
+        tectonic_uplift_scale,
+        mountain_height_scale,
+        map_base_mm_equator,
+        erosion_factor,
+        grain_intensity_scale,
+        warp_macro: 0.015,
+        warp_micro: 0.004,
+    }
+}
+
+/// Direct slider → GlacialClass (used for both debug and generation).
+fn direct_glacial_class(glaciation: f32) -> GlacialClass {
+    if glaciation > 0.65 {
+        GlacialClass::Active
+    } else if glaciation > 0.25 {
+        GlacialClass::Former
+    } else {
+        GlacialClass::None
+    }
+}
+
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
 /// The main pipeline orchestrator.
@@ -102,7 +190,6 @@ impl PlanetGenerator {
         );
 
         // ── 3. Noise synthesis ──────────────────────────────────────────────
-        // Derive NoiseParams from plate and climate fields.
         let noise_params = derive_noise_params(params, &plates, &climate);
 
         let seed32 = (params.seed & 0xFFFF_FFFF) as u32;
@@ -115,13 +202,32 @@ impl PlanetGenerator {
             -90.0,  90.0,
         );
 
+        // ── Tectonic uplift + mountain height scaling ───────────────────────
+        // tectonic_activity: more active tectonics → higher relief (0.5× to 2.0×).
+        // mountain_prevalence: additional direct height scale (0.7× to 1.3×).
+        let tectonic_uplift = 0.5 + params.tectonic_activity * 1.5;
+        let mountain_scale  = 0.7 + params.mountain_prevalence * 0.6;
+        let total_uplift    = tectonic_uplift * mountain_scale;
+        for v in &mut hf.data { *v *= total_uplift; }
+
         // ── 4. Hydraulic shaping ────────────────────────────────────────────
-        // Dominant glacial class from the climate mask.
-        let glacial_class = dominant_glacial_class(&climate.glaciation_mask);
+        // Erosion intensity scales with water_abundance (more water → more erosion)
+        // and surface_age (older terrain → more cumulative erosion).
+        let water_scale    = 0.3 + params.water_abundance * 1.4;
+        let age_scale      = 0.3 + params.surface_age    * 1.4;
+        let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
+        let scaled_erodibility: Vec<f32> = plates.erodibility_field.iter()
+            .map(|&k| (k * erosion_factor).clamp(0.0, 1.0))
+            .collect();
+
+        // Glacial class: direct slider threshold (not climate-mask-derived, which
+        // has too high a threshold to trigger at low slider values).
+        let glacial_class = direct_glacial_class(params.glaciation);
+
         apply_hydraulic_shaping(
             &mut hf,
             noise_params.terrain_class,
-            &plates.erodibility_field,
+            &scaled_erodibility,
             glacial_class,
         );
 
@@ -161,22 +267,29 @@ fn derive_noise_params(
         sum / plates.erodibility_field.len() as f32
     };
 
-    // Mean grain angle and intensity from grain field.
+    // Mean grain angle from plate simulation.
     let grain_angle = if plates.grain_field.angles.is_empty() {
         0.0
     } else {
         let sum: f32 = plates.grain_field.angles.iter().sum();
         sum / plates.grain_field.angles.len() as f32
     };
-    let grain_intensity = if plates.grain_field.intensities.is_empty() {
+
+    // Grain intensity: plate field mean, then scaled by tectonic_activity (more
+    // active plates → stronger structural grain) and surface_age (older terrain
+    // → grain eroded away).
+    let raw_grain = if plates.grain_field.intensities.is_empty() {
         0.0
     } else {
         let sum: f32 = plates.grain_field.intensities.iter().sum();
-        (sum / plates.grain_field.intensities.len() as f32)
-            .clamp(0.0, 1.0)
+        sum / plates.grain_field.intensities.len() as f32
     };
+    let tectonic_grain_scale = 0.3 + params.tectonic_activity * 1.4;
+    let age_grain_scale      = 1.0 - params.surface_age * 0.40;
+    let grain_intensity = (raw_grain * tectonic_grain_scale * age_grain_scale).clamp(0.0, 1.0);
 
-    // Mean MAP.
+    // Mean MAP for NoiseParams record (not consumed by generate_tile, but kept
+    // for downstream tooling).
     let map_mm = if climate.map_field.is_empty() {
         800.0
     } else {
@@ -184,20 +297,21 @@ fn derive_noise_params(
         sum / climate.map_field.len() as f32
     };
 
-    // Hurst exponent: higher mountain prevalence → higher H.
-    let h_base = (0.65 + params.mountain_prevalence * 0.20).clamp(0.65, 0.90);
+    // Hurst exponent: higher mountain_prevalence → sharper ridges (higher H);
+    // higher surface_age → smoother, more degraded terrain (lower H).
+    let h_base = (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10)
+        .clamp(0.55, 0.90);
 
-    // Glacial class: threshold on slider.
-    let glacial_class = match params.glaciation {
-        g if g > 0.65 => GlacialClass::Active,
-        g if g > 0.25 => GlacialClass::Former,
-        _ => GlacialClass::None,
-    };
+    // Multifractal variance: more climate_diversity → more spatial H variation.
+    let h_variance = (0.10 + params.climate_diversity * 0.15).clamp(0.10, 0.25);
+
+    // Glacial class: direct slider threshold (consistent with debug_params).
+    let glacial_class = direct_glacial_class(params.glaciation);
 
     NoiseParams {
         terrain_class,
         h_base,
-        h_variance: 0.15,
+        h_variance,
         grain_angle,
         grain_intensity,
         map_mm,
@@ -220,21 +334,6 @@ fn classify_terrain(params: &GlobalParams) -> TerrainClass {
     }
 }
 
-/// Return the most common GlacialClass in the mask.
-fn dominant_glacial_class(mask: &[GlacialClass]) -> GlacialClass {
-    if mask.is_empty() {
-        return GlacialClass::None;
-    }
-    let active = mask.iter().filter(|&&g| g == GlacialClass::Active).count();
-    let former = mask.iter().filter(|&&g| g == GlacialClass::Former).count();
-    if active >= former && active * 5 > mask.len() {
-        GlacialClass::Active
-    } else if former * 3 > mask.len() {
-        GlacialClass::Former
-    } else {
-        GlacialClass::None
-    }
-}
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
 

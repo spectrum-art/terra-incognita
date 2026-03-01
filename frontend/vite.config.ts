@@ -5,6 +5,12 @@ import topLevelAwait from "vite-plugin-top-level-await";
 export default defineConfig({
   plugins: [wasm(), topLevelAwait()],
   server: {
+    fs: {
+      allow: [
+        ".",
+        "../crates/terra-wasm/pkg"
+      ]
+    },
     headers: {
       // Required for SharedArrayBuffer (WASM threading).
       "Cross-Origin-Opener-Policy": "same-origin",
