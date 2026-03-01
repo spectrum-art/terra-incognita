@@ -8,6 +8,7 @@ members = [
     "tools/classifier",
     "tools/distributions",
     "tools/validate_targets",
+    "tools/visualize",
 ]
 
 [workspace.package]

@@ -1,0 +1,12 @@
+[package]
+name = "visualize"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "visualize"
+path = "src/main.rs"
+
+[dependencies]
+terra-core = { workspace = true }
+image = "0.25"
