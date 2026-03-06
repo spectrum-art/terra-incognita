@@ -5,5 +5,6 @@ pub mod heightfield;
 pub mod hydraulic;
 pub mod metrics;
 pub mod noise;
+pub mod planet;
 pub mod plates;
 pub mod sphere;

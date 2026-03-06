@@ -67,7 +67,7 @@
         color: #8af;
       }
       #progress-bar-container {
-        width: 800px;
+        width: 1024px;
         max-width: 100%;
         height: 4px;
         background: #222;
@@ -81,6 +81,21 @@
         width: 0%;
         transition: width 0.1s ease;
       }
+      #planet-metrics-panel {
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        background: rgba(0,0,0,0.85);
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-size: 0.75rem;
+        min-width: 180px;
+        max-height: calc(100vh - 2rem);
+        overflow-y: auto;
+        display: none;
+      }
+      #planet-metrics-panel.visible { display: block; }
       #score-panel {
         position: absolute;
         top: 1rem;
@@ -137,8 +152,16 @@
       <button id="generate-btn">Generate</button>
       <div id="status">Ready.</div>
       <div id="export-buttons">
-        <button class="export-btn" id="btn-png">Download PNG (16-bit)</button>
-        <button class="export-btn" id="btn-raw">Download RAW (.f32)</button>
+        <select id="export-resolution" style="width:100%;padding:0.3rem;background:#1a2a3a;
+          border:1px solid #335;border-radius:4px;color:#8af;font-size:0.78rem;margin-bottom:2px">
+          <option value="512x256">512 × 256 (preview)</option>
+          <option value="1024x512" selected>1024 × 512 (default)</option>
+          <option value="2048x1024">2048 × 1024 (high-res)</option>
+          <option value="4096x2048">4096 × 2048 (print)</option>
+        </select>
+        <button class="export-btn" id="btn-overview-png">Download Planet PNG</button>
+        <button class="export-btn" id="btn-png">Download Tile PNG (16-bit)</button>
+        <button class="export-btn" id="btn-raw">Download Tile RAW (.f32)</button>
       </div>
     </aside>
 
@@ -148,10 +171,11 @@
         <button class="mode-btn" data-mode="elevation">Elevation</button>
         <button class="mode-btn" data-mode="regime">Regime</button>
       </div>
-      <canvas id="main-canvas" width="800" height="400"></canvas>
+      <canvas id="main-canvas" width="1024" height="512"></canvas>
       <div id="progress-bar-container">
         <div id="progress-bar"></div>
       </div>
+      <div id="planet-metrics-panel"></div>
       <div id="score-panel"></div>
     </div>
 

@@ -127,6 +127,47 @@ async function encode16BitPng(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// ── Planet overview export ────────────────────────────────────────────────────
+
+export interface PlanetExportMetadata {
+  params:             Record<string, unknown>;
+  planet_metrics:     Record<string, unknown>;
+  seed:               number;
+  width:              number;
+  height:             number;
+  sea_level_m:        number;
+  generation_time_ms: number;
+  timestamp:          string;
+}
+
+/** Export the planet overview canvas as a PNG at the requested resolution. */
+export async function exportPlanetOverviewPng(
+  sourceCanvas:  HTMLCanvasElement,
+  targetWidth:   number,
+  targetHeight:  number,
+  meta:          PlanetExportMetadata,
+): Promise<void> {
+  // Scale to target resolution using an offscreen canvas.
+  const offscreen = document.createElement("canvas");
+  offscreen.width  = targetWidth;
+  offscreen.height = targetHeight;
+  const ctx = offscreen.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+
+  // Convert to PNG blob via toBlob.
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    offscreen.toBlob(b => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
+  });
+
+  const suffix = `${targetWidth}x${targetHeight}`;
+  downloadBlob(blob, `planet_overview_${suffix}.png`);
+  downloadBlob(
+    new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" }),
+    `planet_overview_${suffix}.json`,
+  );
+}
+
 export interface ExportMetadata {
   params: Record<string, unknown>;
   score_total: number;

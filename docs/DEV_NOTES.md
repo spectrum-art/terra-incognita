@@ -528,6 +528,69 @@ is out of scope for Phase 3.
    npm build clean.
 
 
+20260305:
+14. Phase A — Planet Overview. 196 tests passing, 0 clippy warnings, npm build clean.
+
+   **New module**: `crates/terra-core/src/planet/` (4 sub-modules + orchestrator).
+
+   **PA.6 — field_smoothing.rs**: Separable 1D Gaussian blur on 2D `Vec<f32>` fields.
+   Variable sigma per boundary type (regime σ=1.5, climate σ=5.0, erodibility σ=3.0).
+   Energy conservation verified: 64×64 impulse at centre, σ=1.5, total within 1e-3. 4 tests.
+
+   **PA.2 — planet_elevation.rs**: Structural elevation at any resolution from PlateSimulation
+   outputs. Ridge proximity → ocean floor (GDH1-inspired age-depth); continental regime-based:
+   CratonicShield=200-700m, PassiveMargin=50-200m, ActiveCompressional=800-5800m,
+   ActiveExtensional=−100 to −500m, VolcanicHotspot=400-2400m.
+   4-octave fBm regional noise (base_freq=2.0, seed^0xE1E_A710). 4 tests.
+
+   **PA.1 — sea_level.rs**: Percentile-based sea level threshold. `water_abundance` used as
+   target ocean fraction; threshold = sorted_elevations[floor(wa × n)].
+   Edge case: wa=1.0 → sea_level = max+1 so all ocean. 6 tests.
+
+   **PA.4 — planet_metrics.rs**: Six spatial statistics. PlanetMetricsConfig struct introduced
+   to keep function under clippy arg-count limit (was 9 args → now 6 + config struct).
+   Metrics: land_fraction (±0.10), tropical_map (>1200mm), polar_glaciation (±0.15),
+   regime_entropy (>1.5 bits), transition_smoothness (<0.15), continental_coherence (>10%).
+   Coherence uses 4-connectivity BFS flood-fill; isolated-dot test (even-r, even-c only)
+   verifies fail path. 12 tests.
+
+   **planet/mod.rs** — `generate_planet_overview()` orchestrator:
+   1. simulate_plates(1024×512) per user decision (no upsampling)
+   2. simulate_climate(1024×512)
+   3. PA.6 smoothing on MAP, erodibility, regime (regime encoded as f32 → blur → snap)
+   4. PA.2 structural elevation (unsmoothed plate data for structural accuracy)
+   5. PA.1 ocean mask from water_abundance percentile
+   6. PA.4 six planet metrics
+   OVERVIEW_WIDTH=1024, OVERVIEW_HEIGHT=512 constants. 3 tests.
+
+   **WASM binding** — `generate_overview(JsValue) → JsValue` added to terra-wasm/src/lib.rs
+   alongside existing `generate()` (tile pipeline untouched per user requirement).
+   Returns: elevations, ocean_mask, sea_level_m, regimes (u8), map_field, erodibility_field,
+   glaciation (u8), planet_metrics, width, height, generation_time_ms.
+   GlacialClass mapped: None=0, Former=1, Active=2.
+
+   **Frontend changes**:
+   - planet_renderer.ts (new): per-pixel colour from spatial fields. Colour scheme:
+     ocean depth-blue, glaciated ice-white, compressional/high-elev grey-brown mountain,
+     tropical (MAP>1500) deep green, arid (MAP<400) tan, temperate (400-1500) green-brown,
+     cratonic muted sage-green. 40% ambient + 60% directional hillshade.
+   - ui/planet_score.ts (new): 6-metric planet metrics panel (left overlay).
+   - export.ts: added exportPlanetOverviewPng() using canvas.toBlob() with offscreen
+     canvas for resolution scaling. Resolution selector: 512×256, 1024×512, 2048×1024, 4096×2048.
+   - main.ts: runGenerate() now calls generate_overview() → renderPlanetOverview() →
+     renderPlanetMetricsPanel(). Tile pipeline (generate()) preserved as runTileGenerate()
+     exposed on window for Phase B foundation. Export wired for planet overview PNG.
+   - index.html: canvas 800×400 → 1024×512, progress bar width updated, planet-metrics-panel
+     div added (left overlay), export resolution <select> added, btn-overview-png added.
+
+   **Key decision**: Planet overview generation ALWAYS re-runs plate + climate simulation at
+   1024×512. No upsampling from 512×256. Plate sim at 1024×512 ≈ 1.2s (debug: ~3.7s on WSL2).
+
+   **Known limitation (Phase C)**: Planet metrics may not all pass at default params for all
+   seeds. The transition_smoothness metric uses ordinal distance between regime codes — this is
+   a proxy for visual smoothness, not a true colour gradient. Phase A PA.6 smoothing reduces
+   hard boundaries; Phase C calibration will tune if needed.
+
 ## Phase status
 
 - Phase 0 — Foundation: ✅ Complete
@@ -539,3 +602,4 @@ is out of scope for Phase 3.
 - Phase 6 — Hydraulic Shaping: ✅ Complete (166 tests, 0 clippy warnings)
 - Phase 7 — End-to-End Pipeline + Browser UI: ✅ Complete (167 tests, 0 clippy warnings)
 - Phase 8 — Calibration: ✅ Complete — all 5 terrain classes > 75/100; all criteria met or formally deferred
+- Phase A — Planet Overview: ✅ Complete — 196 tests, 0 clippy warnings, npm build clean
