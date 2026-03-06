@@ -3,7 +3,7 @@
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
-use terra_core::generator::{derive_debug_params, GlobalParams, PlanetGenerator};
+use terra_core::generator::{derive_debug_params, generate_at_location, GlobalParams, PlanetGenerator};
 use terra_core::metrics::score::{compute_realism_score, RealismScore};
 use terra_core::noise::params::{GlacialClass, TerrainClass};
 use terra_core::planet::{generate_planet_overview, OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
@@ -204,6 +204,93 @@ pub fn generate_overview(params_js: JsValue) -> Result<JsValue, JsValue> {
         width:  OVERVIEW_WIDTH  as u32,
         height: OVERVIEW_HEIGHT as u32,
         generation_time_ms,
+    };
+
+    serde_wasm_bindgen::to_value(&js)
+        .map_err(|e| JsValue::from_str(&format!("Serialisation error: {e}")))
+}
+
+// ── generate_at_location binding ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct SampledFieldsJs {
+    terrain_class:       String,
+    local_regime:        String,
+    local_map_mm:        f32,
+    local_erodibility:   f32,
+    local_grain_angle:   f32,
+    local_grain_intensity: f32,
+    local_glaciation:    String,
+}
+
+#[derive(Serialize)]
+struct LocationTileResultJs {
+    heights:         Vec<f32>,
+    regimes:         Vec<u8>,
+    map_field:       Vec<f32>,
+    width:           u32,
+    height:          u32,
+    score:           RealismScoreJs,
+    generation_time_ms: u64,
+    lat:             f32,
+    lon:             f32,
+    sampled_fields:  SampledFieldsJs,
+}
+
+fn terrain_class_to_str(tc: terra_core::noise::params::TerrainClass) -> String {
+    format!("{tc:?}")
+}
+
+fn regime_to_str(r: TectonicRegime) -> String {
+    match r {
+        TectonicRegime::PassiveMargin       => "PassiveMargin",
+        TectonicRegime::CratonicShield      => "CratonicShield",
+        TectonicRegime::ActiveCompressional => "ActiveCompressional",
+        TectonicRegime::ActiveExtensional   => "ActiveExtensional",
+        TectonicRegime::VolcanicHotspot     => "VolcanicHotspot",
+    }.to_owned()
+}
+
+fn glacial_to_str(g: GlacialClass) -> String {
+    match g {
+        GlacialClass::None   => "None",
+        GlacialClass::Former => "Former",
+        GlacialClass::Active => "Active",
+    }.to_owned()
+}
+
+/// Generate a tile characterised by the planet fields at the given lat/lon.
+///
+/// Runs the full planet simulation at 1024×512, samples spatial fields at the
+/// clicked cell, then runs the tile pipeline at 512×256.
+#[wasm_bindgen]
+pub fn generate_at_location_wasm(params_js: JsValue, lat: f32, lon: f32) -> Result<JsValue, JsValue> {
+    let params: GlobalParams = serde_wasm_bindgen::from_value(params_js)
+        .map_err(|e| JsValue::from_str(&format!("Invalid params: {e}")))?;
+
+    let t0 = js_sys::Date::now();
+    let r  = generate_at_location(&params, lat, lon);
+    let generation_time_ms = (js_sys::Date::now() - t0) as u64;
+
+    let js = LocationTileResultJs {
+        heights:  r.heightfield.data,
+        regimes:  r.regime_field.into_iter().map(regime_to_u8).collect(),
+        map_field: r.map_field,
+        width:    terra_core::generator::GRID_WIDTH as u32,
+        height:   terra_core::generator::GRID_HEIGHT as u32,
+        score:    score_to_js(r.score),
+        generation_time_ms,
+        lat:      r.lat,
+        lon:      r.lon,
+        sampled_fields: SampledFieldsJs {
+            terrain_class:        terrain_class_to_str(r.terrain_class),
+            local_regime:         regime_to_str(r.local_regime),
+            local_map_mm:         r.local_map_mm,
+            local_erodibility:    r.local_erodibility,
+            local_grain_angle:    r.local_grain_angle,
+            local_grain_intensity: r.local_grain_intensity,
+            local_glaciation:     glacial_to_str(r.local_glaciation),
+        },
     };
 
     serde_wasm_bindgen::to_value(&js)

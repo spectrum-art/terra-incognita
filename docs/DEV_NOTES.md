@@ -746,3 +746,49 @@ is out of scope for Phase 3.
     Fix: climate_sigma 18.0 → 36.0 (sigma_effective = sqrt(8² + 12.6²) ≈ 14.9°).
     D5 metrics all PASS (seeds 42/7/99). tropical_map_mm: 1636→1332mm minimum, threshold=1200.
     Visual inspection (seeds 42, 7, 99): no horizontal banding visible. 196 tests, 0 warnings.
+
+
+20260306:
+18. Phase B — Globe View and Tile Drill-Down. All 5 sub-tasks complete.
+
+    **PB.1 — Globe View (frontend/src/globe_renderer.ts, index.html)**:
+    - Three.js r128 CDN sphere (SphereGeometry 128×64 segments)
+    - Manual orbital camera: mousedown/mousemove/mouseup drag rotates sphere mesh,
+      scroll wheel adjusts camera.position.z (1.3–5.0 range)
+    - updateTexture(canvas) syncs flat-map pixel data to sphere after each generate
+    - Globe/Flat toggle button switches canvas visibility
+    - All THREE.* calls use declare const THREE: any (CDN, no @types/three needed)
+
+    **PB.2 — Click-to-lat/lon (frontend/src/interaction.ts)**:
+    - Flat view: click pixel → lon = (x/w − 0.5)×360, lat = (0.5 − y/h)×180
+    - Globe view: THREE.Raycaster → hits[0].uv → lon = (u − 0.5)×360, lat = (v − 0.5)×180
+      UV coordinates are geometry-local and work correctly regardless of sphere rotation
+    - Crosshair overlay canvas drawn on top of flat map; cleared on new selection
+    - "Selected: lat°N, lon°E" display in sidebar
+
+    **PB.3 — WASM binding + Tile Detail Panel**:
+    - Rust: generate_at_location(params, lat, lon) in generator.rs
+      Runs simulate_plates + simulate_climate at 1024×512, samples fields at lat/lon
+      grid cell, classifies terrain locally (regime + MAP), builds NoiseParams,
+      runs tile pipeline at 512×256. Returns LocationTileResult.
+    - WASM: generate_at_location_wasm(params, lat, lon) in lib.rs
+    - Frontend: detail_panel.ts renders 512×256 hillshade, sampled field table,
+      score, zoom consistency indicator. Buttons: PNG, .f32, JSON export.
+    - Terrain class classification: AC/VH → Alpine, CS → Cratonic,
+      PM → Coastal/FluvialHumid/FluvialArid by MAP threshold, AE → FH/FA by MAP
+
+    **PB.4 — Zoom Consistency**:
+    - Samples overview canvas pixel at clicked lat/lon; classifies as mountain/lowland/water/mixed
+      by RGB channels (blue→water, grey-brown→mountain, green/tan→lowland)
+    - Tile family derived from terrain_class + MAP; match/mismatch displayed with green/red indicator
+    - Labelled as "soft check" — colour classification is heuristic
+
+    **PB.5 — Tile Metadata JSON**:
+    - export.ts: exportTile16BitPng, exportTileFloat32Binary, exportTileMetadata
+    - TileMetadata schema: seed, params, lat, lon, terrain_class, sampled_fields,
+      metrics (all 10), score_total, w/h, min/max_elevation, generation_time_ms, timestamp
+    - Files stamped with lat/lon + ISO timestamp for unique naming
+
+    **End state**: 198 tests passing, 0 clippy warnings, npm build clean (wasm 289kB, index 32kB).
+
+- Phase B — Globe View + Tile Drill-Down: ✅ Complete

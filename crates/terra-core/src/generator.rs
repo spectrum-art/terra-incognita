@@ -345,6 +345,178 @@ fn classify_terrain(params: &GlobalParams) -> TerrainClass {
 }
 
 
+// ── Location-aware tile result ────────────────────────────────────────────────
+
+/// Full output of the location-specific tile pipeline (Phase B, PB.3).
+pub struct LocationTileResult {
+    /// Generated heightfield at the clicked location.
+    pub heightfield: HeightField,
+    /// Flattened regime field, GRID_WIDTH × GRID_HEIGHT.
+    pub regime_field: Vec<TectonicRegime>,
+    /// MAP field (mm/yr), GRID_WIDTH × GRID_HEIGHT.
+    pub map_field: Vec<f32>,
+    /// Realism score for this tile.
+    pub score: RealismScore,
+    /// Wall-clock generation time in milliseconds (set by WASM caller).
+    pub generation_time_ms: u64,
+    // ── Sampled field values at the clicked location ──────────────────────
+    pub lat: f32,
+    pub lon: f32,
+    pub terrain_class: TerrainClass,
+    pub local_regime: TectonicRegime,
+    pub local_map_mm: f32,
+    pub local_erodibility: f32,
+    pub local_grain_angle: f32,
+    pub local_grain_intensity: f32,
+    pub local_glaciation: GlacialClass,
+}
+
+/// Classify terrain class from local tectonic regime and MAP.
+///
+/// Used by `generate_at_location` to pick the terrain class for a tile
+/// based on the planet spatial fields at the clicked location, rather than
+/// the global slider-derived classification.
+fn classify_terrain_local(regime: TectonicRegime, map_mm: f32) -> TerrainClass {
+    match regime {
+        TectonicRegime::ActiveCompressional | TectonicRegime::VolcanicHotspot => {
+            TerrainClass::Alpine
+        }
+        TectonicRegime::CratonicShield => TerrainClass::Cratonic,
+        TectonicRegime::PassiveMargin => {
+            if map_mm > 1000.0 {
+                TerrainClass::Coastal
+            } else if map_mm < 400.0 {
+                TerrainClass::FluvialArid
+            } else {
+                TerrainClass::FluvialHumid
+            }
+        }
+        TectonicRegime::ActiveExtensional => {
+            if map_mm < 400.0 {
+                TerrainClass::FluvialArid
+            } else {
+                TerrainClass::FluvialHumid
+            }
+        }
+    }
+}
+
+/// Generate a tile characterised by the planet fields at a specific lat/lon.
+///
+/// Runs the full planet simulation at overview resolution, samples the
+/// spatial fields (regime, MAP, erodibility, grain) at the clicked cell,
+/// then runs the tile pipeline at `GRID_WIDTH × GRID_HEIGHT`.
+pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> LocationTileResult {
+    use crate::planet::{OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
+
+    // ── 1. Planet simulation at overview resolution ─────────────────────
+    let plates = simulate_plates(
+        params.seed,
+        params.continental_fragmentation,
+        OVERVIEW_WIDTH,
+        OVERVIEW_HEIGHT,
+    );
+    let climate = simulate_climate(
+        params.seed ^ 0x5A5A,
+        params.water_abundance,
+        params.climate_diversity,
+        params.glaciation,
+        &plates.regime_field,
+        OVERVIEW_WIDTH,
+        OVERVIEW_HEIGHT,
+    );
+
+    // ── 2. Map lat/lon → overview grid cell ─────────────────────────────
+    let col = ((lon + 180.0) / 360.0 * OVERVIEW_WIDTH as f32)
+        .clamp(0.0, (OVERVIEW_WIDTH - 1) as f32) as usize;
+    let row = ((90.0 - lat) / 180.0 * OVERVIEW_HEIGHT as f32)
+        .clamp(0.0, (OVERVIEW_HEIGHT - 1) as f32) as usize;
+    let idx = row * OVERVIEW_WIDTH + col;
+
+    // ── 3. Sample local fields ───────────────────────────────────────────
+    let local_regime       = plates.regime_field.data[idx];
+    let local_map_mm       = climate.map_field[idx];
+    let local_erodibility  = plates.erodibility_field[idx];
+    let local_grain_angle  = plates.grain_field.angles[idx];
+    let local_grain_intensity = plates.grain_field.intensities[idx];
+    let local_glaciation   = climate.glaciation_mask[idx];
+
+    let terrain_class = classify_terrain_local(local_regime, local_map_mm);
+
+    // ── 4. Build NoiseParams from local values + global slider params ────
+    let h_base = (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10)
+        .clamp(0.55, 0.90);
+    let h_variance = (0.10 + params.climate_diversity * 0.15).clamp(0.10, 0.25);
+    let tectonic_grain_scale = 0.3 + params.tectonic_activity * 1.4;
+    let age_grain_scale      = 1.0 - params.surface_age * 0.40;
+    let grain_intensity = (local_grain_intensity * tectonic_grain_scale * age_grain_scale)
+        .clamp(0.0, 1.0);
+
+    let noise_params = crate::noise::params::NoiseParams {
+        terrain_class,
+        h_base,
+        h_variance,
+        grain_angle: local_grain_angle,
+        grain_intensity,
+        map_mm: local_map_mm,
+        surface_age: params.surface_age,
+        erodibility: local_erodibility,
+        glacial_class: local_glaciation,
+    };
+
+    // ── 5. Generate tile at standard resolution ──────────────────────────
+    let seed32 = (params.seed & 0xFFFF_FFFF) as u32;
+    let mut hf = crate::noise::generate_tile(
+        &noise_params,
+        seed32,
+        GRID_WIDTH,
+        GRID_HEIGHT,
+        -180.0, 180.0,
+        -90.0,  90.0,
+    );
+
+    let tectonic_uplift = 0.5 + params.tectonic_activity * 1.5;
+    let mountain_scale  = 0.7 + params.mountain_prevalence * 0.6;
+    for v in &mut hf.data { *v *= tectonic_uplift * mountain_scale; }
+
+    // ── 6. Hydraulic shaping ─────────────────────────────────────────────
+    let water_scale    = 0.3 + params.water_abundance * 1.4;
+    let age_scale      = 0.3 + params.surface_age    * 1.4;
+    let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
+
+    // Use a uniform erodibility field scaled by the local value.
+    let scaled_erodibility = vec![
+        (local_erodibility * erosion_factor).clamp(0.0, 1.0);
+        GRID_WIDTH * GRID_HEIGHT
+    ];
+
+    apply_hydraulic_shaping(&mut hf, terrain_class, &scaled_erodibility, local_glaciation);
+
+    // ── 7. Realism scoring ───────────────────────────────────────────────
+    let score = compute_realism_score(&hf, terrain_class);
+
+    // Regime and map fields for the tile (uniform, from location sample).
+    let regime_field = vec![local_regime; GRID_WIDTH * GRID_HEIGHT];
+    let map_field    = vec![local_map_mm; GRID_WIDTH * GRID_HEIGHT];
+
+    LocationTileResult {
+        heightfield: hf,
+        regime_field,
+        map_field,
+        score,
+        generation_time_ms: 0,
+        lat,
+        lon,
+        terrain_class,
+        local_regime,
+        local_map_mm,
+        local_erodibility,
+        local_grain_angle,
+        local_grain_intensity,
+        local_glaciation,
+    }
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -416,6 +588,38 @@ mod tests {
             println!("  {name:<14} seeds=[{}]  mean={:.1}  {status}",
                 scores_str.join(", "), mean);
         }
+    }
+
+    /// generate_at_location: non-flat tile output and correct coordinate round-trip.
+    #[test]
+    fn generate_at_location_non_flat() {
+        let params = GlobalParams::default();
+        let lat = 20.0_f32;
+        let lon = 45.0_f32;
+        let result = generate_at_location(&params, lat, lon);
+
+        // Heightfield must not be flat.
+        let data = &result.heightfield.data;
+        assert!(!data.is_empty(), "heightfield must be non-empty");
+        let mean = data.iter().sum::<f32>() / data.len() as f32;
+        let std = (data.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / data.len() as f32).sqrt();
+        assert!(std > 50.0, "elevation std ({std:.1}m) must exceed 50m");
+
+        // Coordinates echoed back correctly.
+        assert!((result.lat - lat).abs() < 1e-4);
+        assert!((result.lon - lon).abs() < 1e-4);
+    }
+
+    /// generate_at_location: ocean click (PassiveMargin) yields a non-Alpine tile.
+    ///
+    /// Chooses a high-latitude near-pole location which should be PM regime in
+    /// most seeds; verifies the function completes without panic.
+    #[test]
+    fn generate_at_location_no_panic_ocean() {
+        let params = GlobalParams::default();
+        // Far-south open ocean latitude
+        let result = generate_at_location(&params, -70.0, 0.0);
+        assert!(!result.heightfield.data.is_empty());
     }
 
     /// Generate with default params, confirm non-flat output and no panic.

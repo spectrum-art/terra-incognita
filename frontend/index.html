@@ -143,6 +143,92 @@
         cursor: pointer;
       }
       .export-btn:hover { background: #1e3550; }
+      /* ── Globe / Flat toggle ──────────────────────────────────────── */
+      #view-toggle {
+        width: 100%;
+        padding: 0.4rem;
+        background: #1a1a2a;
+        border: 1px solid #446;
+        border-radius: 4px;
+        color: #aaf;
+        font-size: 0.78rem;
+        cursor: pointer;
+        margin-top: 4px;
+      }
+      #view-toggle:hover { background: #222244; }
+      /* ── Selected coordinates ────────────────────────────────────── */
+      #selected-coords {
+        font-size: 0.72rem;
+        color: #9c9;
+        min-height: 1.2em;
+        text-align: center;
+      }
+      /* ── Generate-at-location button ─────────────────────────────── */
+      #generate-location-btn {
+        width: 100%;
+        padding: 0.5rem;
+        background: #1a3a1a;
+        border: 1px solid #363;
+        border-radius: 4px;
+        color: #6c6;
+        font-size: 0.82rem;
+        cursor: pointer;
+        display: none;
+      }
+      #generate-location-btn.visible { display: block; }
+      #generate-location-btn:hover { background: #1f4a1f; }
+      #generate-location-btn:disabled { background: #222; color: #555; cursor: not-allowed; }
+      /* ── Tile detail panel ───────────────────────────────────────── */
+      #tile-detail-panel {
+        position: absolute;
+        bottom: 1rem;
+        right: 1rem;
+        background: rgba(0,0,0,0.92);
+        border: 1px solid #446;
+        border-radius: 4px;
+        padding: 0.6rem;
+        font-size: 0.72rem;
+        display: none;
+        max-width: 540px;
+        max-height: calc(100vh - 4rem);
+        overflow-y: auto;
+      }
+      #tile-detail-panel.visible { display: block; }
+      #tile-detail-panel h3 {
+        margin: 0 0 0.4rem;
+        font-size: 0.8rem;
+        color: #aaf;
+      }
+      #tile-canvas-container canvas {
+        max-width: 100%;
+        image-rendering: pixelated;
+        display: block;
+        margin-bottom: 0.4rem;
+      }
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: #ccc;
+      }
+      .detail-label { color: #888; }
+      .consistency-pass { color: #6c6; }
+      .consistency-fail { color: #c66; }
+      .consistency-mixed { color: #ca6; }
+      .detail-export-btn {
+        display: block;
+        width: 100%;
+        margin-top: 4px;
+        padding: 0.3rem;
+        background: #1a2a3a;
+        border: 1px solid #335;
+        border-radius: 3px;
+        color: #8af;
+        font-size: 0.72rem;
+        cursor: pointer;
+        text-align: center;
+      }
+      .detail-export-btn:hover { background: #1e3550; }
     </style>
   </head>
   <body>
@@ -150,6 +236,9 @@
       <h1>Terra Incognita</h1>
       <div id="sliders-container"></div>
       <button id="generate-btn">Generate</button>
+      <button id="view-toggle">Globe View</button>
+      <div id="selected-coords"></div>
+      <button id="generate-location-btn" disabled>Generate at Location</button>
       <div id="status">Ready.</div>
       <div id="export-buttons">
         <select id="export-resolution" style="width:100%;padding:0.3rem;background:#1a2a3a;
@@ -172,13 +261,24 @@
         <button class="mode-btn" data-mode="regime">Regime</button>
       </div>
       <canvas id="main-canvas" width="1024" height="512"></canvas>
+      <div id="globe-container" style="width:1024px;max-width:100%;height:512px;display:none;position:relative"></div>
       <div id="progress-bar-container">
         <div id="progress-bar"></div>
       </div>
       <div id="planet-metrics-panel"></div>
       <div id="score-panel"></div>
+      <div id="tile-detail-panel">
+        <h3>Tile at Location</h3>
+        <div id="tile-canvas-container"></div>
+        <div id="tile-info"></div>
+        <div id="tile-consistency"></div>
+        <button class="detail-export-btn" id="btn-tile-png">Download Tile PNG (16-bit)</button>
+        <button class="detail-export-btn" id="btn-tile-raw">Download Tile RAW (.f32)</button>
+        <button class="detail-export-btn" id="btn-tile-meta">Download Metadata JSON</button>
+      </div>
     </div>
 
+    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

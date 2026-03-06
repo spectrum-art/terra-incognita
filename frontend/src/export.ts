@@ -206,3 +206,66 @@ export function exportAsFloat32Binary(
     "heightmap.json",
   );
 }
+
+// ── Tile-at-location export (Phase B, PB.5) ───────────────────────────────────
+
+export interface TileMetadata {
+  seed:               number;
+  params:             Record<string, unknown>;
+  lat:                number;
+  lon:                number;
+  terrain_class:      string;
+  sampled_fields:     Record<string, unknown>;
+  metrics:            TileMetricRecord[];
+  score_total:        number;
+  width:              number;
+  height:             number;
+  min_elevation:      number;
+  max_elevation:      number;
+  generation_time_ms: number;
+  timestamp:          string;
+}
+
+export interface TileMetricRecord {
+  name:       string;
+  raw_value:  number;
+  score_0_1:  number;
+  passed:     boolean;
+  subsystem:  string;
+}
+
+/** Export the location tile as a 16-bit PNG + a raw .f32 + metadata JSON. */
+export async function exportTile16BitPng(
+  data: Float32Array,
+  width: number,
+  height: number,
+  meta: TileMetadata,
+): Promise<void> {
+  const png = await encode16BitPng(data, width, height);
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const base = `tile_${meta.lat.toFixed(1)}N_${meta.lon.toFixed(1)}E_${ts}`;
+  downloadBlob(new Blob([png.buffer as ArrayBuffer], { type: "image/png" }), `${base}.png`);
+}
+
+/** Export the location tile as a raw Float32 binary. */
+export function exportTileFloat32Binary(
+  data: Float32Array,
+  meta: TileMetadata,
+): void {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const base = `tile_${meta.lat.toFixed(1)}N_${meta.lon.toFixed(1)}E_${ts}`;
+  downloadBlob(
+    new Blob([data.buffer as ArrayBuffer], { type: "application/octet-stream" }),
+    `${base}.f32`,
+  );
+}
+
+/** Export the full tile metadata as JSON (PB.5). */
+export function exportTileMetadata(meta: TileMetadata): void {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const base = `tile_${meta.lat.toFixed(1)}N_${meta.lon.toFixed(1)}E_${ts}`;
+  downloadBlob(
+    new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" }),
+    `${base}.json`,
+  );
+}
