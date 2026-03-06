@@ -17,20 +17,21 @@
 pub fn map_base_mm(lat_deg: f64, water_abundance: f32) -> f32 {
     let lat_abs = lat_deg.abs();
 
-    // ITCZ: Gaussian peak centred on equator, σ ≈ 12°.
-    let equatorial = 2200.0 * (-lat_abs * lat_abs / 288.0_f64).exp();
+    // ITCZ: Gaussian peak centred on equator, σ ≈ 22° (wider than Earth to
+    // reduce visible latitudinal banding at planet-overview scale).
+    let equatorial = 1560.0 * (-lat_abs * lat_abs / 968.0_f64).exp();
 
     // Subtropical arid belt: negative Gaussian centred at 28°, σ ≈ 8°.
     let subtropical_arid =
-        -800.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp();
+        -560.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp();
 
     // Temperate westerlies: secondary peak centred at 50°, σ ≈ 15°.
-    let temperate = 600.0 * (-(lat_abs - 50.0).powi(2) / 450.0_f64).exp();
+    let temperate = 420.0 * (-(lat_abs - 50.0).powi(2) / 450.0_f64).exp();
 
     // Polar minimum: constant floor.
-    let polar_base = 200.0_f64;
+    let polar_base = 160.0_f64;
 
-    let base_mm = (equatorial + subtropical_arid + temperate + polar_base).max(80.0);
+    let base_mm = (equatorial + subtropical_arid + temperate + polar_base).max(60.0);
 
     // Scale linearly by water_abundance (Earth reference = 0.55).
     base_mm as f32 * (water_abundance / 0.55)

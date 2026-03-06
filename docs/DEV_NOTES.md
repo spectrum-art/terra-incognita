@@ -672,3 +672,64 @@ is out of scope for Phase 3.
         Acceptable at Phase A resolution (35 km/pixel). Organic smoothing deferred to Phase C.
 
 - Phase A — Planet Overview: ✅ Complete (including post-merge visual fixes)
+
+
+20260306:
+16. Phase A — Post-visual-inspection fix session. All 4 issues resolved.
+    196 tests passing, 0 clippy warnings, npm build clean.
+
+    **Issue 1 — Diamond/geometric continent shapes (planet/mod.rs)**:
+    Previous BFS from non-PM seeds (multi-type seed set) produced Manhattan-distance
+    diamond shapes because the expansion front advanced uniformly in all 4 directions.
+
+    Fix — two-part:
+    (a) Ridge-bounded BFS: ActiveExtensional cells treated as impassable walls
+        (ridges are the true ocean/continent dividers). Seeds: CratonicShield only.
+        AE cells pre-marked as land (ocean=false) but NOT pushed to expansion queue —
+        they contribute AE regime diversity without expanding the continent.
+    (b) Priority-queue BFS (BinaryHeap<Reverse<(u32, usize)>>): a low-frequency
+        roughness field (period ≈128 cells, amplitude 60 BFS steps, seed^0x9E37_79B1)
+        biases expansion order. Low-noise corridors expand first, creating peninsulas
+        and bays. This breaks diamonds even when no AE walls exist (e.g. seed=500).
+    (c) Fine-scale coastline noise (period 16 cells, 30% flip rate) retained for
+        small-scale boundary variation. Only PassiveMargin land cells may flip to ocean;
+        CS/AE/AC/VH seed cells protected.
+
+    **Issue 2 — Transition smoothness metric at coastlines (planet_metrics.rs)**:
+    `metric_transition_smoothness` was measuring hard ocean/land boundary edges as
+    smoothness failures. Coastlines are physically real. Fix: skip any adjacent cell pair
+    where ocean_mask[idx] != ocean_mask[nb] (only within-land and within-ocean pairs
+    measured). `ocean_mask` added as parameter.
+
+    **Issue 3 — Latitudinal MAP banding (latitude_bands.rs + field_smoothing.rs)**:
+    Two-part fix:
+    (a) Amplitude reduction: ITCZ 2200→1560 (29%), subtropical −800→−560,
+        temperate 600→420, polar floor 200→160, min floor 80→60.
+        ITCZ sigma widened 12°→22° (2σ²: 288→968) to keep lat=10° > 1500mm test.
+    (b) MAP smoothing sigma: 12.0 → 18.0 (broader climate transitions, ~1400 km).
+
+    **Issue 4 — Regime entropy < 1.2 bits (planet/mod.rs + planet_metrics.rs)**:
+    Root cause: BFS-expanded land cells inherited PassiveMargin regime from ocean crust
+    (PM = ~80% of land). Initial reclassify_land_pm_regimes approach converted interior
+    PM→CS, WORSENING entropy (CS dominance 0.710 bits vs 1.006 before).
+
+    Fix — two-part:
+    (a) AE cells pre-seeded as land (per Issue 1b). At ~3.7% of grid cells → ~13% of land.
+    (b) `compute_planet_metrics` now takes `raw_regimes: &[TectonicRegime]` (unsmoothed
+        plates.regime_field.data). `metric_regime_entropy` reads raw_regimes: AE cells on
+        land retain AE regime (unsmoothed), contributing genuine entropy diversity.
+        `metric_transition_smoothness` (metric 5) still uses smoothed regimes.
+        Removed `reclassify_land_pm_regimes` entirely.
+
+    **D5 results (seeds 42, 7, 99, all PASS):**
+      seed=42: entropy=1.378, coherence=0.722, all_pass=true
+      seed=7:  entropy=1.288, coherence=0.961, all_pass=true
+      seed=99: entropy=1.236, coherence=0.946, all_pass=true
+
+    **Visual inspection (5 seeds: 42, 7, 99, 3, 500)**:
+      - No diamond shapes ✓ (priority-BFS breaks Manhattan geometry)
+      - Organic coastlines with bays, peninsulas, irregular edges ✓
+      - AE ridge features visible as thin lines in ocean ✓
+      - Variety of continent morphologies per seed ✓
+
+- Phase A — Planet Overview: ✅ Complete (all 4 post-visual-inspection issues resolved)

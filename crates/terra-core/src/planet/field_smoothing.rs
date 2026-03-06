@@ -22,7 +22,7 @@ impl Default for SmoothingParams {
     fn default() -> Self {
         Self {
             regime_sigma:      1.5,
-            climate_sigma:     12.0,
+            climate_sigma:     18.0,
             erodibility_sigma: 3.0,
         }
     }

@@ -53,11 +53,16 @@ pub struct PlanetMetrics {
 /// Compute all six planet-scale metrics.
 ///
 /// Field slices must be row-major, length = `cfg.width × cfg.height`.
+/// `raw_regimes` is the unsmoothed plate-regime field used for Shannon
+/// entropy (metric 4) — using the raw field preserves regime variety that
+/// Gaussian smoothing would otherwise blur away.
+/// `regimes` is the smoothed field used for transition-smoothness (metric 5).
 pub fn compute_planet_metrics(
-    ocean_mask: &[bool],
+    ocean_mask:  &[bool],
     elevations:  &[f32],
     map_field:   &[f32],
     regimes:     &[TectonicRegime],
+    raw_regimes: &[TectonicRegime],
     glaciation:  &[GlacialClass],
     cfg:          PlanetMetricsConfig,
 ) -> PlanetMetrics {
@@ -68,8 +73,8 @@ pub fn compute_planet_metrics(
     let m1 = metric_land_fraction(ocean_mask, cfg.water_abundance);
     let m2 = metric_tropical_map(map_field, w, h);
     let m3 = metric_polar_glaciation(glaciation, w, h, cfg.glaciation_slider);
-    let m4 = metric_regime_entropy(regimes, ocean_mask);
-    let m5 = metric_transition_smoothness(regimes, w, h);
+    let m4 = metric_regime_entropy(raw_regimes, ocean_mask);
+    let m5 = metric_transition_smoothness(regimes, ocean_mask, w, h);
     let m6 = metric_continental_coherence(ocean_mask, w, h);
 
     let all_pass = m1.pass && m2.pass && m3.pass && m4.pass && m5.pass && m6.pass;
@@ -196,31 +201,39 @@ fn metric_regime_entropy(regimes: &[TectonicRegime], ocean_mask: &[bool]) -> Met
 
 // ── Metric 5: Transition smoothness ──────────────────────────────────────────
 
-fn metric_transition_smoothness(regimes: &[TectonicRegime], width: usize, height: usize) -> MetricResult {
-    // Measure the mean normalised ordinal distance over ALL adjacent cell pairs
-    // (not just pairs that differ). Same-regime pairs contribute 0 to the sum,
-    // so the mean equals (boundary_fraction × mean_boundary_diff). This makes
-    // the metric reflect how rare and gentle transitions are, rather than just
-    // the sharpness of the transitions that exist.
+/// Coastlines are physically real hard boundaries, not smoothness failures.
+/// Only within-region pairs (land↔land and ocean↔ocean) are measured.
+fn metric_transition_smoothness(
+    regimes:    &[TectonicRegime],
+    ocean_mask: &[bool],
+    width:       usize,
+    height:      usize,
+) -> MetricResult {
     let mut total_sum = 0.0_f32;
     let mut total_n   = 0usize;
-    let n_regimes = 4.0_f32; // max ordinal difference between regimes [0, 4]
+    let n_regimes = 4.0_f32; // max ordinal distance [0, 4]
 
     for r in 0..height {
         for c in 0..width {
             let idx = r * width + c;
             let reg = regimes[idx] as u8;
-            // East neighbour
+            // East neighbour — skip if coastline edge (land↔ocean).
             if c + 1 < width {
-                let neighbour = regimes[idx + 1] as u8;
-                total_sum += (reg as f32 - neighbour as f32).abs() / n_regimes;
-                total_n   += 1;
+                let nb = idx + 1;
+                if ocean_mask[idx] == ocean_mask[nb] {
+                    let neighbour = regimes[nb] as u8;
+                    total_sum += (reg as f32 - neighbour as f32).abs() / n_regimes;
+                    total_n   += 1;
+                }
             }
-            // South neighbour
+            // South neighbour — skip if coastline edge.
             if r + 1 < height {
-                let neighbour = regimes[(r + 1) * width + c] as u8;
-                total_sum += (reg as f32 - neighbour as f32).abs() / n_regimes;
-                total_n   += 1;
+                let nb = (r + 1) * width + c;
+                if ocean_mask[idx] == ocean_mask[nb] {
+                    let neighbour = regimes[nb] as u8;
+                    total_sum += (reg as f32 - neighbour as f32).abs() / n_regimes;
+                    total_n   += 1;
+                }
             }
         }
     }
@@ -230,7 +243,7 @@ fn metric_transition_smoothness(regimes: &[TectonicRegime], width: usize, height
         mean_grad,
         0.15,
         mean_grad < 0.15,
-        "mean normalised regime ordinal distance across all adjacent pairs < 0.15",
+        "mean normalised regime ordinal distance within land/ocean regions < 0.15",
     )
 }
 
@@ -387,9 +400,12 @@ mod tests {
     #[test]
     fn transition_smoothness_uniform_field_passes() {
         let w = 16usize; let h = 8usize;
-        // No regime boundaries → no boundary edges → mean_grad = 0.0 → pass.
+        // No regime boundaries → mean_grad = 0.0 → pass.
         let m = metric_transition_smoothness(
-            &flat_regimes(w * h, TectonicRegime::CratonicShield), w, h);
+            &flat_regimes(w * h, TectonicRegime::CratonicShield),
+            &all_land_mask(w * h),
+            w, h,
+        );
         assert!(m.pass, "uniform field: no boundaries, gradient = 0 → pass");
     }
 

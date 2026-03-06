@@ -363,10 +363,11 @@ fn main() {
         println!("D6: Wrote {}", path.display());
     }
 
-    // D5: All 6 planet metrics for seed=42.
-    {
-        println!("\nD5: Planet metrics (seed=42, default params):");
-        let overview = generate_planet_overview(&diag_params);
+    // D5: All 6 planet metrics for seeds 42, 7, 99.
+    for &dseed in &[42u64, 7, 99] {
+        println!("\nD5: Planet metrics (seed={dseed}, default params):");
+        let ov_params = GlobalParams { seed: dseed, ..GlobalParams::default() };
+        let overview = generate_planet_overview(&ov_params);
         let pm = &overview.planet_metrics;
         for m in &pm.metrics {
             let status = if m.pass { "PASS" } else { "FAIL" };
