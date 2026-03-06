@@ -13,9 +13,9 @@
  */
 
 export interface PlanetOverviewData {
-  elevations:        number[];   // metres
+  elevations:        number[];   // normalised [0, 1]  (0.5 = sea level)
   ocean_mask:        boolean[];  // true = ocean
-  sea_level_m:       number;
+  sea_level_m:       number;     // 0.5 in normalised scheme
   regimes:           number[];   // 0-4 TectonicRegime ordinals
   map_field:         number[];   // mm/yr
   glaciation:        number[];   // 0=None, 1=Former, 2=Active
@@ -24,15 +24,17 @@ export interface PlanetOverviewData {
 }
 
 // ── Regime ordinals ────────────────────────────────────────────────────────────
-// 0=PassiveMargin (handled by MAP-based tint), 3=ActiveExtensional, 4=VolcanicHotspot
-const CRATONIC_SHIELD       = 1;
-const ACTIVE_COMPRESSIONAL  = 2;
+// 0=PassiveMargin, 2=ActiveCompressional (both handled by elevation+MAP tint)
+const CRATONIC_SHIELD = 1;
 
 // ── Hillshade helper ──────────────────────────────────────────────────────────
 
-/** Fast 3×3 central-difference hillshade. Returns [0, 1] shade per pixel. */
+/** Fast 3×3 central-difference hillshade. Returns [0, 1] shade per pixel.
+ *  elevs are normalised [0, 1]; ELEV_SCALE converts to a virtual metre range
+ *  for slope calculation with geographic cell size. */
 function computeHillshade(elevs: number[], w: number, h: number): Float32Array {
-  const cellsizeM = (360.0 / w) * 111_000; // equatorial approximation
+  const cellsizeM = (360.0 / w) * 111_000; // equatorial cell width in metres
+  const ELEV_SCALE = 14_000;               // 1.0 normalised ≈ 14 000 m range
   const azRad  = (315 * Math.PI) / 180;
   const altRad = (45  * Math.PI) / 180;
   const zenith = Math.PI / 2 - altRad;
@@ -46,8 +48,8 @@ function computeHillshade(elevs: number[], w: number, h: number): Float32Array {
       const g = elevs[r * w + (c + 1)];
       const f = elevs[(r + 1) * w + (c - 1)], hv = elevs[(r + 1) * w + c];
       const i = elevs[(r + 1) * w + (c + 1)];
-      const dzdx = ((d + 2 * g + i) - (a + 2 * e + f)) / (8 * cellsizeM);
-      const dzdy = ((f + 2 * hv + i) - (a + 2 * b + d)) / (8 * cellsizeM);
+      const dzdx = ((d + 2 * g + i) - (a + 2 * e + f)) * ELEV_SCALE / (8 * cellsizeM);
+      const dzdy = ((f + 2 * hv + i) - (a + 2 * b + d)) * ELEV_SCALE / (8 * cellsizeM);
       const slopeRad  = Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy));
       const aspectRad = dzdx === 0
         ? (dzdy > 0 ? Math.PI : 0)
@@ -61,65 +63,78 @@ function computeHillshade(elevs: number[], w: number, h: number): Float32Array {
   return shade;
 }
 
+// ── Colour helpers ────────────────────────────────────────────────────────────
+
+type Rgb = [number, number, number];
+
+function lerpRgb([r0, g0, b0]: Rgb, [r1, g1, b1]: Rgb, t: number): Rgb {
+  const s = Math.max(0, Math.min(1, t));
+  return [
+    Math.round(r0 + (r1 - r0) * s),
+    Math.round(g0 + (g1 - g0) * s),
+    Math.round(b0 + (b1 - b0) * s),
+  ];
+}
+
+// Biome colour stops.
+const C_DESERT:   Rgb = [205, 160, 75];
+const C_TEMPERATE:Rgb = [90,  125, 65];
+const C_TROPICAL: Rgb = [25,  85,  38];
+const C_MOUNTAIN: Rgb = [185, 170, 140];
+const C_SNOW:     Rgb = [230, 235, 248];
+const C_GLACIER:  Rgb = [210, 228, 252];
+const C_CRATON:   Rgb = [100, 122, 82];
+
 // ── Land colour derivation ────────────────────────────────────────────────────
 
 function landRgb(
   regime: number, mapMm: number, glaciation: number, elev: number, seaLevel: number,
-): [number, number, number] {
-  // 1. Ice / glaciated (glaciation = Former or Active)
-  if (glaciation >= 1) return [225, 235, 250];
-
-  // 2. Mountain belt (ActiveCompressional regime or >2000m above sea level)
-  if (regime === ACTIVE_COMPRESSIONAL || elev > seaLevel + 2000) {
-    const t = Math.min(1, (elev - seaLevel) / 5000); // normalised height 0–1
-    return [
-      Math.round(175 + t * 55),
-      Math.round(165 + t * 50),
-      Math.round(130 + t * 70),
-    ];
+): Rgb {
+  // Step 1: MAP-based biome colour, continuous lerp through three stops.
+  let base: Rgb;
+  if (mapMm <= 400) {
+    base = lerpRgb([220, 175, 85], C_DESERT, mapMm / 400);
+  } else if (mapMm <= 1000) {
+    base = lerpRgb(C_DESERT, C_TEMPERATE, (mapMm - 400) / 600);
+  } else if (mapMm <= 2000) {
+    base = lerpRgb(C_TEMPERATE, C_TROPICAL, (mapMm - 1000) / 1000);
+  } else {
+    base = C_TROPICAL;
   }
 
-  // 3. Cratonic shield — muted sage green
-  if (regime === CRATONIC_SHIELD) return [105, 130, 85];
+  // Step 2: Elevation blend toward mountain/snow colour.
+  // seaLevel = 0.5 in normalised scheme; full mountain tone at +0.30 above SL.
+  const elevAbove = Math.max(0, elev - seaLevel);
+  const mtnFrac   = Math.min(1, elevAbove / 0.30);
+  // Above 0.85 normalised (high peaks) → blend toward snow.
+  const snowFrac  = Math.min(1, Math.max(0, (elev - 0.85) / 0.10));
+  base = lerpRgb(base, C_MOUNTAIN, mtnFrac * 0.85);
+  base = lerpRgb(base, C_SNOW,     snowFrac);
 
-  // 4. Arid (MAP < 400 mm/yr)
-  if (mapMm < 400) {
-    const t = mapMm / 400;
-    return [
-      Math.round(210 - t * 20),
-      Math.round(165 + t * 10),
-      Math.round(70  + t * 20),
-    ];
+  // Step 3: Cratonic shield — muted green on flat terrain, fades with elevation.
+  if (regime === CRATONIC_SHIELD) {
+    base = lerpRgb(base, C_CRATON, (1.0 - mtnFrac) * 0.45);
   }
 
-  // 5. Tropical humid (MAP > 1500 mm/yr)
-  if (mapMm > 1500) {
-    const t = Math.min(1, (mapMm - 1500) / 1000);
-    return [
-      Math.round(30  - t * 5),
-      Math.round(105 - t * 20),
-      Math.round(45  - t * 10),
-    ];
+  // Step 4: Glaciation — Former (50 %) and Active (100 %) blend to glacier blue-white.
+  if (glaciation >= 1) {
+    const glacFrac = glaciation >= 2 ? 1.0 : 0.55;
+    base = lerpRgb(base, C_GLACIER, glacFrac);
   }
 
-  // 6. Temperate / default (MAP 400–1500 mm/yr)
-  const t = (mapMm - 400) / 1100; // 0 = dry temperate, 1 = wet temperate
-  return [
-    Math.round(100 - t * 30),
-    Math.round(130 + t * 10),
-    Math.round(75  - t * 10),
-  ];
+  return base;
 }
 
 // ── Ocean colour derivation ───────────────────────────────────────────────────
 
-function oceanRgb(elev: number, seaLevel: number): [number, number, number] {
-  // depth normalised 0 (at sea level) → 1 (6000m below).
-  const depth = Math.min(1, (seaLevel - elev) / 6000);
+function oceanRgb(elev: number, seaLevel: number): Rgb {
+  // depth: 0 (at sea level) → 1 (deepest, elev = 0).
+  // seaLevel = 0.5 normalised → full depth range is 0 to 0.5.
+  const depth = seaLevel > 0 ? Math.min(1, (seaLevel - elev) / seaLevel) : 0;
   return [
-    Math.round(10  + (1 - depth) * 30),
-    Math.round(30  + (1 - depth) * 70),
-    Math.round(80  + (1 - depth) * 90),
+    Math.round(10  + (1 - depth) * 32),
+    Math.round(28  + (1 - depth) * 72),
+    Math.round(78  + (1 - depth) * 94),
   ];
 }
 

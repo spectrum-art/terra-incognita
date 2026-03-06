@@ -9,6 +9,10 @@ use terra_core::generator::GlobalParams;
 use terra_core::hydraulic::apply_hydraulic_shaping;
 use terra_core::noise::{generate_tile, params::{GlacialClass, NoiseParams}};
 use terra_core::plates::{simulate_plates, TectonicRegime};
+use terra_core::plates::continents::CrustType;
+use terra_core::planet::planet_elevation::generate_planet_elevation;
+use terra_core::planet::sea_level::compute_ocean_mask;
+use terra_core::planet::generate_planet_overview;
 
 const W: usize = 512;
 const H: usize = 256;
@@ -215,5 +219,161 @@ fn main() {
         }
     }
 
-    println!("Done.");
+    // ── Phase A Diagnostics ───────────────────────────────────────────────────
+    const DIAG_W: usize = 1024;
+    const DIAG_H: usize = 512;
+    let diag_params = GlobalParams { seed: 42, ..GlobalParams::default() };
+
+    println!("\n── Phase A Diagnostics ({DIAG_W}×{DIAG_H}) ──────────────────────────────────");
+
+    // D1: crust_field B&W PNG for seeds 42, 7, 99.
+    for &dseed in &[42u64, 7, 99] {
+        println!("D1: simulate_plates seed={dseed}…");
+        let sim_d = simulate_plates(dseed, diag_params.continental_fragmentation, DIAG_W, DIAG_H);
+        let mut img = image::RgbImage::new(DIAG_W as u32, DIAG_H as u32);
+        for r in 0..DIAG_H {
+            for c in 0..DIAG_W {
+                let px = match sim_d.crust_field[r * DIAG_W + c] {
+                    CrustType::Oceanic       => image::Rgb([  0u8,   0,   0]),
+                    CrustType::Continental   => image::Rgb([255u8, 255, 255]),
+                    CrustType::ActiveMargin  => image::Rgb([180u8, 180, 180]),
+                    CrustType::PassiveMargin => image::Rgb([120u8, 120, 120]),
+                };
+                img.put_pixel(c as u32, r as u32, px);
+            }
+        }
+        let path = out_dir.join(format!("crust_field_seed{dseed}.png"));
+        img.save(&path).expect("failed to save crust_field PNG");
+        println!("D1: Wrote {}", path.display());
+    }
+
+    // D2–D4 share seed=42 plate simulation at DIAG_W×DIAG_H.
+    println!("D2-D4: simulate_plates seed=42…");
+    let sim42 = simulate_plates(42, diag_params.continental_fragmentation, DIAG_W, DIAG_H);
+
+    // D2: Regime distribution.
+    {
+        let n = DIAG_W * DIAG_H;
+        let pm = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::PassiveMargin).count();
+        let cs = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::CratonicShield).count();
+        let ac = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::ActiveCompressional).count();
+        let ae = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::ActiveExtensional).count();
+        let vh = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::VolcanicHotspot).count();
+        println!("\nD2: Regime distribution (seed=42, {DIAG_W}×{DIAG_H}):");
+        println!("  PassiveMargin:       {:5.1}%  ({pm})", pm as f32 / n as f32 * 100.0);
+        println!("  CratonicShield:      {:5.1}%  ({cs})", cs as f32 / n as f32 * 100.0);
+        println!("  ActiveCompressional: {:5.1}%  ({ac})", ac as f32 / n as f32 * 100.0);
+        println!("  ActiveExtensional:   {:5.1}%  ({ae})", ae as f32 / n as f32 * 100.0);
+        println!("  VolcanicHotspot:     {:5.1}%  ({vh})", vh as f32 / n as f32 * 100.0);
+    }
+
+    // D3: Elevation statistics.
+    {
+        let elevs = generate_planet_elevation(&sim42, 42);
+        let n = elevs.len();
+        let min_e  = elevs.iter().cloned().fold(f32::INFINITY,     f32::min);
+        let max_e  = elevs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mean_e = elevs.iter().sum::<f32>() / n as f32;
+        let sea_level = compute_ocean_mask(&elevs, diag_params.water_abundance).sea_level_m;
+        let near_sea  = elevs.iter().filter(|&&e| (e - sea_level).abs() < 100.0).count();
+        println!("\nD3: Elevation statistics (seed=42, {DIAG_W}×{DIAG_H}):");
+        println!("  min:          {min_e:.0} m");
+        println!("  max:          {max_e:.0} m");
+        println!("  mean:         {mean_e:.0} m");
+        println!("  sea_level:    {sea_level:.0} m");
+        println!("  cells ±100m:  {:.1}%  ({near_sea})", near_sea as f32 / n as f32 * 100.0);
+    }
+
+    // D4: Glaciation distribution.
+    {
+        let climate42 = simulate_climate(
+            42,
+            diag_params.water_abundance,
+            diag_params.climate_diversity,
+            diag_params.glaciation,
+            &sim42.regime_field,
+            DIAG_W,
+            DIAG_H,
+        );
+        let n = climate42.glaciation_mask.len();
+        let n_active = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::Active).count();
+        let n_former = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::Former).count();
+        let n_none   = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::None).count();
+        let mut polar_total     = 0usize;
+        let mut polar_glaciated = 0usize;
+        for r in 0..DIAG_H {
+            let lat = 90.0_f32 - (r as f32 + 0.5) / DIAG_H as f32 * 180.0;
+            if lat.abs() >= 60.0 {
+                for c in 0..DIAG_W {
+                    polar_total += 1;
+                    if climate42.glaciation_mask[r * DIAG_W + c] != GlacialClass::None {
+                        polar_glaciated += 1;
+                    }
+                }
+            }
+        }
+        let gs = diag_params.glaciation;
+        let active_thresh = 90.0_f32 - gs * 60.0;
+        let former_thresh  = active_thresh - gs * 30.0;
+        println!("\nD4: Glaciation distribution (seed=42, glaciation={gs:.2}):");
+        println!("  GlacialClass::Active: {:5.1}%  ({n_active})", n_active as f32 / n as f32 * 100.0);
+        println!("  GlacialClass::Former: {:5.1}%  ({n_former})", n_former as f32 / n as f32 * 100.0);
+        println!("  GlacialClass::None:   {:5.1}%  ({n_none})",   n_none   as f32 / n as f32 * 100.0);
+        println!("  active threshold:     |lat| > {active_thresh:.1}°");
+        println!("  former threshold:     |lat| > {former_thresh:.1}°");
+        println!("  polar total (|lat|≥60°): {polar_total}");
+        println!("  polar glaciated:         {polar_glaciated}  ({:.1}%)",
+            polar_glaciated as f32 / polar_total.max(1) as f32 * 100.0);
+    }
+
+    // D6: Planet overview ocean_mask and elevation PNGs for seeds 42, 7, 99.
+    for &dseed in &[42u64, 7, 99] {
+        let dparams = GlobalParams { seed: dseed, ..GlobalParams::default() };
+        println!("D6: generate_planet_overview seed={dseed}…");
+        let ov = generate_planet_overview(&dparams);
+
+        // Ocean mask: white = land, black = ocean.
+        let mut img = image::RgbImage::new(DIAG_W as u32, DIAG_H as u32);
+        for r in 0..DIAG_H {
+            for c in 0..DIAG_W {
+                let idx = r * DIAG_W + c;
+                let px = if ov.ocean_mask[idx] {
+                    image::Rgb([10u8, 30, 80]) // ocean
+                } else {
+                    match ov.glaciation[idx] {
+                        GlacialClass::Active => image::Rgb([220u8, 235, 255]),
+                        GlacialClass::Former => image::Rgb([190u8, 205, 220]),
+                        GlacialClass::None   => {
+                            // Tint land by elevation.
+                            let e = ov.elevations[idx];
+                            let t = ((e - 0.5) / 0.4).clamp(0.0, 1.0); // 0=sea, 1=high
+                            image::Rgb([
+                                (60 + (t * 130.0) as u8),
+                                (110 + (t * 60.0)  as u8),
+                                (50 + (t * 40.0)   as u8),
+                            ])
+                        }
+                    }
+                };
+                img.put_pixel(c as u32, r as u32, px);
+            }
+        }
+        let path = out_dir.join(format!("planet_overview_seed{dseed}.png"));
+        img.save(&path).expect("failed to save planet_overview PNG");
+        println!("D6: Wrote {}", path.display());
+    }
+
+    // D5: All 6 planet metrics for seed=42.
+    {
+        println!("\nD5: Planet metrics (seed=42, default params):");
+        let overview = generate_planet_overview(&diag_params);
+        let pm = &overview.planet_metrics;
+        for m in &pm.metrics {
+            let status = if m.pass { "PASS" } else { "FAIL" };
+            println!("  [{status}] {:<28} raw={:.3}  threshold={:.3}", m.name, m.raw_value, m.threshold);
+        }
+        println!("  all_pass: {}", pm.all_pass);
+    }
+
+    println!("\nDone.");
 }

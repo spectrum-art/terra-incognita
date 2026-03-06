@@ -11,7 +11,7 @@ pub struct SmoothingParams {
     /// Corresponds to ~50–100 km at 1024×512 planetary scale.
     pub regime_sigma: f32,
     /// Sigma for MAP/climate transitions (gradual latitudinal/orographic).
-    /// Corresponds to ~200–500 km at 1024×512 planetary scale.
+    /// Corresponds to ~500–1400 km at 1024×512 planetary scale.
     pub climate_sigma: f32,
     /// Sigma for erodibility transitions (moderate geological variation).
     /// Corresponds to ~100–300 km at 1024×512 planetary scale.
@@ -22,7 +22,7 @@ impl Default for SmoothingParams {
     fn default() -> Self {
         Self {
             regime_sigma:      1.5,
-            climate_sigma:     5.0,
+            climate_sigma:     12.0,
             erodibility_sigma: 3.0,
         }
     }

@@ -9,7 +9,7 @@
 //!   2. simulate_climate (1024 × 512)
 //!   3. PA.6 field smoothing on regime/MAP/erodibility fields
 //!   4. PA.2 structural elevation field
-//!   5. PA.1 ocean/land mask from water_abundance percentile
+//!   5. PA.1 ocean/land mask via BFS from non-PassiveMargin seeds
 //!   6. PA.4 six planet-scale metrics
 
 pub mod field_smoothing;
@@ -25,7 +25,6 @@ use crate::plates::{simulate_plates, regime_field::TectonicRegime};
 use field_smoothing::{SmoothingParams, gaussian_blur};
 use planet_elevation::generate_planet_elevation;
 use planet_metrics::{PlanetMetrics, PlanetMetricsConfig, compute_planet_metrics};
-use sea_level::{OceanMask, compute_ocean_mask};
 
 /// Default overview resolution (2:1 equirectangular).
 pub const OVERVIEW_WIDTH:  usize = 1024;
@@ -53,6 +52,75 @@ pub struct PlanetOverview {
     pub planet_metrics: PlanetMetrics,
     /// Generation time in milliseconds.
     pub generation_time_ms: u64,
+}
+
+// ── Ocean mask: BFS from structurally land-like seeds ────────────────────────
+
+/// Derive an ocean/land mask by BFS-expanding outward from structurally land-like seeds.
+///
+/// Seeds are all cells whose regime is NOT PassiveMargin (i.e. CratonicShield,
+/// ActiveCompressional, ActiveExtensional, VolcanicHotspot). PassiveMargin cells
+/// fill in as BFS expands until the land fraction reaches `(1 − water_abundance)`.
+/// This gives blob-shaped continents with good regime variety on land cells.
+///
+/// Returns `(ocean_mask, sea_level_m)` where `ocean_mask[i] = true` means ocean,
+/// and `sea_level_m = 0.0` (structural split, not elevation-based).
+fn ocean_mask_from_bfs(
+    regimes: &[TectonicRegime],
+    water_abundance: f32,
+    width: usize,
+    height: usize,
+) -> (Vec<bool>, f32) {
+    use std::collections::VecDeque;
+
+    let n = width * height;
+    let target_land = ((1.0 - water_abundance.clamp(0.0, 1.0)) * n as f32).round() as usize;
+
+    // Seed from all structurally land-like regimes (everything except PassiveMargin).
+    // PassiveMargin is used as BFS fill, giving better regime variety on land.
+    let mut ocean = vec![true; n];
+    let mut queue  = VecDeque::new();
+
+    for i in 0..n {
+        if regimes[i] != TectonicRegime::PassiveMargin {
+            ocean[i] = false;
+            queue.push_back(i);
+        }
+    }
+
+    let mut land_count = queue.len();
+
+    // Fallback: if no seeds (degenerate params), seed from grid centre.
+    if queue.is_empty() {
+        let centre = (height / 2) * width + (width / 2);
+        ocean[centre] = false;
+        queue.push_back(centre);
+        land_count = 1;
+    }
+
+    // BFS outward until target land fraction reached.
+    'outer: while let Some(idx) = queue.pop_front() {
+        let r = idx / width;
+        let c = idx % width;
+        let neighbours = [
+            if r > 0          { Some((r - 1) * width + c)                       } else { None },
+            if r + 1 < height { Some((r + 1) * width + c)                       } else { None },
+            Some(r * width + if c > 0          { c - 1 } else { width - 1 }), // west (wraps)
+            Some(r * width + if c + 1 < width  { c + 1 } else { 0         }), // east (wraps)
+        ];
+        for nb in neighbours.into_iter().flatten() {
+            if ocean[nb] {
+                ocean[nb] = false;
+                land_count += 1;
+                queue.push_back(nb);
+                if land_count >= target_land {
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    (ocean, 0.5) // 0.5 = sea level in the normalised [0, 1] elevation scheme
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -103,9 +171,12 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     // Use original (unsmoothed) plate data for structurally accurate heights.
     let elevations = generate_planet_elevation(&plates, params.seed);
 
-    // ── 5. PA.1 Ocean / land mask ─────────────────────────────────────────
-    let OceanMask { mask: ocean_mask, sea_level_m, ocean_fraction: _ } =
-        compute_ocean_mask(&elevations, params.water_abundance);
+    // ── 5. PA.1 Ocean / land mask (BFS from non-PassiveMargin seeds) ─────
+    let (ocean_mask, sea_level_m) = ocean_mask_from_bfs(
+        &plates.regime_field.data,
+        params.water_abundance,
+        w, h,
+    );
 
     // ── 6. PA.4 Planet metrics ────────────────────────────────────────────
     let planet_metrics = compute_planet_metrics(

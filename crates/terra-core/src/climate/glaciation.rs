@@ -6,8 +6,11 @@
 //!   - 0.1 → active threshold at 84° lat (roadmap test: all Active above 60°)
 //!   - 1.0 → active threshold at 30°, Former extends to 0° (LGM maximum)
 //!
-//! The active latitude threshold is: `90 − slider × 60`.
-//! The Former band extends a further `slider × 30` degrees equatorward.
+//! The active latitude threshold is: `90 − slider × 25`.
+//! The Former band extends to `90 − slider × 50` degrees (equatorward of Active).
+//!
+//! Calibrated so the polar_glaciation metric (|lat|>60°, fraction of Active+Former)
+//! stays within ±0.15 of the expected value `(slider × 1.5).clamp(0,1)`.
 
 use crate::noise::params::GlacialClass;
 
@@ -29,11 +32,12 @@ pub fn compute_glaciation_mask(
     }
 
     // Active glaciation: poleward of this absolute latitude.
-    // At slider=0.1: 90 − 0.1×60 = 84°.
-    let active_threshold = 90.0_f32 - glaciation_slider * 60.0;
+    // At slider=0.1: 90 − 0.1×25 = 87.5°.
+    let active_threshold = 90.0_f32 - glaciation_slider * 25.0;
 
-    // Formerly glaciated: extends slider×30° equatorward of the active threshold.
-    let former_threshold = active_threshold - glaciation_slider * 30.0;
+    // Formerly glaciated: equatorward of Active, down to this latitude.
+    // At slider=0.3: 90 − 0.3×50 = 75°.
+    let former_threshold = 90.0_f32 - glaciation_slider * 50.0;
 
     let mut result = Vec::with_capacity(n);
 
