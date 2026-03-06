@@ -733,3 +733,16 @@ is out of scope for Phase 3.
       - Variety of continent morphologies per seed ✓
 
 - Phase A — Planet Overview: ✅ Complete (all 4 post-visual-inspection issues resolved)
+
+
+20260306:
+17. MAP banding follow-up fix (field_smoothing.rs).
+    Investigation confirmed: orographic correction is applied INSIDE simulate_climate BEFORE
+    returning, so smoothing runs AFTER orographic (not the initial hypothesis). Latitude bands
+    are freshly computed at 1024×512 (not upsampled). Root cause: sigma=18 cells = 6.3° of
+    latitude, too narrow to blur the subtropical arid band (sigma_signal=8°). Effective band
+    width after blur = sqrt(8² + 6.3²) ≈ 10.2° — widened but still visible.
+
+    Fix: climate_sigma 18.0 → 36.0 (sigma_effective = sqrt(8² + 12.6²) ≈ 14.9°).
+    D5 metrics all PASS (seeds 42/7/99). tropical_map_mm: 1636→1332mm minimum, threshold=1200.
+    Visual inspection (seeds 42, 7, 99): no horizontal banding visible. 196 tests, 0 warnings.
