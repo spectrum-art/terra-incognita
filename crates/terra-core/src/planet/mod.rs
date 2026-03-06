@@ -20,7 +20,7 @@ pub mod sea_level;
 use crate::climate::simulate_climate;
 use crate::generator::GlobalParams;
 use crate::noise::params::GlacialClass;
-use crate::plates::{simulate_plates, regime_field::TectonicRegime};
+use crate::plates::{simulate_plates, continents::CrustType, regime_field::TectonicRegime};
 
 use field_smoothing::{SmoothingParams, gaussian_blur};
 use planet_elevation::generate_planet_elevation;
@@ -74,6 +74,7 @@ pub struct PlanetOverview {
 /// Returns `(ocean_mask, sea_level_m)`.
 fn ocean_mask_from_bfs(
     regimes: &[TectonicRegime],
+    crust_field: &[CrustType],
     water_abundance: f32,
     width: usize,
     height: usize,
@@ -88,6 +89,13 @@ fn ocean_mask_from_bfs(
     // Ridge walls: ActiveExtensional cells bound the continental plates.
     let ridge_wall: Vec<bool> = regimes.iter()
         .map(|&r| r == TectonicRegime::ActiveExtensional)
+        .collect();
+
+    // Arc walls: oceanic ActiveCompressional cells are subduction arc zones.
+    // They must never be captured as land by BFS — only continental AC cells
+    // (genuine mountain belts) may be land.
+    let arc_wall: Vec<bool> = regimes.iter().zip(crust_field.iter())
+        .map(|(&r, &c)| r == TectonicRegime::ActiveCompressional && c == CrustType::Oceanic)
         .collect();
 
     // Low-frequency roughness field for priority-BFS.  Period ≈ 128 cells
@@ -168,7 +176,7 @@ fn ocean_mask_from_bfs(
             Some(r * width + if c + 1 < width  { c + 1 } else { 0         }),
         ];
         for nb in neighbours.into_iter().flatten() {
-            if ocean[nb] && !ridge_wall[nb] {
+            if ocean[nb] && !ridge_wall[nb] && !arc_wall[nb] {
                 ocean[nb] = false;
                 land_count += 1;
                 heap.push(Reverse((cost + 1 + cell_delay(nb), nb)));
@@ -181,6 +189,10 @@ fn ocean_mask_from_bfs(
 
     // Fractal coastline noise to break up geometric regularity.
     apply_coastline_noise(&mut ocean, regimes, width, height, seed);
+
+    // Remove isolated land fragments smaller than 200 cells to eliminate
+    // residual arc artifacts and small BFS noise that escaped the arc_wall filter.
+    remove_small_land_components(&mut ocean, width, height, 200);
 
     (ocean, 0.5)
 }
@@ -249,6 +261,49 @@ fn apply_coastline_noise(
     for i in 0..n {
         if flip_to_land[i]  { ocean[i] = false; }
         if flip_to_ocean[i] { ocean[i] = true;  }
+    }
+}
+
+/// Reclassify any connected land component with fewer than `min_cells` cells as ocean.
+///
+/// Uses iterative BFS (not recursion) to label connected land regions, then
+/// removes components below the threshold.  4-connected neighbourhood; wraps
+/// east–west (equirectangular) but not north–south.
+fn remove_small_land_components(ocean: &mut [bool], width: usize, height: usize, min_cells: usize) {
+    let n = width * height;
+    let mut visited = vec![false; n];
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+
+    for start in 0..n {
+        if ocean[start] || visited[start] {
+            continue;
+        }
+        // BFS to collect this component.
+        let mut component: Vec<usize> = Vec::new();
+        queue.push_back(start);
+        visited[start] = true;
+        while let Some(idx) = queue.pop_front() {
+            component.push(idx);
+            let r = idx / width;
+            let c = idx % width;
+            let neighbours = [
+                if r > 0          { Some((r - 1) * width + c)                       } else { None },
+                if r + 1 < height { Some((r + 1) * width + c)                       } else { None },
+                Some(r * width + if c > 0         { c - 1 } else { width - 1 }),
+                Some(r * width + if c + 1 < width { c + 1 } else { 0         }),
+            ];
+            for nb in neighbours.into_iter().flatten() {
+                if !ocean[nb] && !visited[nb] {
+                    visited[nb] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        if component.len() < min_cells {
+            for idx in component {
+                ocean[idx] = true; // reclassify as ocean
+            }
+        }
     }
 }
 
@@ -327,6 +382,7 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     // ── 5. PA.1 Ocean / land mask (ridge-bounded BFS from CratonicShield) ──
     let (ocean_mask, sea_level_m) = ocean_mask_from_bfs(
         &plates.regime_field.data,
+        &plates.crust_field,
         params.water_abundance,
         w, h,
         params.seed,
@@ -415,5 +471,36 @@ mod tests {
         let has_compressional = overview.regimes.iter().any(|&r| r == TectonicRegime::ActiveCompressional);
         let has_cratonic      = overview.regimes.iter().any(|&r| r == TectonicRegime::CratonicShield);
         assert!(has_compressional || has_cratonic, "regime field must contain varied regimes");
+    }
+
+    /// PC.1: regime entropy must exceed 1.2 bits for seeds 42, 7, 99 after Fix 2.
+    #[test]
+    fn regime_entropy_passes_three_seeds() {
+        for seed in [42u64, 7, 99] {
+            let mut params = GlobalParams::default();
+            params.seed = seed;
+            let overview = generate_planet_overview(&params);
+            let entropy = overview.planet_metrics.metrics[3].raw_value;
+            let land_count = overview.ocean_mask.iter().filter(|&&o| !o).count();
+            let n = OVERVIEW_WIDTH * OVERVIEW_HEIGHT;
+            let mut counts = [0usize; 5];
+            for i in 0..n {
+                if !overview.ocean_mask[i] {
+                    counts[overview.regimes[i] as usize] += 1;
+                }
+            }
+            println!(
+                "seed={seed}: entropy={entropy:.3} (pass={}), land={land_count}, \
+                 PM={:.1}% CS={:.1}% AC={:.1}% AE={:.1}% VH={:.1}%",
+                entropy >= 1.2,
+                counts[0] as f32 / land_count as f32 * 100.0,
+                counts[1] as f32 / land_count as f32 * 100.0,
+                counts[2] as f32 / land_count as f32 * 100.0,
+                counts[3] as f32 / land_count as f32 * 100.0,
+                counts[4] as f32 / land_count as f32 * 100.0,
+            );
+            assert!(entropy >= 1.2,
+                "seed={seed}: regime entropy {entropy:.3} < 1.2 bits");
+        }
     }
 }

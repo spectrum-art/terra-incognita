@@ -792,3 +792,60 @@ is out of scope for Phase 3.
     **End state**: 198 tests passing, 0 clippy warnings, npm build clean (wasm 289kB, index 32kB).
 
 - Phase B — Globe View + Tile Drill-Down: ✅ Complete
+
+20260306:
+
+## Entry 19 — Phase C: Globe Fix + Arc Artifacts + Visual + PC.1/PC.2
+
+**FIX 1 — Globe blank screen (Phase B regression)**:
+- Root cause: `GlobeRenderer.show()` was never called when switching to Globe view.
+  The Three.js canvas initialises with `display:none`; `globeContainer` was made visible
+  but the internal canvas stayed hidden behind it.
+- Fix: `main.ts` `viewToggleBtn` handler now calls `globeRenderer.show()` on enter
+  and `globeRenderer.hide()` on exit. Also guards `updateTexture(canvas)` behind
+  `if (globeRenderer)` before calling `.show()`.
+
+**FIX 2 — Subduction arc artifacts rendered as land**:
+- Root cause: BFS ocean-mask expansion did not distinguish oceanic AC cells
+  (subduction arc zones) from continental AC cells (mountain belts). Oceanic AC
+  cells were BFS-expandable, producing thin arc lines captured as land.
+- Fix 1: Added `arc_wall` mask in `ocean_mask_from_bfs` (planet/mod.rs):
+  cells where `CrustType == Oceanic AND TectonicRegime == ActiveCompressional`
+  are treated like ridge walls — BFS cannot expand into them.
+- Fix 2: Added `remove_small_land_components()` post-BFS filter: land components
+  with fewer than 200 cells are reclassified as ocean (handles residual arc
+  fragments and coastline-noise artifacts).
+- `ocean_mask_from_bfs` now receives `crust_field: &[CrustType]` parameter.
+
+**FIX 3 — Mountain terrain visual contrast (planet_renderer.ts)**:
+- Part A — Hillshade contrast: sun altitude lowered 45°→35° for stronger
+  shadow relief; shade formula changed from `0.4 + 0.6 * shade` to
+  `0.15 + 0.85 * pow(shade, 0.8)` — deeper shadows, brighter midtones.
+- Part B — Elevation color tinting: elevation overrides added to `landRgb()`
+  after climate lerp: elev > 0.72 → 30% grey-brown rock; > 0.82 → 50% light
+  grey rock; > 0.90 → 70% snow-white (smoothstep transitions).
+
+**PC.1 — Regime entropy post-Fix-2**:
+- Seeds 42/7/99: entropy = 1.378 / 1.288 / 1.236 bits (all > 1.2 target). PASS.
+- Fix 2 (arc_wall + component filter) sufficient. No further entropy action needed.
+- Regime distribution (seed 42): PM=68.2%, CS=15.0%, AC=10.3%, AE=6.5%, VH=0.0%.
+
+**PC.2 — Terrain class variety**:
+- Previous bug: `classify_terrain_local` PM threshold allowed FluvialHumid for
+  MAP 400–1000mm, which dominated (PM is 68-74% of land cells).
+- Fix: PM threshold reclassified — PM + MAP ≥ 600 → Coastal; PM + MAP < 600 →
+  FluvialArid. No FluvialHumid from PassiveMargin.
+  AE threshold raised: AE + MAP > 800 → FluvialHumid; AE + MAP ≤ 800 → FluvialArid.
+- Verified: regime-targeted sampling produces Cratonic (CS), Alpine (AC), FluvialArid
+  (AE+PM) in default seed. ≥ 3 classes confirmed.
+
+**PC.3 / PC.4 — Hurst and Multifractal calibration**:
+- All 5 terrain classes remain > 75/100 total (Phase 8 calibration unchanged).
+  Alpine=79.2, Cratonic=82.5, FluvialArid=80.5, Coastal=85.8, FluvialHumid=85.0.
+- FluvialHumid Hurst = 65% (> 60% threshold). No calibration needed.
+- No terrain class regressed after PC.2 changes.
+
+**End state**: 200 tests passing (198 + 2 new PC.1/PC.2 validation tests),
+0 clippy warnings, npm build clean, wasm-pack build clean.
+
+- Phase C — Globe Fix + Arc Fix + Visual Fix + PC.1/PC.2: ✅ Complete

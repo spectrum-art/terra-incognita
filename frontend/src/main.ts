@@ -210,9 +210,13 @@ viewToggleBtn.addEventListener("click", () => {
     canvas.style.display = "none";
     globeContainer.style.display = "block";
     viewToggleBtn.textContent = "Flat View";
-    // Sync globe texture with current canvas state
-    if (globeRenderer && lastOverview) globeRenderer.updateTexture(canvas);
+    // Sync globe texture with current canvas state, then show the WebGL canvas
+    if (globeRenderer) {
+      if (lastOverview) globeRenderer.updateTexture(canvas);
+      globeRenderer.show();
+    }
   } else {
+    if (globeRenderer) globeRenderer.hide();
     canvas.style.display = "";
     globeContainer.style.display = "none";
     viewToggleBtn.textContent = "Globe View";

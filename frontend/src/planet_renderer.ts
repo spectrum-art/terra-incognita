@@ -36,7 +36,7 @@ function computeHillshade(elevs: number[], w: number, h: number): Float32Array {
   const cellsizeM = (360.0 / w) * 111_000; // equatorial cell width in metres
   const ELEV_SCALE = 14_000;               // 1.0 normalised ≈ 14 000 m range
   const azRad  = (315 * Math.PI) / 180;
-  const altRad = (45  * Math.PI) / 180;
+  const altRad = (35  * Math.PI) / 180;  // lowered from 45° for stronger shadow relief
   const zenith = Math.PI / 2 - altRad;
   const azFull = (2 * Math.PI - azRad) + Math.PI / 2;
 
@@ -122,6 +122,22 @@ function landRgb(
     base = lerpRgb(base, C_GLACIER, glacFrac);
   }
 
+  // Step 5: Elevation overrides — rock and snow at altitude, applied after
+  // the climate lerp so high terrain becomes grey/white regardless of biome.
+  const ss = (t: number) => t * t * (3 - 2 * t); // smoothstep
+  if (elev > 0.72) {
+    const t = ss(Math.min(1, (elev - 0.72) / 0.10));
+    base = lerpRgb(base, [160, 155, 150], t * 0.30);
+  }
+  if (elev > 0.82) {
+    const t = ss(Math.min(1, (elev - 0.82) / 0.08));
+    base = lerpRgb(base, [190, 185, 180], t * 0.50);
+  }
+  if (elev > 0.90) {
+    const t = ss(Math.min(1, (elev - 0.90) / 0.10));
+    base = lerpRgb(base, [235, 238, 242], t * 0.70);
+  }
+
   return base;
 }
 
@@ -165,8 +181,9 @@ export function renderPlanetOverview(
         data.elevations[i], data.sea_level_m,
       );
     }
-    // 40% ambient + 60% directional shading.
-    const s = 0.4 + 0.6 * shade[i];
+    // Power curve brightens midtones while keeping shadows dark, then
+    // 15% ambient floor + 85% directional for deeper shadow contrast.
+    const s = 0.15 + 0.85 * Math.pow(shade[i], 0.8);
     const base = i * 4;
     px[base]     = Math.round(rv * s);
     px[base + 1] = Math.round(gv * s);

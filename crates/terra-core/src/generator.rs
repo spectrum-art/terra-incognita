@@ -383,19 +383,20 @@ fn classify_terrain_local(regime: TectonicRegime, map_mm: f32) -> TerrainClass {
         }
         TectonicRegime::CratonicShield => TerrainClass::Cratonic,
         TectonicRegime::PassiveMargin => {
-            if map_mm > 1000.0 {
+            // Passive margins are either low-lying coastal plains (high MAP)
+            // or arid continental interiors.  No FluvialHumid — that class
+            // requires active extensional tectonics with high rainfall.
+            if map_mm >= 600.0 {
                 TerrainClass::Coastal
-            } else if map_mm < 400.0 {
-                TerrainClass::FluvialArid
             } else {
-                TerrainClass::FluvialHumid
+                TerrainClass::FluvialArid
             }
         }
         TectonicRegime::ActiveExtensional => {
-            if map_mm < 400.0 {
-                TerrainClass::FluvialArid
-            } else {
+            if map_mm > 800.0 {
                 TerrainClass::FluvialHumid
+            } else {
+                TerrainClass::FluvialArid
             }
         }
     }
@@ -620,6 +621,51 @@ mod tests {
         // Far-south open ocean latitude
         let result = generate_at_location(&params, -70.0, 0.0);
         assert!(!result.heightfield.data.is_empty());
+    }
+
+    /// PC.2: at least 3 different terrain classes must appear when sampling
+    /// one land cell from each distinct regime type present on the planet.
+    #[test]
+    fn terrain_class_variety_across_planet() {
+        use std::collections::HashSet;
+        use crate::planet::{generate_planet_overview, OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
+        use crate::plates::regime_field::TectonicRegime;
+
+        let params = GlobalParams::default();
+        let overview = generate_planet_overview(&params);
+
+        // Find the first land cell from each regime type.
+        let target_regimes = [
+            TectonicRegime::CratonicShield,
+            TectonicRegime::ActiveCompressional,
+            TectonicRegime::ActiveExtensional,
+            TectonicRegime::PassiveMargin,
+            TectonicRegime::VolcanicHotspot,
+        ];
+        let n = OVERVIEW_WIDTH * OVERVIEW_HEIGHT;
+        let mut classes: HashSet<String> = HashSet::new();
+
+        for target in &target_regimes {
+            // Find first land cell matching this regime.
+            let cell = (0..n).find(|&i| {
+                !overview.ocean_mask[i] && overview.regimes[i] == *target
+            });
+            if let Some(idx) = cell {
+                let r = idx / OVERVIEW_WIDTH;
+                let c = idx % OVERVIEW_WIDTH;
+                let lat = 90.0 - (r as f32 + 0.5) * 180.0 / OVERVIEW_HEIGHT as f32;
+                let lon = (c as f32 + 0.5) * 360.0 / OVERVIEW_WIDTH as f32 - 180.0;
+                let result = generate_at_location(&params, lat, lon);
+                let tc = format!("{:?}", result.terrain_class);
+                println!("regime={target:?} → lat={lat:.1} lon={lon:.1} → {tc}");
+                classes.insert(tc);
+            }
+        }
+
+        println!("Terrain classes found: {classes:?}");
+        assert!(classes.len() >= 3,
+            "expected ≥ 3 terrain classes from regime-targeted samples, got {}: {:?}",
+            classes.len(), classes);
     }
 
     /// Generate with default params, confirm non-flat output and no panic.
