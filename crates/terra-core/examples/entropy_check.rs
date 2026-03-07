@@ -4,6 +4,16 @@ use terra_core::plates::regime_field::TectonicRegime;
 
 fn main() {
     let seeds = [42u64, 7, 99, 312300, 655773];
+    let metric_names = [
+        "land_fraction",
+        "tropical_map_mm",
+        "polar_glaciation_frac",
+        "regime_entropy_bits",
+        "transition_smoothness",
+        "continental_coherence",
+    ];
+
+    println!("=== Regime entropy + distribution ===");
     println!("{:<8} {:>8} {:>5}  PM%   CS%   AC%   AE%   VH%",
              "seed", "entropy", "pass");
     println!("{}", "-".repeat(60));
@@ -29,5 +39,19 @@ fn main() {
                  pct(TectonicRegime::ActiveCompressional as usize),
                  pct(TectonicRegime::ActiveExtensional as usize),
                  pct(TectonicRegime::VolcanicHotspot as usize));
+    }
+
+    println!();
+    println!("=== All 6 planet metrics (seeds 42, 7, 99) ===");
+    for seed in [42u64, 7, 99] {
+        let mut params = GlobalParams::default();
+        params.seed = seed;
+        let overview = generate_planet_overview(&params);
+        println!("\nSeed {}:", seed);
+        for (i, m) in overview.planet_metrics.metrics.iter().enumerate() {
+            let name = if i < metric_names.len() { metric_names[i] } else { "?" };
+            println!("  [{:>2}] {:30} raw={:.4}  {}",
+                     i, name, m.raw_value, if m.pass { "PASS" } else { "FAIL" });
+        }
     }
 }
