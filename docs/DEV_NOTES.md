@@ -849,3 +849,67 @@ is out of scope for Phase 3.
 0 clippy warnings, npm build clean, wasm-pack build clean.
 
 - Phase C — Globe Fix + Arc Fix + Visual Fix + PC.1/PC.2: ✅ Complete
+
+---
+
+## 20260306 — Issue 6 + Issue 3 targeted fixes
+
+### Issue 6 — MAP subtropical arid belt running hot at low water_abundance
+
+**Root cause**: Candidate B (variant). The latitude_bands formula scaled ALL
+components linearly by `(water_abundance / 0.55)`. The subtropical arid dip
+(-560 mm at peak, σ≈8°) therefore scaled proportionally with wa. At wa=0.30
+the mean 20-35° band was ~309 mm — far above the 50-200 mm target for an
+arid planet. The equatorial peak (1560 mm gaussian) decays only gradually
+toward 20°, so even with the full arid dip the 20° row still had ~411mm
+after scaling, pulling the band mean above 200mm.
+
+**Fix**: `arid_strength = (2.0 − wa/0.55).max(1.0)` multiplied into the
+subtropical arid Gaussian in `latitude_bands.rs`. At wa=0.55 this is 1.0
+(no change to Earth-reference values). At wa=0.30 it is 1.455 — the arid
+dip reaches ≈−815 mm at 28°, driving the 20-35° band mean to ~176 mm.
+wa > 0.55 is capped at 1.0 (wetter planets are not penalised further).
+
+**Calibration test** `map_field_calibration` added to `climate/mod.rs`.
+Uses 256×128 planet at seed=42 (includes orographic correction). All
+criteria verified:
+- wa=0.55: eq=1200-2500, sub=200-700, temp=500-1200, max<8000, min>20 ✓
+- wa=0.30: eq=600-1200, sub=50-200 ✓
+- wa=0.80: eq=2000-4000 ✓
+
+**Pre-fix band means (wa=0.30)**: equatorial ~513mm, subtropical ~309mm.
+**Post-fix band means (wa=0.30)**: equatorial ~513mm (unchanged), subtropical ~176mm.
+Single-point click values at equatorial windward locations (e.g. 5460mm
+near Andes at wa=0.55) remain within the max <8000mm criterion — they are
+correct orographic windward maxima, not inflation errors.
+
+Commit: 4ea8cc3
+
+### Issue 3 — Excessive diagonal striping on oceanic ActiveExtensional tiles
+
+**Root cause**: Candidate C. Near long straight subduction arcs, grain
+coherence in `GrainField` approaches 1.0 (all arc segments point in the
+same direction). After tectonic/age scaling (×1.0×0.8=0.8 at default
+params), `grain_intensity` in `NoiseParams` was 0.56–0.72. The anisotropy
+function (`1/(1 − 0.9 × intensity)`) gives aspect ratios of 2.8–3.6:1.
+With a nearly constant `grain_angle` across the tile the result is uniform
+wall-to-wall diagonal striping.
+
+**Fix**: In `generate_at_location`, sample `plates.crust_field[idx]` and
+apply `raw.min(0.55)` for oceanic AE cells. Continental AE (major rift
+valleys like East African Rift) remains uncapped. Grain is still visible
+as a directional tendency (0.55 → aspect ratio 2.5:1) but the coherence
+is no longer extreme enough to produce parallel-line artifacts.
+
+**Test** `grain_intensity_oceanic_ae_below_threshold` added to `generator.rs`.
+Verifies (a) oceanic AE cells exist on seed=42 planet, (b) some would exceed
+0.55 without the cap (proving the fix is not a no-op), and (c) all capped
+values satisfy ≤ 0.55.
+
+**Pre-fix**: oceanic AE grain_intensity (after scaling) up to ~0.72.
+**Post-fix**: oceanic AE grain_intensity capped at 0.55.
+
+Commit: 3e7f8b2
+
+**End state**: 202 tests passing (200 + 2 new), 0 clippy warnings,
+npm build clean, wasm-pack build clean. Both commits pushed to origin/main.
