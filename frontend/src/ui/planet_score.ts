@@ -31,13 +31,15 @@ export function renderPlanetMetricsPanel(
   const allIcon  = data.all_pass ? "✓ All pass" : "⚠ Some metrics failed";
 
   let html = `
-    <div style="font-weight:700;color:${allColor};margin-bottom:6px;font-size:0.9rem">
-      ${allIcon}
+    <div id="pm-header" style="cursor:pointer;display:flex;align-items:center;
+      justify-content:space-between;font-weight:700;color:${allColor};font-size:0.9rem;
+      user-select:none">
+      <span>${allIcon} — ${generationTimeMs} ms</span>
+      <span id="pm-chevron" style="font-size:0.7rem;margin-left:6px;
+        transition:transform 0.2s;display:inline-block">▼</span>
     </div>
-    <div style="font-size:0.7rem;color:#888;margin-bottom:8px">
-      Planet overview — ${generationTimeMs} ms
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:0.68rem">
+    <div id="pm-collapsible" style="overflow:hidden;transition:max-height 0.25s ease">
+    <table style="width:100%;border-collapse:collapse;font-size:0.68rem;margin-top:8px">
       <thead>
         <tr style="color:#aaa;border-bottom:1px solid #333">
           <th style="text-align:left;padding:2px 0">Metric</th>
@@ -63,7 +65,22 @@ export function renderPlanetMetricsPanel(
 
   html += `
       </tbody>
-    </table>`;
+    </table>
+    </div>`; // close #pm-collapsible
 
   panel.innerHTML = html;
+
+  // Wire collapse toggle
+  const header      = panel.querySelector("#pm-header")      as HTMLElement;
+  const collapsible = panel.querySelector("#pm-collapsible") as HTMLElement;
+  const chevron     = panel.querySelector("#pm-chevron")     as HTMLElement;
+
+  // Set initial max-height (expanded by default)
+  collapsible.style.maxHeight = collapsible.scrollHeight + "px";
+
+  header.addEventListener("click", () => {
+    const isExpanded = collapsible.style.maxHeight !== "0px";
+    collapsible.style.maxHeight = isExpanded ? "0px" : collapsible.scrollHeight + "px";
+    chevron.style.transform = isExpanded ? "rotate(-90deg)" : "rotate(0deg)";
+  });
 }
