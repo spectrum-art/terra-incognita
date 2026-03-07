@@ -22,6 +22,8 @@ export class InteractionManager {
 
   // Overlay canvas drawn on top of the flat map for the crosshair
   private overlay!: HTMLCanvasElement;
+  // Small marker shown on the globe canvas at the click position
+  private globeMarker!: HTMLCanvasElement;
 
   constructor(
     private readonly flatCanvas: HTMLCanvasElement,
@@ -29,6 +31,7 @@ export class InteractionManager {
     private readonly coordsDisplay: HTMLElement,
   ) {
     this.buildOverlay();
+    this.buildGlobeMarker();
     this.attachFlatClickHandler();
   }
 
@@ -43,8 +46,29 @@ export class InteractionManager {
     if (!el) return;
     el.addEventListener("click", (e: MouseEvent) => {
       const pos = globe.pickLatLon(e.clientX, e.clientY);
-      if (pos) this.select(pos);
+      if (!pos) return;
+      // Position globe marker at the raw click point (already the correct screen location).
+      const rect = el.getBoundingClientRect();
+      this.globeMarker.style.left = (e.clientX - rect.left) + "px";
+      this.globeMarker.style.top  = (e.clientY - rect.top)  + "px";
+      this.globeMarker.style.display = "block";
+      this.select(pos);
     });
+  }
+
+  /**
+   * Call whenever the view switches between flat and globe.
+   * Keeps each crosshair visible only in its own view.
+   */
+  setViewMode(isGlobe: boolean): void {
+    if (isGlobe) {
+      this.overlay.style.display = "none";
+    } else {
+      this.overlay.style.display = "";
+      this.globeMarker.style.display = "none";
+      // Re-draw flat crosshair for the current selection.
+      if (this.selected) this.drawCrosshair(this.selected);
+    }
   }
 
   /** Current selected location (null before any click). */
@@ -59,13 +83,44 @@ export class InteractionManager {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  private buildGlobeMarker(): void {
+    const sz = 28;
+    this.globeMarker = document.createElement("canvas");
+    this.globeMarker.width  = sz;
+    this.globeMarker.height = sz;
+    this.globeMarker.style.cssText =
+      "position:absolute;display:none;pointer-events:none;" +
+      `transform:translate(-50%,-50%);z-index:10`;
+
+    // Pre-draw the crosshair onto the small canvas.
+    const ctx = this.globeMarker.getContext("2d")!;
+    const cx = sz / 2;
+    const r  = 9;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,100,0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - r - 4, cx); ctx.lineTo(cx - 3, cx);
+    ctx.moveTo(cx + 3, cx);     ctx.lineTo(cx + r + 4, cx);
+    ctx.moveTo(cx, cx - r - 4); ctx.lineTo(cx, cx - 3);
+    ctx.moveTo(cx, cx + 3);     ctx.lineTo(cx, cx + r + 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cx, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,100,0.7)";
+    ctx.stroke();
+    ctx.restore();
+
+    this.globeContainer.appendChild(this.globeMarker);
+  }
+
   private buildOverlay(): void {
     this.overlay = document.createElement("canvas");
     this.overlay.width  = this.flatCanvas.width;
     this.overlay.height = this.flatCanvas.height;
     this.overlay.style.cssText =
       "position:absolute;top:0;left:0;pointer-events:none;" +
-      "width:100%;height:auto;image-rendering:pixelated";
+      "width:100%;height:100%;image-rendering:pixelated";
 
     // Insert overlay right after the flat canvas in the DOM
     this.flatCanvas.parentElement?.insertBefore(

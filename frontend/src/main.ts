@@ -56,6 +56,7 @@ let isGlobeView = false;
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 
 const canvas             = document.getElementById("main-canvas")          as HTMLCanvasElement;
+const canvasWrapper      = document.getElementById("main-canvas-wrapper")   as HTMLDivElement;
 const scorePanel         = document.getElementById("score-panel")          as HTMLDivElement;
 const planetMetricsPanel = document.getElementById("planet-metrics-panel") as HTMLDivElement;
 const statusEl           = document.getElementById("status")               as HTMLDivElement;
@@ -252,20 +253,20 @@ async function runTileGenerate(): Promise<void> {
 viewToggleBtn.addEventListener("click", () => {
   isGlobeView = !isGlobeView;
   if (isGlobeView) {
-    canvas.style.display = "none";
+    canvasWrapper.style.display = "none";
     globeContainer.style.display = "block";
     viewToggleBtn.textContent = "Flat View";
-    // Sync globe texture with current canvas state, then show the WebGL canvas
     if (globeRenderer) {
       if (lastOverview) globeRenderer.updateTexture(canvas);
       globeRenderer.show();
     }
   } else {
     if (globeRenderer) globeRenderer.hide();
-    canvas.style.display = "";
+    canvasWrapper.style.display = "";
     globeContainer.style.display = "none";
     viewToggleBtn.textContent = "Globe View";
   }
+  interactionMgr?.setViewMode(isGlobeView);
 });
 
 // ── Generate-at-location button (PB.3) ─────────────────────────────────────────
