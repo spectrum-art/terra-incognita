@@ -63,7 +63,9 @@ pub fn assign_continental_crust(
                 // Far from ridges (high age) and far from subduction = craton or passive margin.
                 // Distinguish by age: very high age = craton (CrustType::Continental),
                 // moderate-high age = passive margin.
-                if age > 0.80 {
+                // Threshold lowered from 0.80 → 0.65 to give CratonicShield more territory and
+                // balance regime entropy across a wider range of seeds (see DEV_NOTES).
+                if age > 0.65 {
                     CrustType::Continental
                 } else {
                     CrustType::PassiveMargin
