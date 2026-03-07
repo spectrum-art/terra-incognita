@@ -3,7 +3,7 @@
  * Phase 7, Task P7.4.
  */
 
-export type RenderMode = "hillshade" | "elevation" | "regime";
+export type RenderMode = "hillshade" | "elevation" | "regime" | "terrain";
 
 // ── Hillshade (Horn method) ───────────────────────────────────────────────────
 
@@ -80,6 +80,43 @@ function hypsometricRgb(t: number): [number, number, number] {
   return RAMP[RAMP.length - 1][1];
 }
 
+// ── Terrain render (land/water) ───────────────────────────────────────────────
+// Land ramp: low=green → mid=olive/tan → high=grey-brown → peak=near-white.
+
+const LAND_RAMP: Array<[number, [number, number, number]]> = [
+  [0.00, [72,  120,  62]],  // lowland green
+  [0.35, [128, 148,  82]],  // olive grassland
+  [0.60, [170, 148,  96]],  // tan / dry upland
+  [0.80, [158, 140, 122]],  // grey-brown rock
+  [1.00, [225, 225, 222]],  // snow / peak
+];
+
+function landTerrainRgb(t: number): [number, number, number] {
+  for (let i = 0; i < LAND_RAMP.length - 1; i++) {
+    const [t0, c0] = LAND_RAMP[i];
+    const [t1, c1] = LAND_RAMP[i + 1];
+    if (t <= t1) {
+      const f = (t - t0) / (t1 - t0);
+      return [
+        Math.round(c0[0] + f * (c1[0] - c0[0])),
+        Math.round(c0[1] + f * (c1[1] - c0[1])),
+        Math.round(c0[2] + f * (c1[2] - c0[2])),
+      ];
+    }
+  }
+  return LAND_RAMP[LAND_RAMP.length - 1][1];
+}
+
+/** depth in [0,1]: 0 = sea surface, 1 = deepest ocean in this tile. */
+function oceanTerrainRgb(depth: number): [number, number, number] {
+  const d = Math.max(0, Math.min(1, depth));
+  return [
+    Math.round(12  + (1 - d) * 38),
+    Math.round(48  + (1 - d) * 88),
+    Math.round(110 + (1 - d) * 62),
+  ];
+}
+
 // ── Regime colours ────────────────────────────────────────────────────────────
 // 0=PassiveMargin, 1=Cratonic, 2=ActiveCompressional, 3=ActiveExtensional, 4=Hotspot
 
@@ -100,6 +137,7 @@ export function renderHeightField(
   height: number,
   mode: RenderMode = "hillshade",
   regimes?: Uint8Array,
+  seaLevel = 0,
 ): void {
   canvas.width  = width;
   canvas.height = height;
@@ -134,6 +172,32 @@ export function renderHeightField(
       px[base]     = rv;
       px[base + 1] = gv;
       px[base + 2] = bv;
+      px[base + 3] = 255;
+    }
+  } else if (mode === "terrain") {
+    // Land/water distinction with elevation-based colour ramp, blended with hillshade.
+    // Sea level = seaLevel param (metres; 0 = standard).
+    // Land normalises within [seaLevel, max]; ocean normalises within [min, seaLevel].
+    const cellsizeM = (360 / width) * 111_000;
+    const shade = hillshade(data, width, height, 315, 45, cellsizeM);
+    const landRange  = Math.max(max - seaLevel, 1);
+    const oceanRange = Math.max(seaLevel - min, 1);
+    for (let i = 0; i < data.length; i++) {
+      let rv: number, gv: number, bv: number;
+      if (data[i] <= seaLevel) {
+        // Ocean: depth from surface down.
+        const depth = (seaLevel - data[i]) / oceanRange;
+        [rv, gv, bv] = oceanTerrainRgb(depth);
+      } else {
+        // Land: normalised within the land elevation range.
+        const t = (data[i] - seaLevel) / landRange;
+        [rv, gv, bv] = landTerrainRgb(t);
+      }
+      const s = 0.35 + 0.65 * shade[i]; // 35% ambient + 65% directional
+      const base = i * 4;
+      px[base]     = Math.round(rv * s);
+      px[base + 1] = Math.round(gv * s);
+      px[base + 2] = Math.round(bv * s);
       px[base + 3] = 255;
     }
   } else {

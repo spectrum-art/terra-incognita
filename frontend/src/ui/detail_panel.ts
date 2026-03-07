@@ -103,6 +103,7 @@ export function renderDetailPanel(
   consistEl:    HTMLElement,
   result:       LocationTileResult,
   overviewCanvas: HTMLCanvasElement,
+  seaLevel = 0,
 ): void {
   panelEl.classList.add("visible");
 
@@ -116,7 +117,7 @@ export function renderDetailPanel(
   tileCanvas.height = result.height;
 
   const data = new Float32Array(result.heights);
-  renderHeightField(tileCanvas, data, result.width, result.height, "hillshade");
+  renderHeightField(tileCanvas, data, result.width, result.height, "terrain", undefined, seaLevel);
 
   // ── Score summary + sampled fields ───────────────────────────────────────
   const sf = result.sampled_fields;
