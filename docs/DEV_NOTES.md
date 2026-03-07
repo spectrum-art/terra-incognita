@@ -998,6 +998,44 @@ Four frontend-only commits. No Rust changes.
 - Note: planet `sea_level_m` is in normalised [0,1] space (~0.5), incompatible with tile heights (raw metres). Using 0 m as threshold (standard geographic datum). This is physically correct — Coastal tiles naturally straddle 0m; Alpine tiles are all positive.
 - Files: `render.ts`, `ui/detail_panel.ts`.
 
+## Entry 21 — Tile Footprint Bounding Box + Globe Crosshair Fix (20260307)
+
+Frontend-only. No Rust changes. Commit: 7d63300.
+
+### Tile Angular Extent Decision
+`generate_at_location()` calls `generate_tile(-180, 180, -90, 90)` — these bounds are
+metadata-only (used for `cellsize_m` in scoring), not spatial sampling. The tile has no
+inherent geographic footprint. A **10° lon × 5° lat** constant was chosen for the frontend
+bounding box, matching the scale of Phase 1 calibration regions. Defined as
+`GlobeRenderer.TILE_LAT_DEG / TILE_LON_DEG` (static readonly), mirrored into `interaction.ts`.
+
+### Click vs Drag (Globe)
+Globe click handler replaced with `pointerdown`/`pointerup` distance tracking; threshold 4px.
+Below threshold = coordinate selection; above threshold = globe drag, no selection change.
+Globe rotation (`mousedown/mousemove/mouseup` on window) is unaffected.
+
+### Flat Map Bounding Box
+Semi-transparent white `strokeRect` centered on crosshair in the overlay canvas:
+- Width = `(10/360) × overlay.width` ≈ 28px on 1024-wide canvas
+- Height = `(5/180) × overlay.height` ≈ 14px on 512-tall canvas
+- Constant size everywhere on equirectangular projection (correct; no distortion correction).
+
+### Globe 3D Crosshair + Bounding Box
+Removed the old 2D `globeMarker` canvas overlay. Replaced with Three.js 3D objects:
+- **Crosshair**: `THREE.LineSegments` — 4 arms computed from sphere-local tangent vectors.
+  North tangent = `dP/dlat = (sin(lat)cos(lon), cos(lat), sin(lat)sin(lon))`;
+  East tangent = `(sin(lon), 0, -cos(lon))` (unit). Radial offset R=1.002.
+- **Bounding box**: `THREE.Line` — 4 edges, 24 interpolated points each. N/S edges follow
+  parallels; E/W edges follow meridians. Trapezoidal near poles (correct). White, 60% opacity.
+- Both added as children of `this.sphere` mesh — rotate with globe automatically.
+- Disposed properly in `clear3DMarker()` via `geometry.dispose()`.
+
+### Lifecycle
+- Panel close (×): `interactionMgr.clear()` — clears visual markers and `selected` coord.
+- New planet generate: same.
+- View switch: `setViewMode(isGlobe)` recreates markers in the new coordinate system
+  (calls `set3DMarker()` when switching to globe; redraws overlay when switching to flat).
+
 ### Phase C — CLOSED ✅
 
 All Phase C criteria met. Remaining known issues (not addressed this session):
