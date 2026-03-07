@@ -964,6 +964,40 @@ Commit: 8f586e4
 
 202 tests, 0 clippy warnings, npm build clean.
 
+## Entry 20 — QoL + Visual Consistency (20260307)
+
+Four frontend-only commits. No Rust changes.
+
+### 1A — Movable/Closeable Tile Detail Panel
+- `#tile-detail-panel` gains a drag handle titlebar (`#tile-panel-titlebar`) and close button (`#tile-panel-close`).
+- Drag uses pointer events (touch/pen safe); position tracked via CSS `transform:translate(x,y)`.
+- Clamping keeps panel within viewport at all times.
+- `runGenerate()` auto-closes and resets panel position on each new planet.
+- Files: `index.html`, `main.ts`.
+
+### 1B — Collapsible Metrics Panel
+- `renderPlanetMetricsPanel()` now wraps metric rows in `#pm-collapsible` with CSS `max-height` transition.
+- Header shows "✓ All pass — Xms" / "⚠ Some failed — Xms" on one line; chevron ▼/▶ rotates on toggle.
+- Default state: expanded.
+- File: `planet_score.ts`.
+
+### 1C — Click-to-Coordinate Targeting Fix
+- **Root cause**: overlay canvas was `position:absolute;top:0;left:0` relative to `#canvas-container`, but the flat map canvas is flex-centered inside that container. When container > 1024 px, overlay started at container left while canvas was offset — crosshair displacement grew from center.
+- **Fix**: Wrapped `#main-canvas` in `#main-canvas-wrapper` (`position:relative`). Overlay `position:absolute` is now relative to the wrapper (same visual bounds as canvas). Changed `height:auto` → `height:100%` on overlay.
+- Globe crosshair: pre-drawn 28×28 canvas element inside `#globe-container`, shown at raw click coordinates with `transform:translate(-50%,-50%)` centering.
+- Added `InteractionManager.setViewMode(isGlobe)` — hides flat overlay in globe mode and vice versa; wired to view toggle in `main.ts`.
+- Files: `index.html`, `interaction.ts`, `main.ts`.
+
+### Part 2 — Terrain-Colored Tile Rendering
+- New `"terrain"` `RenderMode` in `render.ts`. Land/water split at `seaLevel` (metres; default 0m).
+- Land ramp: muted green → olive → tan → grey-brown → near-white (5 stops, normalised within `[seaLevel, tileMax]`).
+- Ocean ramp: shallow → deep blue (normalised within `[tileMin, seaLevel]`).
+- Hillshade overlay: 35% ambient + 65% directional (slightly stronger shadow than old hillshade mode).
+- Tile detail panel now calls `renderHeightField(..., "terrain")` by default.
+- Existing `hillshade`/`elevation`/`regime` modes on the main canvas are unchanged.
+- Note: planet `sea_level_m` is in normalised [0,1] space (~0.5), incompatible with tile heights (raw metres). Using 0 m as threshold (standard geographic datum). This is physically correct — Coastal tiles naturally straddle 0m; Alpine tiles are all positive.
+- Files: `render.ts`, `ui/detail_panel.ts`.
+
 ### Phase C — CLOSED ✅
 
 All Phase C criteria met. Remaining known issues (not addressed this session):
