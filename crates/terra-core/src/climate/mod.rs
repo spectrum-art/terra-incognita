@@ -195,6 +195,93 @@ mod tests {
         }
     }
 
+    /// MAP field calibration: band means and extremes at three water_abundance values.
+    ///
+    /// Runs the full climate pipeline (including orographic correction) with
+    /// seed=42, default params. Uses a 256×128 grid for speed; regime field
+    /// is shared across all three water_abundance runs.
+    ///
+    /// Correctness criteria (see session task — Issue 6):
+    ///   wa=0.55: equatorial mean 1200-2500 mm, subtropical mean 200-700 mm,
+    ///            temperate mean 500-1200 mm, max < 8000 mm, min > 20 mm.
+    ///   wa=0.30: equatorial mean 600-1200 mm, subtropical mean 50-200 mm.
+    ///   wa=0.80: equatorial mean 2000-4000 mm.
+    #[test]
+    fn map_field_calibration() {
+        use crate::plates::simulate_plates;
+
+        let seed = 42u64;
+        let w = 256usize;
+        let h = 128usize;
+        let climate_diversity = 0.50_f32;
+        let glaciation = 0.30_f32;
+
+        // Plate simulation is independent of water_abundance — run once.
+        let plates = simulate_plates(seed, 0.5, w, h);
+
+        // Compute mean MAP over rows whose absolute latitude falls in [lo, hi].
+        let band_mean = |map: &[f32], lat_lo: f64, lat_hi: f64| -> f32 {
+            let mut sum = 0.0_f64;
+            let mut count = 0usize;
+            for r in 0..h {
+                let lat = (90.0 - (r as f64 + 0.5) / h as f64 * 180.0).abs();
+                if lat >= lat_lo && lat <= lat_hi {
+                    for c in 0..w {
+                        sum += map[r * w + c] as f64;
+                        count += 1;
+                    }
+                }
+            }
+            if count == 0 { return 0.0; }
+            (sum / count as f64) as f32
+        };
+
+        // ── wa = 0.55 (Earth-like) ────────────────────────────────────────
+        let cl55 = simulate_climate(
+            seed ^ 0x5A5A, 0.55, climate_diversity, glaciation,
+            &plates.regime_field, w, h,
+        );
+        let eq55   = band_mean(&cl55.map_field,  0.0, 10.0);
+        let sub55  = band_mean(&cl55.map_field, 20.0, 35.0);
+        let tmp55  = band_mean(&cl55.map_field, 40.0, 60.0);
+        let max55  = cl55.map_field.iter().cloned().fold(0.0_f32, f32::max);
+        let min55  = cl55.map_field.iter().cloned().fold(f32::MAX, f32::min);
+
+        assert!(eq55  >= 1200.0 && eq55  <= 2500.0,
+            "wa=0.55 equatorial mean {eq55:.0} mm outside [1200, 2500]");
+        assert!(sub55 >= 200.0  && sub55 <= 700.0,
+            "wa=0.55 subtropical mean {sub55:.0} mm outside [200, 700]");
+        assert!(tmp55 >= 500.0  && tmp55 <= 1200.0,
+            "wa=0.55 temperate mean {tmp55:.0} mm outside [500, 1200]");
+        assert!(max55 < 8000.0,
+            "wa=0.55 max MAP {max55:.0} mm ≥ 8000 mm");
+        assert!(min55 > 20.0,
+            "wa=0.55 min MAP {min55:.0} mm ≤ 20 mm");
+
+        // ── wa = 0.30 (arid planet) ───────────────────────────────────────
+        let cl30 = simulate_climate(
+            seed ^ 0x5A5A, 0.30, climate_diversity, glaciation,
+            &plates.regime_field, w, h,
+        );
+        let eq30  = band_mean(&cl30.map_field,  0.0, 10.0);
+        let sub30 = band_mean(&cl30.map_field, 20.0, 35.0);
+
+        assert!(eq30  >= 600.0 && eq30  <= 1200.0,
+            "wa=0.30 equatorial mean {eq30:.0} mm outside [600, 1200]");
+        assert!(sub30 >= 50.0  && sub30 <= 200.0,
+            "wa=0.30 subtropical mean {sub30:.0} mm outside [50, 200]");
+
+        // ── wa = 0.80 (wet planet) ────────────────────────────────────────
+        let cl80 = simulate_climate(
+            seed ^ 0x5A5A, 0.80, climate_diversity, glaciation,
+            &plates.regime_field, w, h,
+        );
+        let eq80 = band_mean(&cl80.map_field, 0.0, 10.0);
+
+        assert!(eq80 >= 2000.0 && eq80 <= 4000.0,
+            "wa=0.80 equatorial mean {eq80:.0} mm outside [2000, 4000]");
+    }
+
     /// ✓ End-state 5: full climate pipeline under 200 ms (release only, 512×512).
     #[cfg(not(debug_assertions))]
     #[test]

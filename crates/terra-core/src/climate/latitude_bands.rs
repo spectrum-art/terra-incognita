@@ -22,8 +22,14 @@ pub fn map_base_mm(lat_deg: f64, water_abundance: f32) -> f32 {
     let equatorial = 1560.0 * (-lat_abs * lat_abs / 968.0_f64).exp();
 
     // Subtropical arid belt: negative Gaussian centred at 28°, σ ≈ 8°.
+    // On drier planets (wa < 0.55) the descending Hadley cell creates more
+    // extreme deserts. arid_strength scales the dip depth superlinearly:
+    //   wa=0.55 → 1.0×  (Earth reference, no change)
+    //   wa=0.30 → 1.46× (hyperarid subtropical belts)
+    //   wa>0.55 → 1.0×  (cap; wetter planets don't extend the desert)
+    let arid_strength = (2.0 - water_abundance as f64 / 0.55).max(1.0);
     let subtropical_arid =
-        -560.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp();
+        -560.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp() * arid_strength;
 
     // Temperate westerlies: secondary peak centred at 50°, σ ≈ 15°.
     let temperate = 420.0 * (-(lat_abs - 50.0).powi(2) / 450.0_f64).exp();
