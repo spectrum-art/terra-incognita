@@ -192,13 +192,34 @@
         max-width: 540px;
         max-height: calc(100vh - 4rem);
         overflow-y: auto;
+        will-change: transform;
       }
       #tile-detail-panel.visible { display: block; }
-      #tile-detail-panel h3 {
-        margin: 0 0 0.4rem;
+      #tile-panel-titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: grab;
+        margin-bottom: 0.4rem;
+        user-select: none;
+      }
+      #tile-panel-titlebar:active { cursor: grabbing; }
+      #tile-panel-titlebar span {
         font-size: 0.8rem;
         color: #aaf;
+        font-weight: 700;
       }
+      #tile-panel-close {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 1.1rem;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 0 0 8px;
+        flex-shrink: 0;
+      }
+      #tile-panel-close:hover { color: #fff; }
       #tile-canvas-container canvas {
         max-width: 100%;
         image-rendering: pixelated;
@@ -268,7 +289,10 @@
       <div id="planet-metrics-panel"></div>
       <div id="score-panel"></div>
       <div id="tile-detail-panel">
-        <h3>Tile at Location</h3>
+        <div id="tile-panel-titlebar">
+          <span>Tile at Location</span>
+          <button id="tile-panel-close" title="Close">×</button>
+        </div>
         <div id="tile-canvas-container"></div>
         <div id="tile-info"></div>
         <div id="tile-consistency"></div>

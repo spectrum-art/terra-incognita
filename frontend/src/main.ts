@@ -71,6 +71,46 @@ const tileDetailPanel    = document.getElementById("tile-detail-panel")    as HT
 const tileCanvasCont     = document.getElementById("tile-canvas-container") as HTMLDivElement;
 const tileInfoEl         = document.getElementById("tile-info")            as HTMLDivElement;
 const tileConsistEl      = document.getElementById("tile-consistency")     as HTMLDivElement;
+const tilePanelTitlebar  = document.getElementById("tile-panel-titlebar")  as HTMLDivElement;
+const tilePanelClose     = document.getElementById("tile-panel-close")     as HTMLButtonElement;
+
+// ── Tile panel drag ────────────────────────────────────────────────────────────
+
+let panelTx = 0;
+let panelTy = 0;
+let panelDragStartPx = 0;
+let panelDragStartPy = 0;
+let isPanelDragging = false;
+
+tilePanelClose.addEventListener("click", () => {
+  tileDetailPanel.classList.remove("visible");
+});
+
+tilePanelTitlebar.addEventListener("pointerdown", (e: PointerEvent) => {
+  if ((e.target as HTMLElement).id === "tile-panel-close") return;
+  isPanelDragging = true;
+  panelDragStartPx = e.clientX - panelTx;
+  panelDragStartPy = e.clientY - panelTy;
+  tilePanelTitlebar.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+tilePanelTitlebar.addEventListener("pointermove", (e: PointerEvent) => {
+  if (!isPanelDragging) return;
+  const newTx = e.clientX - panelDragStartPx;
+  const newTy = e.clientY - panelDragStartPy;
+  // Clamp so panel stays within viewport
+  const rect = tileDetailPanel.getBoundingClientRect();
+  const naturalLeft = rect.left - panelTx;
+  const naturalTop  = rect.top  - panelTy;
+  panelTx = Math.max(-naturalLeft, Math.min(window.innerWidth  - naturalLeft - rect.width,  newTx));
+  panelTy = Math.max(-naturalTop,  Math.min(window.innerHeight - naturalTop  - rect.height, newTy));
+  tileDetailPanel.style.transform = `translate(${panelTx}px, ${panelTy}px)`;
+});
+
+tilePanelTitlebar.addEventListener("pointerup", () => {
+  isPanelDragging = false;
+});
 
 // ── Slider init ────────────────────────────────────────────────────────────────
 
@@ -152,6 +192,11 @@ async function runGenerate(): Promise<void> {
   const params: GlobalParams = getParams();
   generateBtn.disabled = true;
   statusEl.textContent = "Generating planet overview…";
+  // Auto-close tile detail panel and reset its position when generating a new planet.
+  tileDetailPanel.classList.remove("visible");
+  panelTx = 0;
+  panelTy = 0;
+  tileDetailPanel.style.transform = "";
 
   try {
     // generate_overview() is synchronous in WASM.
