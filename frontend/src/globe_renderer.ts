@@ -137,8 +137,12 @@ export class GlobeRenderer {
   private latLonTo3D(lat_deg: number, lon_deg: number, r: number): any {
     const lat = lat_deg * Math.PI / 180;
     const lon = lon_deg * Math.PI / 180;
+    // Three.js SphereGeometry UV: theta=(lon+180)*PI/180, phi=(90-lat)*PI/180
+    // x = -R*cos(theta)*sin(phi) = R*cos(lat)*cos(lon)
+    // y =  R*cos(phi)            = R*sin(lat)
+    // z =  R*sin(theta)*sin(phi) = -R*cos(lat)*sin(lon)
     return new THREE.Vector3(
-      -r * Math.cos(lat) * Math.cos(lon),
+       r * Math.cos(lat) * Math.cos(lon),
        r * Math.sin(lat),
       -r * Math.cos(lat) * Math.sin(lon),
     );
@@ -155,19 +159,21 @@ export class GlobeRenderer {
     const R = 1.002; // slight radial offset to prevent z-fighting
 
     // ── Crosshair ────────────────────────────────────────────────────────────
-    // Tangent vectors in sphere local space at (lat, lon):
-    //   north = dP/d(lat)  (unit length)
-    //   east  = dP/d(lon)  / cos(lat)  (unit length)
+    // P = (R*cos(lat)*cos(lon), R*sin(lat), -R*cos(lat)*sin(lon))
+    // North tangent = dP/d(lat), unit length:
+    //   (-sin(lat)*cos(lon), cos(lat), sin(lat)*sin(lon))
+    // East tangent = dP/d(lon) / cos(lat), unit length:
+    //   (-sin(lon), 0, -cos(lon))
     const latR = lat * Math.PI / 180;
     const lonR = lon * Math.PI / 180;
-    const nx =  Math.sin(latR) * Math.cos(lonR);
+    const nx = -Math.sin(latR) * Math.cos(lonR);
     const ny =  Math.cos(latR);
     const nz =  Math.sin(latR) * Math.sin(lonR);
-    const ex =  Math.sin(lonR);
+    const ex = -Math.sin(lonR);
     const ey =  0;
     const ez = -Math.cos(lonR);
 
-    const cx = -R * Math.cos(latR) * Math.cos(lonR);
+    const cx =  R * Math.cos(latR) * Math.cos(lonR);
     const cy =  R * Math.sin(latR);
     const cz = -R * Math.cos(latR) * Math.sin(lonR);
 
