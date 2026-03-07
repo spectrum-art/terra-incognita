@@ -848,7 +848,7 @@ is out of scope for Phase 3.
 **End state**: 200 tests passing (198 + 2 new PC.1/PC.2 validation tests),
 0 clippy warnings, npm build clean, wasm-pack build clean.
 
-- Phase C — Globe Fix + Arc Fix + Visual Fix + PC.1/PC.2: ✅ Complete
+- Phase C — Globe Fix + Arc Fix + Visual Fix + PC.1/PC.2 + entropy fix: ✅ Complete (all 6 metrics PASS seeds 42/7/99; entropy PASS 5/5 seeds)
 
 ---
 
@@ -913,3 +913,65 @@ Commit: 3e7f8b2
 
 **End state**: 202 tests passing (200 + 2 new), 0 clippy warnings,
 npm build clean, wasm-pack build clean. Both commits pushed to origin/main.
+
+## 20260306 — Phase C Closure: Regime Entropy Fix + Full Verification
+
+### Regime entropy extended verification (5 seeds)
+
+The phase-c-closure-prompt.md task required verifying regime entropy for seeds
+42, 7, 99, 312300, 655773 with default sliders.
+
+**Pre-fix entropy values**:
+| Seed   | entropy | PM%  | CS%  | AC%  | AE%  | VH%  | Pass |
+|--------|---------|------|------|------|------|------|------|
+| 42     | 1.378   | 68.2 | 15.0 | 10.3 | 6.5  | 0.0  | PASS |
+| 7      | 1.288   | 71.3 | 11.6 | 7.4  | 9.6  | 0.1  | PASS |
+| 99     | 1.236   | 73.6 | 8.2  | 10.7 | 7.2  | 0.3  | PASS |
+| 312300 | 0.909   | 81.6 | 3.8  | 7.2  | 7.3  | 0.1  | FAIL |
+| 655773 | 1.021   | 78.2 | 6.8  | 5.2  | 9.8  | 0.1  | FAIL |
+
+**Diagnosis**: The task description hypothesised that PassiveMargin was
+underrepresented and proposed increasing the PM radius. The data showed the
+opposite: seeds 312300 and 655773 had PM at 78–82% with CS starved to 4–7%.
+Low entropy was caused by PM domination, not PM shortage.
+
+**Fix**: Lowered the Continental age threshold in `continents.rs` from 0.80 → 0.65.
+Cells with age 0.65–0.80 now become `CrustType::Continental` (CratonicShield)
+instead of `CrustType::PassiveMargin`. This is a single-parameter tweak that
+rebalances the PM/CS split without touching any other regime assignment logic.
+
+**Post-fix entropy values**:
+| Seed   | entropy | PM%  | CS%  | AC%  | AE%  | VH%  | Pass |
+|--------|---------|------|------|------|------|------|------|
+| 42     | 1.664   | 42.5 | 40.3 | 10.7 | 6.5  | 0.0  | PASS |
+| 7      | 1.608   | 54.2 | 27.8 | 8.3  | 9.6  | 0.0  | PASS |
+| 99     | 1.546   | 61.7 | 19.3 | 11.4 | 7.2  | 0.3  | PASS |
+| 312300 | 1.261   | 72.6 | 11.5 | 8.5  | 7.3  | 0.1  | PASS |
+| 655773 | 1.474   | 63.8 | 17.9 | 8.5  | 9.8  | 0.1  | PASS |
+
+Commit: 8f586e4
+
+### All 6 planet-scale metrics — seeds 42, 7, 99 (post-fix)
+
+| Metric                  | Seed 42      | Seed 7       | Seed 99      | Pass |
+|-------------------------|--------------|--------------|--------------|------|
+| land_fraction           | 0.4507       | 0.4511       | 0.4509       | ALL  |
+| tropical_map_mm         | 1351.6       | 1478.5       | 1332.9       | ALL  |
+| polar_glaciation_frac   | 0.5059       | 0.5059       | 0.5059       | ALL  |
+| regime_entropy_bits     | 1.6635       | 1.6077       | 1.5462       | ALL  |
+| transition_smoothness   | 0.0031       | 0.0040       | 0.0037       | ALL  |
+| continental_coherence   | 0.9308       | 0.9068       | 0.9455       | ALL  |
+
+202 tests, 0 clippy warnings, npm build clean.
+
+### Phase C — CLOSED ✅
+
+All Phase C criteria met. Remaining known issues (not addressed this session):
+- Issue 1: (no longer tracked / not relevant post-Phase-C)
+- Issue 2: Ocean arc artifacts — partially mitigated by arc_wall fix; minor
+  residuals may remain at edge cases
+- Issue 4: Coastal terrain class MAP-blindness — PM+MAP routing misses some
+  coastal configurations; tracked for future calibration
+- Issue 5: Ocean click terrain — clicking ocean on globe generates land tile;
+  ocean tiles not yet handled in generate_at_location
+
