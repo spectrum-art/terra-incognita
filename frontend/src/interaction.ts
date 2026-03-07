@@ -6,7 +6,7 @@
  * crosshair on the flat canvas and updates the "Selected:" display.
  */
 
-import type { GlobeRenderer } from "./globe_renderer.js";
+import { GlobeRenderer } from "./globe_renderer.js";
 
 export interface LatLon {
   lat: number;
@@ -15,15 +15,19 @@ export interface LatLon {
 
 type SelectionCallback = (pos: LatLon) => void;
 
+// Tile angular footprint for bounding-box overlay (see globe_renderer.ts).
+const TILE_LAT_DEG = GlobeRenderer.TILE_LAT_DEG;
+const TILE_LON_DEG = GlobeRenderer.TILE_LON_DEG;
+
 /** Manages click-to-lat/lon for flat and globe views. */
 export class InteractionManager {
   private selected: LatLon | null = null;
   private onSelect: SelectionCallback | null = null;
 
-  // Overlay canvas drawn on top of the flat map for the crosshair
+  // Overlay canvas drawn on top of the flat map for the crosshair + bbox
   private overlay!: HTMLCanvasElement;
-  // Small marker shown on the globe canvas at the click position
-  private globeMarker!: HTMLCanvasElement;
+  // Reference to globe renderer for 3D marker management
+  private globe: GlobeRenderer | null = null;
 
   constructor(
     private readonly flatCanvas: HTMLCanvasElement,
@@ -31,7 +35,6 @@ export class InteractionManager {
     private readonly coordsDisplay: HTMLElement,
   ) {
     this.buildOverlay();
-    this.buildGlobeMarker();
     this.attachFlatClickHandler();
   }
 
@@ -40,79 +43,67 @@ export class InteractionManager {
     this.onSelect = cb;
   }
 
-  /** Wire globe click events.  Called once GlobeRenderer is instantiated. */
-  attachGlobeClickHandler(globe: GlobeRenderer): void {
+  /**
+   * Wire globe click events.  Called once GlobeRenderer is instantiated.
+   * Uses pointerdown/pointerup with a movement threshold to distinguish
+   * click (select new location) from drag (rotate globe, no selection change).
+   */
+  attachGlobeClickHandler(globeRenderer: GlobeRenderer): void {
+    this.globe = globeRenderer;
     const el = this.globeContainer.querySelector("canvas");
     if (!el) return;
-    el.addEventListener("click", (e: MouseEvent) => {
-      const pos = globe.pickLatLon(e.clientX, e.clientY);
+
+    const DRAG_THRESHOLD = 4; // px — below this = click, above = drag
+    let downX = 0;
+    let downY = 0;
+
+    el.addEventListener("pointerdown", (e: PointerEvent) => {
+      downX = e.clientX;
+      downY = e.clientY;
+    });
+
+    el.addEventListener("pointerup", (e: PointerEvent) => {
+      const dx = e.clientX - downX;
+      const dy = e.clientY - downY;
+      if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) return; // was a drag
+
+      const pos = globeRenderer.pickLatLon(e.clientX, e.clientY);
       if (!pos) return;
-      // Position globe marker at the raw click point (already the correct screen location).
-      const rect = el.getBoundingClientRect();
-      this.globeMarker.style.left = (e.clientX - rect.left) + "px";
-      this.globeMarker.style.top  = (e.clientY - rect.top)  + "px";
-      this.globeMarker.style.display = "block";
+      globeRenderer.set3DMarker(pos.lat, pos.lon);
       this.select(pos);
     });
   }
 
   /**
    * Call whenever the view switches between flat and globe.
-   * Keeps each crosshair visible only in its own view.
+   * Recreates the crosshair + bbox in the new view's coordinate system.
    */
   setViewMode(isGlobe: boolean): void {
     if (isGlobe) {
       this.overlay.style.display = "none";
+      // Recreate 3D marker for the current selection.
+      if (this.selected && this.globe) {
+        this.globe.set3DMarker(this.selected.lat, this.selected.lon);
+      }
     } else {
       this.overlay.style.display = "";
-      this.globeMarker.style.display = "none";
-      // Re-draw flat crosshair for the current selection.
-      if (this.selected) this.drawCrosshair(this.selected);
+      // Re-draw flat crosshair + bbox for the current selection.
+      if (this.selected) this.drawOverlay(this.selected);
     }
   }
 
   /** Current selected location (null before any click). */
   get selection(): LatLon | null { return this.selected; }
 
-  /** Clear the selected location and remove the crosshair. */
+  /** Clear the selected location and remove all crosshair/bbox markers. */
   clear(): void {
     this.selected = null;
     this.coordsDisplay.textContent = "";
     this.clearOverlay();
+    this.globe?.clear3DMarker();
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
-
-  private buildGlobeMarker(): void {
-    const sz = 28;
-    this.globeMarker = document.createElement("canvas");
-    this.globeMarker.width  = sz;
-    this.globeMarker.height = sz;
-    this.globeMarker.style.cssText =
-      "position:absolute;display:none;pointer-events:none;" +
-      `transform:translate(-50%,-50%);z-index:10`;
-
-    // Pre-draw the crosshair onto the small canvas.
-    const ctx = this.globeMarker.getContext("2d")!;
-    const cx = sz / 2;
-    const r  = 9;
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,255,100,0.9)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(cx - r - 4, cx); ctx.lineTo(cx - 3, cx);
-    ctx.moveTo(cx + 3, cx);     ctx.lineTo(cx + r + 4, cx);
-    ctx.moveTo(cx, cx - r - 4); ctx.lineTo(cx, cx - 3);
-    ctx.moveTo(cx, cx + 3);     ctx.lineTo(cx, cx + r + 4);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cx, r, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(255,255,100,0.7)";
-    ctx.stroke();
-    ctx.restore();
-
-    this.globeContainer.appendChild(this.globeMarker);
-  }
 
   private buildOverlay(): void {
     this.overlay = document.createElement("canvas");
@@ -148,11 +139,12 @@ export class InteractionManager {
     const side = pos.lon >= 0 ? "E" : "W";
     this.coordsDisplay.textContent =
       `Selected: ${Math.abs(Number(latStr))}°${hemi}, ${Math.abs(Number(lonStr))}°${side}`;
-    this.drawCrosshair(pos);
+    this.drawOverlay(pos);
     if (this.onSelect) this.onSelect(pos);
   }
 
-  private drawCrosshair(pos: LatLon): void {
+  /** Draw crosshair + tile bounding box on the flat-map overlay canvas. */
+  private drawOverlay(pos: LatLon): void {
     const w = this.overlay.width;
     const h = this.overlay.height;
     const cx = Math.round(((pos.lon + 180) / 360) * w);
@@ -161,24 +153,26 @@ export class InteractionManager {
     const ctx = this.overlay.getContext("2d")!;
     ctx.clearRect(0, 0, w, h);
 
-    // Draw crosshair
+    // Bounding box: equirectangular projection maps degrees linearly to pixels.
+    const boxW = (TILE_LON_DEG / 360) * w;
+    const boxH = (TILE_LAT_DEG / 180) * h;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
+    ctx.restore();
+
+    // Crosshair
     ctx.save();
     ctx.strokeStyle = "rgba(255,255,100,0.9)";
     ctx.lineWidth = 1.5;
     const r = 10;
-    // Horizontal line
     ctx.beginPath();
-    ctx.moveTo(cx - r - 4, cy);
-    ctx.lineTo(cx - 3, cy);
-    ctx.moveTo(cx + 3, cy);
-    ctx.lineTo(cx + r + 4, cy);
-    // Vertical line
-    ctx.moveTo(cx, cy - r - 4);
-    ctx.lineTo(cx, cy - 3);
-    ctx.moveTo(cx, cy + 3);
-    ctx.lineTo(cx, cy + r + 4);
+    ctx.moveTo(cx - r - 4, cy); ctx.lineTo(cx - 3, cy);
+    ctx.moveTo(cx + 3, cy);     ctx.lineTo(cx + r + 4, cy);
+    ctx.moveTo(cx, cy - r - 4); ctx.lineTo(cx, cy - 3);
+    ctx.moveTo(cx, cy + 3);     ctx.lineTo(cx, cy + r + 4);
     ctx.stroke();
-    // Circle
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(255,255,100,0.7)";

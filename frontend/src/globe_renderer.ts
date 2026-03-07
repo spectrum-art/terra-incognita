@@ -22,6 +22,14 @@ export class GlobeRenderer {
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
+
+  // 3D crosshair and bounding-box markers (children of sphere mesh)
+  private crosshair3d: any = null;
+  private bbox3d: any = null;
+
+  /** Tile angular footprint used for the bounding-box overlay. */
+  static readonly TILE_LAT_DEG = 5.0;
+  static readonly TILE_LON_DEG = 10.0;
   private readonly onMouseMove: (e: MouseEvent) => void;
   private readonly onMouseUp: () => void;
 
@@ -119,6 +127,118 @@ export class GlobeRenderer {
     window.removeEventListener("mouseup",   this.onMouseUp);
     this.renderer.dispose();
     this.renderer.domElement.remove();
+  }
+
+  /**
+   * Convert geographic coordinates to 3D sphere local-space coordinates.
+   * Convention (matches SphereGeometry UV mapping):
+   *   Y-up; lon=0 → x=-R; lon=±180 → x=+R; lat=90 → y=+R.
+   */
+  private latLonTo3D(lat_deg: number, lon_deg: number, r: number): any {
+    const lat = lat_deg * Math.PI / 180;
+    const lon = lon_deg * Math.PI / 180;
+    return new THREE.Vector3(
+      -r * Math.cos(lat) * Math.cos(lon),
+       r * Math.sin(lat),
+      -r * Math.cos(lat) * Math.sin(lon),
+    );
+  }
+
+  /**
+   * Place a 3D crosshair and tile-footprint bounding box on the sphere at
+   * (lat, lon). Both are added as children of the sphere mesh so they
+   * rotate with the globe automatically.
+   */
+  set3DMarker(lat: number, lon: number): void {
+    this.clear3DMarker();
+
+    const R = 1.002; // slight radial offset to prevent z-fighting
+
+    // ── Crosshair ────────────────────────────────────────────────────────────
+    // Tangent vectors in sphere local space at (lat, lon):
+    //   north = dP/d(lat)  (unit length)
+    //   east  = dP/d(lon)  / cos(lat)  (unit length)
+    const latR = lat * Math.PI / 180;
+    const lonR = lon * Math.PI / 180;
+    const nx =  Math.sin(latR) * Math.cos(lonR);
+    const ny =  Math.cos(latR);
+    const nz =  Math.sin(latR) * Math.sin(lonR);
+    const ex =  Math.sin(lonR);
+    const ey =  0;
+    const ez = -Math.cos(lonR);
+
+    const cx = -R * Math.cos(latR) * Math.cos(lonR);
+    const cy =  R * Math.sin(latR);
+    const cz = -R * Math.cos(latR) * Math.sin(lonR);
+
+    const GAP = 0.012; // gap around center (sphere radii)
+    const ARM = 0.055; // arm tip distance (sphere radii)
+
+    // Four arms as line segments: N, S, E, W
+    const chPts = [
+      cx + GAP * nx, cy + GAP * ny, cz + GAP * nz,
+      cx + ARM * nx, cy + ARM * ny, cz + ARM * nz,
+      cx - GAP * nx, cy - GAP * ny, cz - GAP * nz,
+      cx - ARM * nx, cy - ARM * ny, cz - ARM * nz,
+      cx + GAP * ex, cy + GAP * ey, cz + GAP * ez,
+      cx + ARM * ex, cy + ARM * ey, cz + ARM * ez,
+      cx - GAP * ex, cy - GAP * ey, cz - GAP * ez,
+      cx - ARM * ex, cy - ARM * ey, cz - ARM * ez,
+    ];
+    const chGeo = new THREE.BufferGeometry();
+    chGeo.setAttribute("position", new THREE.Float32BufferAttribute(chPts, 3));
+    this.crosshair3d = new THREE.LineSegments(
+      chGeo,
+      new THREE.LineBasicMaterial({ color: 0xffff64 }),
+    );
+
+    // ── Bounding box ─────────────────────────────────────────────────────────
+    const dLat = GlobeRenderer.TILE_LAT_DEG / 2;
+    const dLon = GlobeRenderer.TILE_LON_DEG / 2;
+    const latN = Math.min( 90, lat + dLat);
+    const latS = Math.max(-90, lat - dLat);
+    const lonW = lon - dLon;
+    const lonE = lon + dLon;
+    const N = 24; // interpolated points per edge
+
+    const bboxPts: number[] = [];
+    const addPt = (latDeg: number, lonDeg: number) => {
+      const v = this.latLonTo3D(latDeg, lonDeg, R);
+      bboxPts.push(v.x, v.y, v.z);
+    };
+
+    // North edge: lat=latN, lon W→E
+    for (let i = 0; i <= N; i++) addPt(latN, lonW + (lonE - lonW) * i / N);
+    // East edge:  lon=lonE, lat N→S
+    for (let i = 0; i <= N; i++) addPt(latN + (latS - latN) * i / N, lonE);
+    // South edge: lat=latS, lon E→W
+    for (let i = 0; i <= N; i++) addPt(latS, lonE + (lonW - lonE) * i / N);
+    // West edge:  lon=lonW, lat S→N
+    for (let i = 0; i <= N; i++) addPt(latS + (latN - latS) * i / N, lonW);
+
+    const bboxGeo = new THREE.BufferGeometry();
+    bboxGeo.setAttribute("position", new THREE.Float32BufferAttribute(bboxPts, 3));
+    this.bbox3d = new THREE.Line(
+      bboxGeo,
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
+    );
+
+    this.sphere.add(this.crosshair3d);
+    this.sphere.add(this.bbox3d);
+  }
+
+  /** Remove the 3D crosshair and bounding box from the sphere. */
+  clear3DMarker(): void {
+    if (this.crosshair3d) {
+      this.sphere.remove(this.crosshair3d);
+      this.crosshair3d.geometry.dispose();
+      this.crosshair3d = null;
+    }
+    if (this.bbox3d) {
+      this.sphere.remove(this.bbox3d);
+      this.bbox3d.geometry.dispose();
+      this.bbox3d = null;
+    }
   }
 
   private attachMouseHandlers(): void {

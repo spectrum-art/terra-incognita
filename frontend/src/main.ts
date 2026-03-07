@@ -85,6 +85,7 @@ let isPanelDragging = false;
 
 tilePanelClose.addEventListener("click", () => {
   tileDetailPanel.classList.remove("visible");
+  interactionMgr?.clear();
 });
 
 tilePanelTitlebar.addEventListener("pointerdown", (e: PointerEvent) => {
@@ -193,8 +194,9 @@ async function runGenerate(): Promise<void> {
   const params: GlobalParams = getParams();
   generateBtn.disabled = true;
   statusEl.textContent = "Generating planet overview…";
-  // Auto-close tile detail panel and reset its position when generating a new planet.
+  // Auto-close tile detail panel, clear markers, reset position when generating a new planet.
   tileDetailPanel.classList.remove("visible");
+  interactionMgr?.clear();
   panelTx = 0;
   panelTy = 0;
   tileDetailPanel.style.transform = "";
