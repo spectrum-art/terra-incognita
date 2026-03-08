@@ -5,6 +5,7 @@
 
 use crate::transects::{Transect, sample_geom};
 
+#[allow(dead_code)]
 const RIDGE_CLASS: f32 = 3.0;
 const PIXEL_TO_KM: f64 = 0.09;
 
@@ -16,6 +17,7 @@ pub struct RidgeSpacingResult {
     pub std_px: f64,
 }
 
+#[allow(dead_code)]
 pub fn compute_ridge_spacing(
     geom: &[f32],
     width: usize,

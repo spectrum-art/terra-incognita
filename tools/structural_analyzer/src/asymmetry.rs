@@ -6,7 +6,9 @@
 
 use crate::transects::{Transect, sample_geom, sample_dem};
 
+#[allow(dead_code)]
 const RIDGE_CLASS: f32 = 3.0;
+#[allow(dead_code)]
 const NEIGHBORHOOD: i32 = 10;
 
 #[allow(dead_code)]
@@ -20,6 +22,7 @@ pub struct AsymmetryResult {
     pub ridge_pixel_count: usize,
 }
 
+#[allow(dead_code)]
 pub fn compute_asymmetry(
     dem: &[f32],
     geom: &[f32],
@@ -85,6 +88,7 @@ pub fn compute_asymmetry(
 /// Compute mean elevation gradient (pixels/elevation) on one side of a ridge pixel.
 /// `direction` is +1 for right (increasing index), −1 for left.
 /// Returns the mean elevation drop per pixel (positive means slope drops away from ridge).
+#[allow(dead_code)]
 fn compute_side_gradient(
     dem: &[f32],
     geom: &[f32],

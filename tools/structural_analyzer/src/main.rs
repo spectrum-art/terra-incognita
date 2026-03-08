@@ -6,6 +6,8 @@
 
 mod grain;
 mod morphology;
+mod watershed;
+mod ridge_systems;
 mod transects;
 mod components;
 mod ridge_spacing;
@@ -69,13 +71,23 @@ struct RegionDef {
 
 struct WindowResult {
     has_ridges: bool,
+    /// Watershed-derived ridge spacing (families 1 primary).
     ridge_spacing: ridge_spacing::RidgeSpacingResult,
+    /// Watershed-derived ridge continuity (families 2 primary).
     ridge_continuity: ridge_continuity::RidgeContinuityResult,
+    /// Geomorphon-based valley width (families 3 complementary).
     valley_width: valley_width::ValleyWidthResult,
-    asymmetry: asymmetry::AsymmetryResult,
+    /// Watershed-derived asymmetry.
+    asym_ratio: f64,
+    asym_consistency: f64,
+    /// Inter-system valley width in pixels (new sub-metric, families 3 primary).
+    inter_system_valley_width_px: (f64, f64), // (mean, std)
+    /// Branching angle (still geomorphon-based, families 5).
     branching: branching::BranchingResult,
     flat_patches: flat_patches::FlatPatchResult,
     traversals: Vec<Traversal>,
+    /// Number of ridge systems detected in this window.
+    n_ridge_systems: usize,
 }
 
 // ── Aggregation helpers ───────────────────────────────────────────────────────
@@ -170,9 +182,19 @@ struct OutputJson {
     terrain_class: String,
     n_windows: usize,
     n_windows_with_ridges: usize,
+    /// Mean watershed-derived ridge systems per window.
+    mean_ridge_systems_per_window: f64,
+    /// Windows with zero detected ridge systems (flat/low-relief terrain).
+    n_windows_zero_systems: usize,
+    /// Ridge spacing between watershed-derived ridge system centres (km).
     ridge_spacing_km: StatsJson,
+    /// Ridge system continuity along grain axis (km).
     ridge_continuity_km: RidgeContinuityJson,
+    /// Geomorphon-based valley width (complementary, km).
     valley_width_km: StatsJson,
+    /// Inter-system valley width between consecutive ridge systems (km).
+    inter_system_valley_width_km: StatsJson,
+    /// Watershed-derived cross-sectional asymmetry (area ratio).
     cross_sectional_asymmetry: AsymmetryJson,
     spur_branching_angle_deg: StatsJson,
     flat_patch_size: FlatPatchJson,
@@ -270,12 +292,14 @@ fn load_window_pairs(region_dir: &Path) -> Result<Vec<(HeightField, HeightField)
 // ── Per-window analysis ───────────────────────────────────────────────────────
 
 const N_TRANSECTS: usize = 20;
+/// Pour-point threshold in pixels (~4 km² at 90 m resolution).
+const POUR_THRESHOLD: u32 = 500;
 
 fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
     let w = dem.width;
     let h = dem.height;
 
-    // Grain direction.
+    // Grain direction (still used for transect orientation).
     let grain = grain::compute_grain(&geom.data, w, h);
 
     let transects = if grain.has_ridges {
@@ -284,23 +308,65 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         Vec::new()
     };
 
-    let rs = ridge_spacing::compute_ridge_spacing(&geom.data, w, h, &transects);
-    let rc = ridge_continuity::compute_ridge_continuity(&geom.data, w, h, grain.angle_rad);
+    // ── Watershed-based ridge system detection (families 1–4 primary) ─────────
+    let wsr = ridge_systems::detect_ridge_systems(
+        &dem.data, w, h, POUR_THRESHOLD,
+    );
+    let has_systems = !wsr.systems.is_empty();
+
+    // Family 1: ridge spacing from watershed-derived systems.
+    let rs = if has_systems {
+        ridge_systems::measure_ridge_spacing(&wsr.systems, &dem.data, w, h, &transects)
+    } else {
+        ridge_spacing::RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN }
+    };
+
+    // Family 2: ridge continuity from watershed-derived systems.
+    let rc = if has_systems {
+        ridge_systems::measure_ridge_continuity(&wsr.systems, grain.angle_rad, w)
+    } else {
+        ridge_continuity::RidgeContinuityResult {
+            mean_segment_len_px: 0.0,
+            max_segment_len_px: 0.0,
+            segment_count: 0,
+        }
+    };
+
+    // Family 3: geomorphon valley width (complementary) + inter-system valley width (primary).
     let vw = valley_width::compute_valley_width(&geom.data, w, h, &transects);
-    let asym = asymmetry::compute_asymmetry(&dem.data, &geom.data, w, h, &transects);
+    let inter_vw = if has_systems {
+        ridge_systems::measure_inter_system_valley_width(&wsr.systems, w, h, &transects)
+    } else {
+        (f64::NAN, f64::NAN)
+    };
+
+    // Family 4: watershed-based asymmetry.
+    let (asym_ratio, asym_consistency) = if has_systems {
+        ridge_systems::measure_asymmetry_from_systems(&wsr.systems)
+    } else {
+        (f64::NAN, f64::NAN)
+    };
+
+    // Family 5: branching (still geomorphon-based, as ridge system junctions
+    // require more complex graph analysis than implemented here).
     let branch = branching::compute_branching(&geom.data, w, h);
+
+    // Family 6+7: unchanged.
     let flat = flat_patches::compute_flat_patches(&geom.data, w, h);
     let travs = profiles::extract_traversals(&dem.data, &geom.data, w, h, &transects);
 
     WindowResult {
-        has_ridges: grain.has_ridges,
+        has_ridges: grain.has_ridges || has_systems,
         ridge_spacing: rs,
         ridge_continuity: rc,
         valley_width: vw,
-        asymmetry: asym,
+        asym_ratio,
+        asym_consistency,
+        inter_system_valley_width_px: inter_vw,
         branching: branch,
         flat_patches: flat,
         traversals: travs,
+        n_ridge_systems: wsr.systems.len(),
     }
 }
 
@@ -317,7 +383,8 @@ fn aggregate_and_write(
     // Mean asymmetry consistency for deciding steep/gentle split.
     let asym_consistencies: Vec<f64> = windows.iter()
         .filter(|w| w.has_ridges)
-        .map(|w| w.asymmetry.consistency)
+        .map(|w| w.asym_consistency)
+        .filter(|v| !v.is_nan())
         .collect();
     let mean_asym_consistency = if asym_consistencies.is_empty() { 0.0 }
         else { asym_consistencies.iter().sum::<f64>() / asym_consistencies.len() as f64 };
@@ -354,15 +421,22 @@ fn aggregate_and_write(
         .collect();
     let vw_stats = aggregate_scalar(&vw_means_km);
 
-    // Asymmetry.
+    // Asymmetry (watershed-derived).
     let asym_ratios: Vec<f64> = windows.iter()
-        .filter(|w| w.has_ridges)
-        .map(|w| w.asymmetry.mean_ratio)
+        .map(|w| w.asym_ratio)
+        .filter(|v| !v.is_nan())
         .collect();
     let asym_consist: Vec<f64> = windows.iter()
-        .filter(|w| w.has_ridges)
-        .map(|w| w.asymmetry.consistency)
+        .map(|w| w.asym_consistency)
+        .filter(|v| !v.is_nan())
         .collect();
+
+    // Inter-system valley width (new sub-metric).
+    let isvw_means_km: Vec<f64> = windows.iter()
+        .map(|w| w.inter_system_valley_width_px.0 * ridge_systems::PIXEL_TO_KM)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let isvw_stats = aggregate_scalar(&isvw_means_km);
 
     // Branching.
     let branch_angles: Vec<f64> = windows.iter()
@@ -427,10 +501,17 @@ fn aggregate_and_write(
         low_sample: n_ridge < 30,
     };
 
+    let mean_systems_per_window = if n_total > 0 {
+        windows.iter().map(|w| w.n_ridge_systems as f64).sum::<f64>() / n_total as f64
+    } else { 0.0 };
+    let n_zero_systems = windows.iter().filter(|w| w.n_ridge_systems == 0).count();
+
     let out = OutputJson {
         terrain_class: terrain_class.to_string(),
         n_windows: n_total,
         n_windows_with_ridges: n_ridge,
+        mean_ridge_systems_per_window: mean_systems_per_window,
+        n_windows_zero_systems: n_zero_systems,
         ridge_spacing_km: aggregate_scalar(&rs_means_km).into(),
         ridge_continuity_km: RidgeContinuityJson {
             mean_segment_length: aggregate_scalar(&rc_mean_km).into(),
@@ -438,6 +519,7 @@ fn aggregate_and_write(
             segment_count: aggregate_scalar(&rc_seg_count).into(),
         },
         valley_width_km: vw_stats.into(),
+        inter_system_valley_width_km: isvw_stats.into(),
         cross_sectional_asymmetry: AsymmetryJson {
             ratio: aggregate_scalar(&asym_ratios).into(),
             consistency: aggregate_scalar(&asym_consist).into(),

@@ -5,6 +5,7 @@
 
 use crate::components::{label_components, Connectivity};
 
+#[allow(dead_code)]
 const RIDGE_CLASS: f32 = 3.0;
 const PIXEL_TO_KM: f64 = 0.09;
 
@@ -17,6 +18,7 @@ pub struct RidgeContinuityResult {
     pub segment_count: usize,
 }
 
+#[allow(dead_code)]
 pub fn compute_ridge_continuity(
     geom: &[f32],
     width: usize,
