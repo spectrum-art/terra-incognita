@@ -1335,3 +1335,68 @@ Alpine windows are the slowest due to more complex watershed structure.
 - `0cb4c03` docs: add ridge separation analysis
 - `21b2c8d` feat: watershed inversion ridge detection (Phase D-0 revision)
 - `b73c4c8` data: updated structural targets from watershed-based ridge detection
+
+---
+
+## 20260308 — Structural Analyzer Refinements (Phase D-0)
+
+Three targeted refinements to the structural analyzer tool. No changes to terra-core.
+
+### Refinement 1: Multi-Scale Ridge Spacing by Tier
+
+Added `ridge_spacing_by_tier` to all terrain class JSON outputs. Ridge systems are classified into three tiers by their max bounding-box dimension:
+- **Primary**: system length ≥ 8 km (threshold 88.9 px)
+- **Secondary**: system length ≥ 2 km (threshold 22.2 px)
+- **Tertiary**: all systems
+
+**Alpine results:**
+
+| Tier | Systems/window | Spacing (km) |
+|------|---------------|--------------|
+| Primary (≥8km) | 0.61 | 1.49 |
+| Secondary (≥2km) | 2.20 | 1.76 |
+| Tertiary (all) | 12.15 | 2.71 |
+
+**Finding:** Primary and secondary spacing are NOT in the expected 10–25 km and 3–8 km ranges respectively. Two issues:
+1. The bounding-box length estimator (`max(row_extent, col_extent)`) underestimates diagonal system lengths — a 10 km ridge at 45° would have row/col extents of only ~7 km, so many primary-scale systems are misclassified as secondary.
+2. The transect-based spacing metric breaks down for sparse tier subsets: windows without ≥2 primary systems contribute nothing, and the few that do contribute have primaries packed closer than the Himalayan range-scale wavelength.
+
+The `systems_per_window` count per tier is the more reliable output. The tertiary spacing (2.71 km) matches the prior watershed result. The primary spacing should be treated as a lower bound, not a target wavelength.
+
+**Cratonic/Coastal:** Mostly 0 primary systems per window as expected. Ceiling metrics are the appropriate constraint.
+
+### Refinement 2: Spur Branching Angle Diagnostic
+
+Added `ridge_junction_angle_deg` (watershed-derived) and `spur_branching_angle_30px_deg` (diagnostic) to all outputs. Three-way diagnostic comparison:
+
+| Method | Alpine | FluvialArid | FluvialHumid |
+|--------|--------|-------------|--------------|
+| Geomorphon, 15px | 33.3° | 38.7° | 37.2° |
+| Geomorphon, 30px | 28.5° | 32.8° | 30.9° |
+| Watershed-derived | 50.5° (n=212) | 47.9° (n=31) | 49.8° (n=31) |
+
+**Diagnosis: H1 confirmed.** The geomorphon-based angle measures a pixel-scale artifact. Increasing the radius to 30px makes the angle smaller (28.5° vs 33.3°), moving further from the watershed value — this eliminates H2 (radius too small). The geomorphon `spur` pixels adjacent to `ridge` pixels form locally-parallel pixel clusters at both radii; the PCA axes are nearly collinear, producing artificially acute angles.
+
+**Primary metric going forward:** watershed-derived junction angle (~50° for Alpine). This reflects the landform-scale angle between adjacent ridge systems meeting at watershed boundaries. The geomorphon-based angle (33°) is retained for reference but NOT used as the primary structural template target.
+
+**Cross-class differentiation:** Weak — all classes cluster near 45–50°. Alpine (50.5°) is slightly higher than Coastal (42.8°). The low junction counts for Cratonic (n=8) and Coastal (n=6) make those values unreliable. The metric serves better as a constraint (~45–55°) than as a class discriminator.
+
+### Refinement 3: Ridge System Ceiling Metric
+
+Added `ridge_system_ceiling` to all terrain class JSONs. Derived from p90 of per-window statistics:
+
+| Class | max_systems (p90) | max_length_km (p90) | zero_fraction |
+|-------|-------------------|---------------------|---------------|
+| Alpine | 19 | 43.7 | 0.00 |
+| Cratonic | 4 | 4.4 | 0.76 |
+| Coastal | 7 | 5.9 | 0.73 |
+| FluvialArid | 21 | 9.4 | 0.10 |
+| FluvialHumid | 18 | 18.9 | 0.75 |
+
+These are maximum-allowed values for generated tiles, not targets. A generated Coastal tile is acceptable if it has ≤7 ridge systems and the longest is ≤5.9 km, with ≥73% of windows having zero ridge systems.
+
+### Tests and Build
+
+- New tests: 2 added (ridge_systems.rs: tier_filter, junction_angle)
+- Total structural_analyzer: 66 tests, 0 clippy warnings
+- terra-core: 202 tests unchanged

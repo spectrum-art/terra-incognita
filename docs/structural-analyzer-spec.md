@@ -158,28 +158,40 @@ The tool also needs the terrain class label for each window. This is available f
 
 ### Family 5: Spur Branching Angle
 
-**What it measures:** The angle at which spur landforms (class 5) extend from ridge landforms (class 3).
+**What it measures:** The angle at which spur landforms (class 5) extend from ridge landforms (class 3), and the angle between adjacent watershed-derived ridge systems at their junction points.
 
 **Physical meaning:** In dendritic fluvial landscapes, tributaries join at predictable angles governed by the stream's energy gradient (typically 60–80° junction angles). In structurally controlled terrain, spur orientations follow fault patterns and may be more orthogonal (closer to 90°). In unstructured terrain, branching angles are more random.
 
+**Diagnostic finding (Phase D-0 revision):**
+
+The geomorphon-based branching angle (15px PCA radius) produces ~33° for Alpine terrain, which is well below the expected 50–80° range. A diagnostic comparison of three methods was performed:
+
+| Method | Alpine angle |
+|--------|-------------|
+| Geomorphon, 15px radius | 33.3° |
+| Geomorphon, 30px radius | 28.5° |
+| Watershed-derived (system PCA, 20px) | 50.5° |
+
+**Conclusion: Hypothesis 1 (H1) is supported.** The geomorphon method is measuring a pixel-scale artifact, not the true landform-scale junction geometry. Increasing the radius to 30px produces a smaller angle (28.5° < 33.3°), moving further from the watershed value — the opposite of what H2 (radius too small) would predict. The geomorphon `spur` pixels adjacent to `ridge` pixels form locally-parallel arrangements at pixel scale (shoulder-to-ridge transitions), making the 2D PCA axis for each class collinear rather than truly junction-like.
+
+**The watershed-derived junction angle (~50°) is the correct landform-scale metric** and should be used as the primary target for structural template construction. The geomorphon-based angle is retained for reference only.
+
 **Algorithm:**
 
-1. Identify all spur pixels (class 5) that are adjacent (8-connectivity) to at least one ridge pixel (class 3). These are the "junction spurs."
+**Primary (watershed-derived):** Uses ridge systems from the watershed pipeline (see ridge_systems.rs). Finds pairs of distinct ridge systems that come within 3 pixels of each other. At each junction, computes PCA direction of each system within a 20-pixel radius window. Measures the angle between the two directions, normalized to [0°, 90°].
 
-2. For each junction spur pixel, determine the local spur direction: compute the principal axis of spur-class pixels within a 15-pixel radius of the junction point (using PCA). This gives the spur's local trend direction.
+**Reference (geomorphon-based, 15px):** Identifies spur pixels (class 5) adjacent to ridge pixels (class 3). For each, computes PCA direction of spur-class pixels and ridge-class pixels within 15-pixel radius, then measures the angle between them.
 
-3. Compute the angle between the spur direction and the local ridge direction (determined from ridge-class pixels within 15-pixel radius of the junction point).
+**Aggregation:** Per terrain class, compute weighted mean (by n_junctions per window), std, p10, p90 of the watershed-derived junction angle. Also compute mean/std/p10/p90 of the geomorphon-based angle and the 30px diagnostic variant.
 
-4. Normalize angles to [0°, 90°] range (we don't care about left vs right branching for this metric, just the acuteness of the angle).
+**Measured values (primary metric, watershed-derived):**
+- Alpine: ~50.5° (n=212 junctions across 341 windows)
+- FluvialArid: ~47.9° (n=31)
+- FluvialHumid: ~49.8° (n=31)
+- Cratonic: ~48.8° (n=8, low confidence)
+- Coastal: ~42.8° (n=6, low confidence)
 
-5. Per-window output: mean branching angle (degrees), standard deviation, number of junction spurs measured.
-
-**Aggregation:** Per terrain class, compute mean, std, p10, p90 of the per-window mean branching angle.
-
-**Expected behavior:**
-- All terrain classes: likely in the 50–80° range for fluvially-dominated landscapes
-- Alpine: may show bimodal distribution — some spurs following structural trends (lower angles), others following drainage (higher angles)
-- This metric may show less inter-class variation than the others; if so, that's a valid finding (branching angles are governed more by hydrology than tectonics at this scale)
+Cross-class differentiation on this metric is weak — all terrain classes cluster near 45–50°. This is geometrically expected: ridge boundary pixels form polygonal watershed edges that meet at roughly right angles, and the PCA-derived directions of adjacent systems naturally produce junction angles near 45°. The metric is more useful as a constraint (junction angles should be near 45–55°) than as a class discriminator.
 
 ---
 
@@ -333,10 +345,50 @@ The tool produces one JSON file per terrain class at `data/targets/structural/{T
   },
 
   "spur_branching_angle_deg": {
-    "mean": 68.3,
-    "std": 12.1,
-    "p10": 52.0,
-    "p90": 82.0
+    "mean": 33.3,
+    "std": 3.1,
+    "p10": 29.6,
+    "p90": 37.1
+  },
+
+  "spur_branching_angle_30px_deg": {
+    "mean": 28.5,
+    "std": 3.8,
+    "p10": 23.1,
+    "p90": 34.2
+  },
+
+  "ridge_junction_angle_deg": {
+    "mean": 50.5,
+    "std": 15.2,
+    "p10": 28.3,
+    "p90": 72.1,
+    "n_junctions": 212,
+    "measurement_method": "watershed_system_skeleton"
+  },
+
+  "ridge_spacing_by_tier": {
+    "primary": {
+      "length_threshold_km": 8.0,
+      "systems_per_window": { "mean": 0.6, "std": 1.1, "p10": 0.0, "p90": 2.0 },
+      "spacing_km": { "mean": 1.5, "std": 0.8, "p10": 0.8, "p90": 2.5 }
+    },
+    "secondary": {
+      "length_threshold_km": 2.0,
+      "systems_per_window": { "mean": 2.2, "std": 1.8, "p10": 0.0, "p90": 5.0 },
+      "spacing_km": { "mean": 1.8, "std": 1.1, "p10": 0.9, "p90": 3.1 }
+    },
+    "tertiary": {
+      "length_threshold_km": 0.0,
+      "systems_per_window": { "mean": 12.1, "std": 5.8, "p10": 5.0, "p90": 19.0 },
+      "spacing_km": { "mean": 2.71, "std": 3.16, "p10": 0.89, "p90": 6.02 }
+    }
+  },
+
+  "ridge_system_ceiling": {
+    "max_systems_per_window": 19.0,
+    "max_system_length_km": 43.7,
+    "zero_system_fraction": 0.0
   },
 
   "flat_patch_size": {
