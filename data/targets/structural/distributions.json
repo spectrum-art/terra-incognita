@@ -1,0 +1,616 @@
+{
+  "classes": [
+    {
+      "terrain_class": "Alpine",
+      "n_systems": 4136,
+      "n_windows": 341,
+      "histogram": [
+        {
+          "label": "0-1",
+          "count": 621
+        },
+        {
+          "label": "1-2",
+          "count": 641
+        },
+        {
+          "label": "2-3",
+          "count": 591
+        },
+        {
+          "label": "3-4",
+          "count": 560
+        },
+        {
+          "label": "4-5",
+          "count": 375
+        },
+        {
+          "label": "5-6",
+          "count": 273
+        },
+        {
+          "label": "6-7",
+          "count": 207
+        },
+        {
+          "label": "7-8",
+          "count": 137
+        },
+        {
+          "label": "8-10",
+          "count": 158
+        },
+        {
+          "label": "10-15",
+          "count": 164
+        },
+        {
+          "label": "15-20",
+          "count": 70
+        },
+        {
+          "label": "20-30",
+          "count": 60
+        },
+        {
+          "label": "30-50",
+          "count": 41
+        }
+      ],
+      "log_histogram": [
+        {
+          "label": "-1.30--1.00",
+          "count": 0
+        },
+        {
+          "label": "-1.00--0.70",
+          "count": 0
+        },
+        {
+          "label": "-0.70--0.40",
+          "count": 173
+        },
+        {
+          "label": "-0.40--0.10",
+          "count": 305
+        },
+        {
+          "label": "-0.10-0.20",
+          "count": 499
+        },
+        {
+          "label": "0.20-0.50",
+          "count": 1006
+        },
+        {
+          "label": "0.50-0.80",
+          "count": 1156
+        },
+        {
+          "label": "0.80-1.10",
+          "count": 534
+        },
+        {
+          "label": "1.10-1.40",
+          "count": 163
+        },
+        {
+          "label": "1.40-1.70",
+          "count": 62
+        }
+      ],
+      "distribution_shape": "continuous",
+      "break_km": null,
+      "p75": 6.155999999999999,
+      "p90": 14.796,
+      "p95": 89.64,
+      "percentiles": {
+        "p25": 1.728,
+        "p50": 3.3479999999999994,
+        "p75": 6.155999999999999,
+        "p90": 14.796,
+        "p95": 89.64,
+        "max": 8202.383999999998
+      }
+    },
+    {
+      "terrain_class": "Cratonic",
+      "n_systems": 319,
+      "n_windows": 270,
+      "histogram": [
+        {
+          "label": "0-1",
+          "count": 50
+        },
+        {
+          "label": "1-2",
+          "count": 52
+        },
+        {
+          "label": "2-3",
+          "count": 55
+        },
+        {
+          "label": "3-4",
+          "count": 41
+        },
+        {
+          "label": "4-5",
+          "count": 24
+        },
+        {
+          "label": "5-6",
+          "count": 22
+        },
+        {
+          "label": "6-7",
+          "count": 14
+        },
+        {
+          "label": "7-8",
+          "count": 14
+        },
+        {
+          "label": "8-10",
+          "count": 17
+        },
+        {
+          "label": "10-15",
+          "count": 15
+        },
+        {
+          "label": "15-20",
+          "count": 2
+        },
+        {
+          "label": "20-30",
+          "count": 5
+        },
+        {
+          "label": "30-50",
+          "count": 5
+        }
+      ],
+      "log_histogram": [
+        {
+          "label": "-1.30--1.00",
+          "count": 0
+        },
+        {
+          "label": "-1.00--0.70",
+          "count": 0
+        },
+        {
+          "label": "-0.70--0.40",
+          "count": 12
+        },
+        {
+          "label": "-0.40--0.10",
+          "count": 23
+        },
+        {
+          "label": "-0.10-0.20",
+          "count": 42
+        },
+        {
+          "label": "0.20-0.50",
+          "count": 88
+        },
+        {
+          "label": "0.50-0.80",
+          "count": 85
+        },
+        {
+          "label": "0.80-1.10",
+          "count": 50
+        },
+        {
+          "label": "1.10-1.40",
+          "count": 10
+        },
+        {
+          "label": "1.40-1.70",
+          "count": 6
+        }
+      ],
+      "distribution_shape": "continuous",
+      "break_km": null,
+      "p75": 5.832,
+      "p90": 9.612,
+      "p95": 13.716,
+      "percentiles": {
+        "p25": 1.6199999999999999,
+        "p50": 3.1319999999999997,
+        "p75": 5.832,
+        "p90": 9.612,
+        "p95": 13.716,
+        "max": 204.444
+      }
+    },
+    {
+      "terrain_class": "Coastal",
+      "n_systems": 174,
+      "n_windows": 103,
+      "histogram": [
+        {
+          "label": "0-1",
+          "count": 13
+        },
+        {
+          "label": "1-2",
+          "count": 29
+        },
+        {
+          "label": "2-3",
+          "count": 31
+        },
+        {
+          "label": "3-4",
+          "count": 22
+        },
+        {
+          "label": "4-5",
+          "count": 16
+        },
+        {
+          "label": "5-6",
+          "count": 10
+        },
+        {
+          "label": "6-7",
+          "count": 7
+        },
+        {
+          "label": "7-8",
+          "count": 8
+        },
+        {
+          "label": "8-10",
+          "count": 9
+        },
+        {
+          "label": "10-15",
+          "count": 11
+        },
+        {
+          "label": "15-20",
+          "count": 5
+        },
+        {
+          "label": "20-30",
+          "count": 6
+        },
+        {
+          "label": "30-50",
+          "count": 3
+        }
+      ],
+      "log_histogram": [
+        {
+          "label": "-1.30--1.00",
+          "count": 0
+        },
+        {
+          "label": "-1.00--0.70",
+          "count": 0
+        },
+        {
+          "label": "-0.70--0.40",
+          "count": 2
+        },
+        {
+          "label": "-0.40--0.10",
+          "count": 8
+        },
+        {
+          "label": "-0.10-0.20",
+          "count": 22
+        },
+        {
+          "label": "0.20-0.50",
+          "count": 47
+        },
+        {
+          "label": "0.50-0.80",
+          "count": 42
+        },
+        {
+          "label": "0.80-1.10",
+          "count": 30
+        },
+        {
+          "label": "1.10-1.40",
+          "count": 13
+        },
+        {
+          "label": "1.40-1.70",
+          "count": 6
+        }
+      ],
+      "distribution_shape": "continuous",
+      "break_km": null,
+      "p75": 7.56,
+      "p90": 15.876,
+      "p95": 25.595999999999997,
+      "percentiles": {
+        "p25": 2.16,
+        "p50": 3.6719999999999997,
+        "p75": 7.56,
+        "p90": 15.876,
+        "p95": 25.595999999999997,
+        "max": 509.328
+      }
+    },
+    {
+      "terrain_class": "FluvialArid",
+      "n_systems": 1034,
+      "n_windows": 105,
+      "histogram": [
+        {
+          "label": "0-1",
+          "count": 181
+        },
+        {
+          "label": "1-2",
+          "count": 202
+        },
+        {
+          "label": "2-3",
+          "count": 161
+        },
+        {
+          "label": "3-4",
+          "count": 119
+        },
+        {
+          "label": "4-5",
+          "count": 76
+        },
+        {
+          "label": "5-6",
+          "count": 76
+        },
+        {
+          "label": "6-7",
+          "count": 44
+        },
+        {
+          "label": "7-8",
+          "count": 22
+        },
+        {
+          "label": "8-10",
+          "count": 44
+        },
+        {
+          "label": "10-15",
+          "count": 42
+        },
+        {
+          "label": "15-20",
+          "count": 21
+        },
+        {
+          "label": "20-30",
+          "count": 12
+        },
+        {
+          "label": "30-50",
+          "count": 15
+        }
+      ],
+      "log_histogram": [
+        {
+          "label": "-1.30--1.00",
+          "count": 0
+        },
+        {
+          "label": "-1.00--0.70",
+          "count": 0
+        },
+        {
+          "label": "-0.70--0.40",
+          "count": 51
+        },
+        {
+          "label": "-0.40--0.10",
+          "count": 87
+        },
+        {
+          "label": "-0.10-0.20",
+          "count": 149
+        },
+        {
+          "label": "0.20-0.50",
+          "count": 288
+        },
+        {
+          "label": "0.50-0.80",
+          "count": 256
+        },
+        {
+          "label": "0.80-1.10",
+          "count": 116
+        },
+        {
+          "label": "1.10-1.40",
+          "count": 51
+        },
+        {
+          "label": "1.40-1.70",
+          "count": 17
+        }
+      ],
+      "distribution_shape": "continuous",
+      "break_km": null,
+      "p75": 5.507999999999999,
+      "p90": 10.584,
+      "p95": 17.927999999999997,
+      "percentiles": {
+        "p25": 1.404,
+        "p50": 2.808,
+        "p75": 5.507999999999999,
+        "p90": 10.584,
+        "p95": 17.927999999999997,
+        "max": 912.8159999999999
+      }
+    },
+    {
+      "terrain_class": "FluvialHumid",
+      "n_systems": 1063,
+      "n_windows": 285,
+      "histogram": [
+        {
+          "label": "0-1",
+          "count": 163
+        },
+        {
+          "label": "1-2",
+          "count": 187
+        },
+        {
+          "label": "2-3",
+          "count": 143
+        },
+        {
+          "label": "3-4",
+          "count": 157
+        },
+        {
+          "label": "4-5",
+          "count": 87
+        },
+        {
+          "label": "5-6",
+          "count": 74
+        },
+        {
+          "label": "6-7",
+          "count": 63
+        },
+        {
+          "label": "7-8",
+          "count": 35
+        },
+        {
+          "label": "8-10",
+          "count": 49
+        },
+        {
+          "label": "10-15",
+          "count": 38
+        },
+        {
+          "label": "15-20",
+          "count": 18
+        },
+        {
+          "label": "20-30",
+          "count": 10
+        },
+        {
+          "label": "30-50",
+          "count": 9
+        }
+      ],
+      "log_histogram": [
+        {
+          "label": "-1.30--1.00",
+          "count": 0
+        },
+        {
+          "label": "-1.00--0.70",
+          "count": 0
+        },
+        {
+          "label": "-0.70--0.40",
+          "count": 38
+        },
+        {
+          "label": "-0.40--0.10",
+          "count": 85
+        },
+        {
+          "label": "-0.10-0.20",
+          "count": 161
+        },
+        {
+          "label": "0.20-0.50",
+          "count": 246
+        },
+        {
+          "label": "0.50-0.80",
+          "count": 310
+        },
+        {
+          "label": "0.80-1.10",
+          "count": 132
+        },
+        {
+          "label": "1.10-1.40",
+          "count": 48
+        },
+        {
+          "label": "1.40-1.70",
+          "count": 13
+        }
+      ],
+      "distribution_shape": "continuous",
+      "break_km": null,
+      "p75": 5.723999999999999,
+      "p90": 9.935999999999998,
+      "p95": 19.224,
+      "percentiles": {
+        "p25": 1.512,
+        "p50": 3.2399999999999998,
+        "p75": 5.723999999999999,
+        "p90": 9.935999999999998,
+        "p95": 19.224,
+        "max": 9078.912
+      }
+    }
+  ],
+  "alpine_spacing_vs_rank": [
+    {
+      "top_n": "2",
+      "mean_n_per_window": 2.0,
+      "mean_spacing_km": 1.5595966041457765,
+      "std_spacing_km": 1.420816883048282,
+      "p10_km": 0.8099999999999999,
+      "p90_km": 2.009475982532751
+    },
+    {
+      "top_n": "3",
+      "mean_n_per_window": 3.0,
+      "mean_spacing_km": 1.700589287261647,
+      "std_spacing_km": 1.5721493872746086,
+      "p10_km": 0.8268749999999999,
+      "p90_km": 2.2880000000000003
+    },
+    {
+      "top_n": "5",
+      "mean_n_per_window": 5.0,
+      "mean_spacing_km": 2.1795081011742026,
+      "std_spacing_km": 2.6524693976611537,
+      "p10_km": 0.855,
+      "p90_km": 3.477272727272728
+    },
+    {
+      "top_n": "10",
+      "mean_n_per_window": 9.26171875,
+      "mean_spacing_km": 2.6766638778000376,
+      "std_spacing_km": 3.152214558492259,
+      "p10_km": 0.954,
+      "p90_km": 5.999999999999999
+    },
+    {
+      "top_n": "all",
+      "mean_n_per_window": 13.266409266409266,
+      "mean_spacing_km": 2.777385632665978,
+      "std_spacing_km": 3.2140773351477563,
+      "p10_km": 0.9270000000000002,
+      "p90_km": 6.01875
+    }
+  ]
+}
