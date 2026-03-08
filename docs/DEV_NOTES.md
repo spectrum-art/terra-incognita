@@ -1237,3 +1237,101 @@ data/targets/structural/calibration.json.
 
 - `ce58e48` feat: add ridge clustering calibration mode to structural analyzer
 
+
+---
+
+## Entry 24 — Watershed-Based Ridge Detection (Phase D-0 Revision)
+
+**Date:** 2026-03-08
+
+### Context
+
+Phase D-1 calibration found no stable morphological scale for ridge separation
+using geomorphon pixel masks + morphological closing. The conclusion was that
+geomorphon ridge pixels are too dense and uniformly distributed to cluster into
+landform-scale ridge systems.
+
+This session implements the alternative: ridge detection via watershed analysis
+on the real DEM. Watershed boundaries = ridge lines is the standard geomorphic
+result. Standard hydrology (pit fill → D8 flow → flow accumulation → watershed
+delineation) produces ridge lines as boundaries between drainage basins.
+
+### New Modules
+
+- `tools/structural_analyzer/src/watershed.rs`
+  Priority-flood pit filling (adapted from terra-core patterns), D8 flow
+  direction with BFS flat-area routing, flow accumulation via topological
+  sort, watershed delineation by BFS upstream from stream pixels (pour points),
+  ridge pixel extraction as boundaries between adjacent watershed labels.
+  7 unit tests.
+
+- `tools/structural_analyzer/src/ridge_systems.rs`
+  Ridge system detection pipeline: label connected ridge components, find
+  dominant watershed pair per component, apply prominence threshold (5% of
+  total relief minimum), merge adjacent components across shallow saddles
+  (PROMINENCE_RATIO_THRESHOLD=0.20, PROMINENCE_ABS_THRESHOLD=30m).
+  Measurement helpers: spacing along transects, continuity (grain-axis extent),
+  watershed-based asymmetry (area ratio), inter-system valley width.
+  5 unit tests.
+
+### Parameter Decisions
+
+- **Pour threshold:** 500 pixels (~4 km² at 90m resolution). Alpine produces
+  12.1 ridge systems/window after merging — in the target 5-15 range.
+- **Prominence ratio threshold:** 0.20 (per ridge-separation-analysis.md).
+- **Absolute threshold:** 30m (per ridge-separation-analysis.md).
+- **Minimum component local relief:** 5% of total window relief (or ≥5m) to
+  accept a ridge component as a real ridge system.
+
+### Results
+
+Pour threshold 500 px confirmed as appropriate (Alpine: 12.14 systems/window).
+
+| Class | n_windows | zero_system_windows | mean_systems | ridge_spacing | asym_ratio |
+|---|---|---|---|---|---|
+| Alpine | 341 | 0 (0%) | 12.14 | 2.69 km | 2.05 |
+| Cratonic | 270 | 205 (76%) | 1.18 | 3.19 km | 1.70 |
+| Coastal | 103 | 75 (73%) | 1.69 | 6.14 km | 1.74 |
+| FluvialArid | 105 | 11 (10%) | 9.87 | 3.42 km | 2.23 |
+| FluvialHumid | 285 | 213 (75%) | 3.72 | 3.50 km | 1.91 |
+
+Key improvements over pixel-scale metrics:
+- Asymmetry ratio: Alpine 13.2 → 2.05 (now in target range 1.2–3.0) ✓
+- Cratonic zero-system rate 76%: correct — Ahaggar has some relief but most
+  windows are structurally undifferentiated ✓
+- Coastal zero-system rate 73%: correct ✓
+- Alpine spacing 2.69 km mean (p90=5.54 km): reaches fold-and-thrust range
+  in high-relief windows; mean is pulled down by windows with dense spurs ✓
+
+Ridge spacing is below the idealized fold-and-thrust 5–25 km range (mean=2.69 km).
+This reflects detection of both major structural ridges AND sub-ridge spur features
+at 90m resolution. The p90 (5.54 km) is in the correct range for many windows.
+This is expected behaviour at this scale and is NOT lowered via threshold tuning.
+
+### Code Changes
+
+- `main.rs`: POUR_THRESHOLD const (500), analyze_window now calls
+  detect_ridge_systems + measure_* helpers for families 1-4. Old geomorphon
+  functions kept with #[allow(dead_code)] as complementary references.
+  OutputJson: + mean_ridge_systems_per_window, + n_windows_zero_systems,
+  + inter_system_valley_width_km.
+- `ridge_spacing.rs`, `ridge_continuity.rs`, `asymmetry.rs`: compute_* functions
+  superseded by watershed-derived equivalents; kept with #[allow(dead_code)].
+
+### Tests
+
+- watershed.rs: 7 tests
+- ridge_systems.rs: 5 tests
+- Total structural_analyzer: 64 tests, 0 clippy warnings
+- terra-core: 202 tests unchanged
+
+### Performance
+
+~116ms per window average (1104 windows in 123 seconds, release build).
+Alpine windows are the slowest due to more complex watershed structure.
+
+### Commits
+
+- `0cb4c03` docs: add ridge separation analysis
+- `21b2c8d` feat: watershed inversion ridge detection (Phase D-0 revision)
+- `b73c4c8` data: updated structural targets from watershed-based ridge detection
