@@ -9,6 +9,7 @@ members = [
     "tools/distributions",
     "tools/validate_targets",
     "tools/visualize",
+    "tools/structural_analyzer",
 ]
 
 [workspace.package]
