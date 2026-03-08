@@ -5,6 +5,7 @@
 //! to data/targets/structural/.
 
 mod grain;
+mod morphology;
 mod transects;
 mod components;
 mod ridge_spacing;
@@ -45,6 +46,10 @@ struct Args {
     /// Output directory for structural target JSON files
     #[arg(short, long, default_value = "../../data/targets/structural")]
     output: PathBuf,
+
+    /// Run ridge system calibration: sweep closing radius on Alpine (himalaya) data
+    #[arg(long)]
+    calibrate: bool,
 }
 
 // ── regions.json schema ───────────────────────────────────────────────────────
@@ -172,6 +177,39 @@ struct OutputJson {
     spur_branching_angle_deg: StatsJson,
     flat_patch_size: FlatPatchJson,
     ridge_to_valley_profiles: ProfilesJson,
+}
+
+// ── Calibration JSON schema ────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct CalibrationRadiusEntry {
+    radius_px: i32,
+    radius_km: f64,
+    n_systems: f64,
+    spacing_km: f64,
+    max_length_km: f64,
+    mean_width_km: f64,
+    system_area_frac: f64,
+}
+
+#[derive(Serialize)]
+struct CrossValidationJson {
+    profile_horizontal_distance_km: f64,
+    slope_zone_width_km: f64,
+    recommended_radius_km: f64,
+    consistent: bool,
+}
+
+#[derive(Serialize)]
+struct CalibrationJson {
+    terrain_class: String,
+    region: String,
+    radii: Vec<CalibrationRadiusEntry>,
+    plateau_range_px: [i32; 2],
+    recommended_radius_px: i32,
+    recommended_radius_km: f64,
+    plateau_found: bool,
+    cross_validation: Option<CrossValidationJson>,
 }
 
 // ── File loading ──────────────────────────────────────────────────────────────
@@ -482,10 +520,393 @@ fn print_summary(summaries: &[ClassSummary]) {
     }
 }
 
+// ── Calibration helpers ────────────────────────────────────────────────────────
+
+const PIXEL_TO_KM: f64 = 0.09;
+const RIDGE_CLASS: f32 = 3.0;
+const CALIBRATION_RADII: &[i32] = &[3, 5, 8, 10, 12, 15, 20, 25, 30];
+
+/// Compute the mean center-to-center spacing between consecutive skeleton
+/// "on" runs along each transect.
+fn compute_skeleton_spacing(
+    skeleton: &[bool],
+    width: usize,
+    height: usize,
+    transects: &[transects::Transect],
+) -> f64 {
+    let mut spacings: Vec<f64> = Vec::new();
+
+    for transect in transects {
+        let mut run_centers: Vec<f64> = Vec::new();
+        let mut run_start: Option<usize> = None;
+
+        for (i, &(r, c)) in transect.iter().enumerate() {
+            let on = r >= 0
+                && r < height as i32
+                && c >= 0
+                && c < width as i32
+                && skeleton[r as usize * width + c as usize];
+
+            if on {
+                if run_start.is_none() {
+                    run_start = Some(i);
+                }
+            } else if let Some(start) = run_start {
+                run_centers.push((start + i - 1) as f64 / 2.0);
+                run_start = None;
+            }
+        }
+        if let Some(start) = run_start {
+            run_centers.push((start + transect.len() - 1) as f64 / 2.0);
+        }
+
+        for pair in run_centers.windows(2) {
+            spacings.push(pair[1] - pair[0]);
+        }
+    }
+
+    if spacings.is_empty() {
+        return f64::NAN;
+    }
+    spacings.iter().sum::<f64>() / spacings.len() as f64
+}
+
+/// For each connected component in `labels`, compute the extent along the
+/// grain direction (grain_r, grain_c). Returns a Vec of extents, one per component.
+fn component_grain_extents(
+    labels: &[u32],
+    n_labels: usize,
+    width: usize,
+    grain_r: f64,
+    grain_c: f64,
+) -> Vec<f64> {
+    let mut min_proj = vec![f64::INFINITY; n_labels];
+    let mut max_proj = vec![f64::NEG_INFINITY; n_labels];
+
+    for (i, &label) in labels.iter().enumerate() {
+        if label == 0 {
+            continue;
+        }
+        let r = (i / width) as f64;
+        let c = (i % width) as f64;
+        let proj = r * grain_r + c * grain_c;
+        let li = (label - 1) as usize;
+        if proj < min_proj[li] { min_proj[li] = proj; }
+        if proj > max_proj[li] { max_proj[li] = proj; }
+    }
+
+    (0..n_labels)
+        .map(|li| {
+            if max_proj[li] > min_proj[li] {
+                max_proj[li] - min_proj[li]
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// For each connected component in `labels`, compute the extent along the
+/// perpendicular direction (perp_r, perp_c). Returns a Vec of extents, one per component.
+fn component_perp_extents(
+    labels: &[u32],
+    n_labels: usize,
+    width: usize,
+    perp_r: f64,
+    perp_c: f64,
+) -> Vec<f64> {
+    let mut min_proj = vec![f64::INFINITY; n_labels];
+    let mut max_proj = vec![f64::NEG_INFINITY; n_labels];
+
+    for (i, &label) in labels.iter().enumerate() {
+        if label == 0 {
+            continue;
+        }
+        let r = (i / width) as f64;
+        let c = (i % width) as f64;
+        let proj = r * perp_r + c * perp_c;
+        let li = (label - 1) as usize;
+        if proj < min_proj[li] { min_proj[li] = proj; }
+        if proj > max_proj[li] { max_proj[li] = proj; }
+    }
+
+    (0..n_labels)
+        .map(|li| {
+            if max_proj[li] > min_proj[li] {
+                max_proj[li] - min_proj[li]
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// Per-window calibration result at a given closing radius.
+struct CalibrationWindow {
+    n_systems: f64,
+    spacing_px: f64,     // NaN if no pairs found
+    max_length_px: f64,  // grain-axis extent of longest skeleton component
+    mean_width_px: f64,  // perp-axis extent of closed-mask components
+    system_area_frac: f64,
+}
+
+fn calibrate_window(
+    geom: &[f32],
+    width: usize,
+    height: usize,
+    radius: i32,
+) -> CalibrationWindow {
+    // Extract ridge mask.
+    let n = width * height;
+    let ridge_mask: Vec<bool> = (0..n)
+        .map(|i| {
+            let v = geom[i];
+            !v.is_nan() && (v - RIDGE_CLASS).abs() < 0.5
+        })
+        .collect();
+
+    // Grain direction.
+    let grain = grain::compute_grain(geom, width, height);
+    if !grain.has_ridges {
+        return CalibrationWindow {
+            n_systems: 0.0,
+            spacing_px: f64::NAN,
+            max_length_px: 0.0,
+            mean_width_px: 0.0,
+            system_area_frac: 0.0,
+        };
+    }
+
+    let grain_r = grain.angle_rad.sin();
+    let grain_c = grain.angle_rad.cos();
+    let perp_angle = grain.angle_rad + std::f64::consts::FRAC_PI_2;
+    let perp_r = perp_angle.sin();
+    let perp_c = perp_angle.cos();
+
+    // Morphological closing.
+    let closed = morphology::close(&ridge_mask, width, height, radius);
+
+    // Connected components of closed mask → n_systems.
+    let closed_comps = components::label_components(&closed, width, height, components::Connectivity::Eight);
+    let n_systems = closed_comps.sizes.len();
+
+    // System area fraction.
+    let system_area_frac = closed.iter().filter(|&&v| v).count() as f64 / n as f64;
+
+    // Skeletonize.
+    let skeleton = morphology::skeletonize(&closed, width, height);
+
+    // Label skeleton components for grain-axis extent (max system length).
+    let skel_comps = components::label_components(&skeleton, width, height, components::Connectivity::Eight);
+    let n_skel = skel_comps.sizes.len();
+    let grain_extents = if n_skel > 0 {
+        component_grain_extents(&skel_comps.labels, n_skel, width, grain_r, grain_c)
+    } else {
+        Vec::new()
+    };
+    let max_length_px = grain_extents.iter().cloned().fold(0.0f64, f64::max);
+
+    // Perp extents from closed components (mean system width).
+    let perp_extents = if n_systems > 0 {
+        component_perp_extents(&closed_comps.labels, n_systems, width, perp_r, perp_c)
+    } else {
+        Vec::new()
+    };
+    let mean_width_px = if perp_extents.is_empty() {
+        0.0
+    } else {
+        perp_extents.iter().sum::<f64>() / perp_extents.len() as f64
+    };
+
+    // Skeleton spacing via transects.
+    let tsects = transects::build_transects(width, height, grain.angle_rad, N_TRANSECTS);
+    let spacing_px = compute_skeleton_spacing(&skeleton, width, height, &tsects);
+
+    CalibrationWindow {
+        n_systems: n_systems as f64,
+        spacing_px,
+        max_length_px,
+        mean_width_px,
+        system_area_frac,
+    }
+}
+
+fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Result<()> {
+    // Load regions.json and find himalaya.
+    let regions_text = fs::read_to_string(regions)
+        .with_context(|| format!("Cannot read {}", regions.display()))?;
+    let regions_file: RegionsFile = serde_json::from_str(&regions_text)
+        .context("Failed to parse regions.json")?;
+
+    let himalaya = regions_file.regions.iter()
+        .find(|r| r.id == "himalaya")
+        .ok_or_else(|| anyhow::anyhow!("himalaya region not found in regions.json"))?;
+
+    let region_dir = samples_dir.join(&himalaya.id);
+    let pairs = load_window_pairs(&region_dir)
+        .with_context(|| "Loading pairs for himalaya".to_string())?;
+    eprintln!("[calibration] Loaded {} window pairs from himalaya", pairs.len());
+
+    let mut entries: Vec<CalibrationRadiusEntry> = Vec::new();
+
+    for &radius in CALIBRATION_RADII {
+        let mut n_sys_vals: Vec<f64> = Vec::new();
+        let mut spacing_vals: Vec<f64> = Vec::new();
+        let mut max_len_vals: Vec<f64> = Vec::new();
+        let mut mean_w_vals: Vec<f64> = Vec::new();
+        let mut area_frac_vals: Vec<f64> = Vec::new();
+
+        for (_dem, geom) in &pairs {
+            let cw = calibrate_window(&geom.data, geom.width, geom.height, radius);
+            n_sys_vals.push(cw.n_systems);
+            if !cw.spacing_px.is_nan() {
+                spacing_vals.push(cw.spacing_px);
+            }
+            max_len_vals.push(cw.max_length_px);
+            mean_w_vals.push(cw.mean_width_px);
+            area_frac_vals.push(cw.system_area_frac);
+        }
+
+        let mean_n = if n_sys_vals.is_empty() { 0.0 }
+            else { n_sys_vals.iter().sum::<f64>() / n_sys_vals.len() as f64 };
+        let mean_spacing_km = if spacing_vals.is_empty() { f64::NAN }
+            else { spacing_vals.iter().sum::<f64>() / spacing_vals.len() as f64 * PIXEL_TO_KM };
+        let mean_max_len_km = if max_len_vals.is_empty() { 0.0 }
+            else { max_len_vals.iter().sum::<f64>() / max_len_vals.len() as f64 * PIXEL_TO_KM };
+        let mean_width_km = if mean_w_vals.is_empty() { 0.0 }
+            else { mean_w_vals.iter().sum::<f64>() / mean_w_vals.len() as f64 * PIXEL_TO_KM };
+        let mean_area_frac = if area_frac_vals.is_empty() { 0.0 }
+            else { area_frac_vals.iter().sum::<f64>() / area_frac_vals.len() as f64 };
+
+        entries.push(CalibrationRadiusEntry {
+            radius_px: radius,
+            radius_km: radius as f64 * PIXEL_TO_KM,
+            n_systems: mean_n,
+            spacing_km: mean_spacing_km,
+            max_length_km: mean_max_len_km,
+            mean_width_km,
+            system_area_frac: mean_area_frac,
+        });
+    }
+
+    // Print table to stderr.
+    eprintln!("\n[calibration] Alpine ridge system metrics vs closing radius:\n");
+    eprintln!("{:>6}  {:>6}  {:>10}  {:>11}  {:>14}  {:>14}  {:>16}",
+        "R(px)", "R(km)", "n_systems", "spacing_km", "max_length_km", "mean_width_km", "system_area_frac");
+    for e in &entries {
+        let sp = if e.spacing_km.is_nan() { "NaN".to_string() } else { format!("{:.2}", e.spacing_km) };
+        eprintln!("{:>6}  {:>6.2}  {:>10.1}  {:>11}  {:>14.2}  {:>14.2}  {:>16.4}",
+            e.radius_px, e.radius_km, e.n_systems, sp, e.max_length_km, e.mean_width_km, e.system_area_frac);
+    }
+
+    // Detect plateau: consecutive spacing_km changes < 15%.
+    let spacing_vals: Vec<f64> = entries.iter().map(|e| e.spacing_km).filter(|v| !v.is_nan()).collect();
+    let n_sp = spacing_vals.len();
+    let mut plateau_start_idx: Option<usize> = None;
+    let mut plateau_end_idx: Option<usize> = None;
+
+    if n_sp >= 2 {
+        for i in 0..n_sp - 1 {
+            let prev = spacing_vals[i];
+            let next = spacing_vals[i + 1];
+            if prev > 0.0 {
+                let change = ((next - prev) / prev).abs();
+                if change < 0.15 {
+                    if plateau_start_idx.is_none() {
+                        plateau_start_idx = Some(i);
+                    }
+                    plateau_end_idx = Some(i + 1);
+                } else if plateau_start_idx.is_some() {
+                    // First break after a plateau start — stop extending.
+                    break;
+                }
+            }
+        }
+    }
+
+    let plateau_found = plateau_start_idx.is_some();
+    // Map spacing index back to radius index (spacing_vals comes from entries in order, NaN filtered).
+    // Rebuild mapping of non-NaN entries by index.
+    let non_nan_entries: Vec<&CalibrationRadiusEntry> = entries.iter()
+        .filter(|e| !e.spacing_km.is_nan())
+        .collect();
+
+    let (recommended_radius_px, plateau_range) = if plateau_found {
+        let ps = plateau_start_idx.unwrap();
+        let pe = plateau_end_idx.unwrap();
+        let rr = non_nan_entries[ps].radius_px;
+        let range = [non_nan_entries[ps].radius_px, non_nan_entries[pe].radius_px];
+        (rr, range)
+    } else {
+        // No plateau: recommend smallest radius by default.
+        let rr = entries[0].radius_px;
+        (rr, [rr, rr])
+    };
+
+    eprintln!("\n[calibration] Plateau found: {}", plateau_found);
+    if plateau_found {
+        eprintln!("[calibration] Plateau range: R = {} to {} px", plateau_range[0], plateau_range[1]);
+        eprintln!("[calibration] Recommended R: {} px ({:.2} km)", recommended_radius_px, recommended_radius_px as f64 * PIXEL_TO_KM);
+    } else {
+        eprintln!("[calibration] No clear plateau found. Spacing keeps changing > 15% per step.");
+    }
+
+    // Cross-validate with profile data.
+    let alpine_json_path = output_dir.join("Alpine.json");
+    let cross_val = if alpine_json_path.exists() {
+        let text = fs::read_to_string(&alpine_json_path).ok();
+        text.and_then(|t| {
+            let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+            let hdist = v["ridge_to_valley_profiles"]["low_relief"]["mean_horizontal_distance_km"]
+                .as_f64()?;
+            let slope_zone = hdist / 2.0;
+            let rec_km = recommended_radius_px as f64 * PIXEL_TO_KM;
+            let consistent = (rec_km - slope_zone).abs() / slope_zone.max(0.001) < 0.5;
+            eprintln!("[calibration] Cross-validation: profile horizontal distance = {:.3} km, slope-zone ≈ {:.3} km, recommended R = {:.2} km — {}",
+                hdist, slope_zone, rec_km,
+                if consistent { "consistent" } else { "inconsistent" });
+            Some(CrossValidationJson {
+                profile_horizontal_distance_km: hdist,
+                slope_zone_width_km: slope_zone,
+                recommended_radius_km: rec_km,
+                consistent,
+            })
+        })
+    } else {
+        None
+    };
+
+    // Write calibration.json.
+    fs::create_dir_all(output_dir)?;
+    let cal = CalibrationJson {
+        terrain_class: himalaya.terrain_class.clone(),
+        region: himalaya.id.clone(),
+        radii: entries,
+        plateau_range_px: plateau_range,
+        recommended_radius_px,
+        recommended_radius_km: recommended_radius_px as f64 * PIXEL_TO_KM,
+        plateau_found,
+        cross_validation: cross_val,
+    };
+
+    let cal_path = output_dir.join("calibration.json");
+    let json = serde_json::to_string_pretty(&cal)?;
+    fs::write(&cal_path, json)
+        .with_context(|| format!("Write failed: {}", cal_path.display()))?;
+    eprintln!("[calibration] Wrote {}", cal_path.display());
+
+    Ok(())
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    if args.calibrate {
+        run_calibration(&args.samples_dir, &args.regions, &args.output)?;
+        return Ok(());
+    }
 
     let regions_text = fs::read_to_string(&args.regions)
         .with_context(|| format!("Cannot read {}", args.regions.display()))?;
