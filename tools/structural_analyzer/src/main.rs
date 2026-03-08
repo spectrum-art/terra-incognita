@@ -800,16 +800,19 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
     }
 
     // Detect plateau: consecutive spacing_km changes < 15%.
+    // Require the plateau spacing to be > 3 km to exclude the pixel-scale floor
+    // (where small R values produce spacings similar to the raw geomorphon pixel spacing).
     let spacing_vals: Vec<f64> = entries.iter().map(|e| e.spacing_km).filter(|v| !v.is_nan()).collect();
     let n_sp = spacing_vals.len();
     let mut plateau_start_idx: Option<usize> = None;
     let mut plateau_end_idx: Option<usize> = None;
+    const MIN_PLATEAU_SPACING_KM: f64 = 3.0; // must be above pixel-scale floor
 
     if n_sp >= 2 {
         for i in 0..n_sp - 1 {
             let prev = spacing_vals[i];
             let next = spacing_vals[i + 1];
-            if prev > 0.0 {
+            if prev >= MIN_PLATEAU_SPACING_KM {
                 let change = ((next - prev) / prev).abs();
                 if change < 0.15 {
                     if plateau_start_idx.is_none() {

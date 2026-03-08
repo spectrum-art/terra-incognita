@@ -1,0 +1,100 @@
+{
+  "terrain_class": "Alpine",
+  "region": "himalaya",
+  "radii": [
+    {
+      "radius_px": 3,
+      "radius_km": 0.27,
+      "n_systems": 952.1260997067449,
+      "spacing_km": 2.715016886556456,
+      "max_length_km": 10.167978143774414,
+      "mean_width_km": 0.46622246269253687,
+      "system_area_frac": 0.09505702043908083
+    },
+    {
+      "radius_px": 5,
+      "radius_km": 0.44999999999999996,
+      "n_systems": 379.80058651026394,
+      "spacing_km": 2.7256903675368958,
+      "max_length_km": 27.29715566343733,
+      "mean_width_km": 0.7405179259917609,
+      "system_area_frac": 0.20207227779623352
+    },
+    {
+      "radius_px": 8,
+      "radius_km": 0.72,
+      "n_systems": 118.39882697947215,
+      "spacing_km": 3.3196271809942184,
+      "max_length_km": 46.55664678550287,
+      "mean_width_km": 1.2386131438857622,
+      "system_area_frac": 0.3991885255159171
+    },
+    {
+      "radius_px": 10,
+      "radius_km": 0.8999999999999999,
+      "n_systems": 53.76246334310851,
+      "spacing_km": 4.131947529824005,
+      "max_length_km": 52.81939869990049,
+      "mean_width_km": 2.77224913219751,
+      "system_area_frac": 0.526519305545214
+    },
+    {
+      "radius_px": 12,
+      "radius_km": 1.08,
+      "n_systems": 29.712609970674485,
+      "spacing_km": 5.0896167478427365,
+      "max_length_km": 55.41120871263751,
+      "mean_width_km": 5.459157631899765,
+      "system_area_frac": 0.6127437356630029
+    },
+    {
+      "radius_px": 15,
+      "radius_km": 1.3499999999999999,
+      "n_systems": 14.697947214076246,
+      "spacing_km": 6.9047379634663235,
+      "max_length_km": 57.38184282753534,
+      "mean_width_km": 12.196265917758756,
+      "system_area_frac": 0.7188570128857565
+    },
+    {
+      "radius_px": 20,
+      "radius_km": 1.7999999999999998,
+      "n_systems": 5.944281524926686,
+      "spacing_km": 11.29719853096133,
+      "max_length_km": 58.50488570838643,
+      "mean_width_km": 25.46193661255114,
+      "system_area_frac": 0.8090573419923307
+    },
+    {
+      "radius_px": 25,
+      "radius_km": 2.25,
+      "n_systems": 2.9266862170087977,
+      "spacing_km": 14.696448665462613,
+      "max_length_km": 59.18793087792231,
+      "mean_width_km": 38.49231670287455,
+      "system_area_frac": 0.8595835554285133
+    },
+    {
+      "radius_px": 30,
+      "radius_km": 2.6999999999999997,
+      "n_systems": 1.8504398826979471,
+      "spacing_km": 17.733061776746805,
+      "max_length_km": 59.56276160205444,
+      "mean_width_km": 46.97700216904795,
+      "system_area_frac": 0.8931589993563566
+    }
+  ],
+  "plateau_range_px": [
+    3,
+    3
+  ],
+  "recommended_radius_px": 3,
+  "recommended_radius_km": 0.27,
+  "plateau_found": false,
+  "cross_validation": {
+    "profile_horizontal_distance_km": 0.9465270602086738,
+    "slope_zone_width_km": 0.4732635301043369,
+    "recommended_radius_km": 0.27,
+    "consistent": true
+  }
+}

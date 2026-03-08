@@ -1130,3 +1130,110 @@ were skipped with warnings. 103 of 110 coastal windows processed.
 - `4cac416` docs: add structural analyzer specification
 - `cd697ac` feat: structural analyzer tool (Phase D-0)
 
+---
+
+## Entry 23 — Ridge Clustering Calibration (Phase D-1)
+
+**Date**: 20260307
+
+### Problem Discovered
+
+Phase D-0 structural analyzer computes families 1-5 at pixel scale. The ridge
+spacing output (~2.36 km for Alpine) corresponds to individual geomorphon ridge
+pixels (~90m pitch), not fold-and-thrust wavelengths (5-25 km). Ridge continuity
+mean segment length (~239m) measures tiny pixel-scale fragments, not ridgelines.
+Asymmetry ratio ~13× is implausibly high (geophysical expectation: 1.2-3.0×).
+
+### Calibration Methodology
+
+Added `--calibrate` mode to structural_analyzer. Sweeps closing radius R in
+[3, 5, 8, 10, 12, 15, 20, 25, 30] px on all 341 himalaya windows:
+
+1. Extract ridge pixel mask (geomorphon class 3)
+2. Apply morphological closing (dilation then erosion, circular SE radius R)
+3. Label connected components → n_systems
+4. Skeletonize (Zhang-Suen) → ridge system center-lines
+5. Measure spacing via transect-based skeleton center-to-center distance
+6. Measure max_length via grain-axis extent of skeleton components
+7. Measure mean_width via perp-axis extent of closed-mask components
+
+### Calibration Results
+
+```
+R(px)  R(km)  n_systems  spacing_km  max_length_km  mean_width_km  system_area_frac
+    3   0.27      952.1        2.72          10.17           0.47          0.0951
+    5   0.45      379.8        2.73          27.30           0.74          0.2021
+    8   0.72      118.4        3.32          46.56           1.24          0.3992
+   10   0.90       53.8        4.13          52.82           2.77          0.5265
+   12   1.08       29.7        5.09          55.41           5.46          0.6127
+   15   1.35       14.7        6.90          57.38          12.20          0.7189
+   20   1.80        5.9       11.30          58.50          25.46          0.8091
+   25   2.25        2.9       14.70          59.19          38.49          0.8596
+   30   2.70        1.9       17.73          59.56          46.98          0.8932
+```
+
+### Plateau Analysis
+
+No clear plateau found. Spacing grows monotonically from 2.72 km at R=3
+to 17.73 km at R=30. Every step after R=5 changes >15%:
+- R=5→8:  +21.6%
+- R=8→10: +24.4%
+- R=10→12: +23.2%
+- R=12→15: +35.6%
+- R=15→20: +63.8%
+- R=20→25: +30.1%
+- R=25→30: +20.6%
+
+The only two-step "plateau" (R=3-5, 0.4% change) is at the pixel-scale floor
+where the algorithm barely clusters anything (n_systems=952→380). Plateau
+detection requires spacing ≥ 3 km to exclude this floor — no plateau is found
+at meaningful scale.
+
+Cross-validation: profile horizontal distance = 0.947 km, slope-zone ≈ 0.473 km.
+The pixel-scale floor R=0.27 km is nominally "consistent" by the ±50% criterion
+but this is coincidental.
+
+### Diagnosis
+
+The morphological closing approach does not converge to stable ridge system
+metrics for this data. Two failure modes:
+
+1. **Small R (≤ 8 px, ≤ 0.72 km)**: Spacing stays near pixel scale. The closed
+   regions are small clusters, not mountain ridgelines. The skeleton spacing
+   metric measures cluster-to-cluster distance, not range-to-range distance.
+
+2. **Large R (≥ 12 px, ≥ 1.08 km)**: Closing merges entire mountain ranges into
+   a single blob. system_area_frac reaches 61-89% at R=12-30. The "ridge system"
+   now covers most of the window. Spacing grows unboundedly as it approaches
+   the window scale, not stabilizing at a geomorphic feature scale.
+
+The max_length_km plateaus at ~58-59 km for R≥12 because the skeleton spans the
+full diagonal of each window (a 90m × 256×256 window ≈ 23 km diagonal). This is
+an artifact of the single large component per window, not a meaningful ridge length.
+
+### Conclusion
+
+Per the calibration spec: "If no clear plateau exists, report that honestly."
+Phase 2 (revision of families 1-5) is NOT proceeding. The morphological closing
+approach at pixel scale does not produce stable landform-scale metrics for Alpine
+terrain. Option B (DEM-derived approach, e.g., profile-based ridge identification
+using actual slope profiles) would be needed to correctly extract fold-and-thrust
+wavelengths from this data.
+
+The existing pixel-scale metrics from Phase D-0 are retained as-is in
+data/targets/structural/. The calibration results are written to
+data/targets/structural/calibration.json.
+
+### New Code
+
+- `tools/structural_analyzer/src/morphology.rs`: dilate, erode, close, skeletonize
+  (Zhang-Suen), 9 unit tests, 0 clippy warnings
+- `tools/structural_analyzer/src/main.rs`: --calibrate flag, run_calibration,
+  compute_skeleton_spacing, component_grain_extents, component_perp_extents,
+  calibrate_window helpers
+- 52 total structural_analyzer tests, 0 clippy warnings
+
+### Commits
+
+- `ce58e48` feat: add ridge clustering calibration mode to structural analyzer
+
