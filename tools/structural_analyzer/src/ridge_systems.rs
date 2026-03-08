@@ -553,11 +553,11 @@ pub fn measure_ridge_spacing(
     RidgeSpacingResult { mean_px: mean, std_px: var.sqrt() }
 }
 
-/// Compute mean and max system length (grain-axis extent) from ridge systems.
+/// Compute mean and max system length (skeleton path approximation) from ridge systems.
 pub fn measure_ridge_continuity(
     systems: &[RidgeSystem],
-    grain_angle_rad: f64,
-    width: usize,
+    _grain_angle_rad: f64,
+    _width: usize,
 ) -> crate::ridge_continuity::RidgeContinuityResult {
     use crate::ridge_continuity::RidgeContinuityResult;
 
@@ -569,21 +569,9 @@ pub fn measure_ridge_continuity(
         };
     }
 
-    let grain_r = grain_angle_rad.sin();
-    let grain_c = grain_angle_rad.cos();
-
-    let extents: Vec<f64> = systems.iter().map(|sys| {
-        let mut min_proj = f64::INFINITY;
-        let mut max_proj = f64::NEG_INFINITY;
-        for &p in &sys.pixels {
-            let r = (p / width) as f64;
-            let c = (p % width) as f64;
-            let proj = r * grain_r + c * grain_c;
-            if proj < min_proj { min_proj = proj; }
-            if proj > max_proj { max_proj = proj; }
-        }
-        if max_proj > min_proj { max_proj - min_proj } else { 0.0 }
-    }).collect();
+    let extents: Vec<f64> = systems.iter()
+        .map(|sys| sys.pixels.len() as f64 * 1.2)
+        .collect();
 
     let mean = extents.iter().sum::<f64>() / extents.len() as f64;
     let max = extents.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -682,9 +670,10 @@ pub struct TierSpacingResult {
     pub n_systems: usize,
 }
 
-/// System length in pixels: max bounding-box dimension.
+/// System length in pixels: skeleton pixel-count approximation.
+/// Each pixel contributes ~1.2 px on average (mix of cardinal and diagonal steps).
 fn system_length_px(sys: &RidgeSystem) -> f64 {
-    sys.grain_extent_px.max(sys.perp_extent_px)
+    sys.pixels.len() as f64 * 1.2
 }
 
 /// Measure ridge spacing using only systems whose length is >= `min_length_px`.
