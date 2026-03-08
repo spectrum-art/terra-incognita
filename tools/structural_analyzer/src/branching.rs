@@ -6,6 +6,7 @@
 const RIDGE_CLASS: f32 = 3.0;
 const SPUR_CLASS: f32 = 5.0;
 const LOCAL_RADIUS: i32 = 15;
+const LOCAL_RADIUS_30: i32 = 30;
 
 #[allow(dead_code)]
 pub struct BranchingResult {
@@ -74,7 +75,7 @@ fn local_pca_direction(
     Some(ev_r.atan2(ev_c))
 }
 
-pub fn compute_branching(geom: &[f32], width: usize, height: usize) -> BranchingResult {
+fn compute_branching_with_radius(geom: &[f32], width: usize, height: usize, radius: i32) -> BranchingResult {
     let mut angles_deg: Vec<f64> = Vec::new();
 
     for r in 0..height as i32 {
@@ -97,8 +98,8 @@ pub fn compute_branching(geom: &[f32], width: usize, height: usize) -> Branching
             if !adjacent_to_ridge { continue; }
 
             // Local PCA for spur direction and ridge direction.
-            let spur_dir = local_pca_direction(geom, width, height, r, c, SPUR_CLASS, LOCAL_RADIUS);
-            let ridge_dir = local_pca_direction(geom, width, height, r, c, RIDGE_CLASS, LOCAL_RADIUS);
+            let spur_dir = local_pca_direction(geom, width, height, r, c, SPUR_CLASS, radius);
+            let ridge_dir = local_pca_direction(geom, width, height, r, c, RIDGE_CLASS, radius);
 
             let (Some(sd), Some(rd)) = (spur_dir, ridge_dir) else { continue };
 
@@ -125,6 +126,16 @@ pub fn compute_branching(geom: &[f32], width: usize, height: usize) -> Branching
         std_deg: var.sqrt(),
         junction_count: angles_deg.len(),
     }
+}
+
+pub fn compute_branching(geom: &[f32], width: usize, height: usize) -> BranchingResult {
+    compute_branching_with_radius(geom, width, height, LOCAL_RADIUS)
+}
+
+/// Diagnostic: same as `compute_branching` but with 30-pixel PCA radius.
+/// Used to discriminate H1 (wrong feature measured) from H2 (radius too small).
+pub fn compute_branching_30px(geom: &[f32], width: usize, height: usize) -> BranchingResult {
+    compute_branching_with_radius(geom, width, height, LOCAL_RADIUS_30)
 }
 
 #[cfg(test)]

@@ -82,12 +82,20 @@ struct WindowResult {
     asym_consistency: f64,
     /// Inter-system valley width in pixels (new sub-metric, families 3 primary).
     inter_system_valley_width_px: (f64, f64), // (mean, std)
-    /// Branching angle (still geomorphon-based, families 5).
+    /// Branching angle (geomorphon-based, 15px radius, families 5).
     branching: branching::BranchingResult,
+    /// Branching angle (geomorphon-based, 30px radius, diagnostic only).
+    branching_30px: branching::BranchingResult,
     flat_patches: flat_patches::FlatPatchResult,
     traversals: Vec<Traversal>,
     /// Number of ridge systems detected in this window.
     n_ridge_systems: usize,
+    /// Tier-based spacing: primary (≥8 km), secondary (≥2 km).
+    /// (spacing_mean_px, n_systems_in_tier)
+    tier_primary: (f64, usize),
+    tier_secondary: (f64, usize),
+    /// Watershed-derived ridge junction angles.
+    junction_angle: ridge_systems::JunctionAngleResult,
 }
 
 // ── Aggregation helpers ───────────────────────────────────────────────────────
@@ -157,6 +165,37 @@ struct FlatPatchJson {
 }
 
 #[derive(Serialize)]
+struct TierJson {
+    length_threshold_km: f64,
+    systems_per_window: StatsJson,
+    spacing_km: StatsJson,
+}
+
+#[derive(Serialize)]
+struct RidgeSpacingByTierJson {
+    primary: TierJson,
+    secondary: TierJson,
+    tertiary: TierJson,
+}
+
+#[derive(Serialize)]
+struct JunctionAngleJson {
+    mean: f64,
+    std: f64,
+    p10: f64,
+    p90: f64,
+    n_junctions: usize,
+    measurement_method: String,
+}
+
+#[derive(Serialize)]
+struct RidgeSystemCeilingJson {
+    max_systems_per_window: f64,
+    max_system_length_km: f64,
+    zero_system_fraction: f64,
+}
+
+#[derive(Serialize)]
 struct ProfileBinJson {
     n_traversals: usize,
     n_windows: usize,
@@ -197,6 +236,14 @@ struct OutputJson {
     /// Watershed-derived cross-sectional asymmetry (area ratio).
     cross_sectional_asymmetry: AsymmetryJson,
     spur_branching_angle_deg: StatsJson,
+    /// Geomorphon-based branching angle with 30-pixel PCA radius (diagnostic).
+    spur_branching_angle_30px_deg: StatsJson,
+    /// Watershed-derived ridge junction angles.
+    ridge_junction_angle_deg: JunctionAngleJson,
+    /// Multi-scale ridge spacing by tier.
+    ridge_spacing_by_tier: RidgeSpacingByTierJson,
+    /// Ridge system ceiling (upper-tail constraint for scoring).
+    ridge_system_ceiling: RidgeSystemCeilingJson,
     flat_patch_size: FlatPatchJson,
     ridge_to_valley_profiles: ProfilesJson,
 }
@@ -347,9 +394,35 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         (f64::NAN, f64::NAN)
     };
 
-    // Family 5: branching (still geomorphon-based, as ridge system junctions
-    // require more complex graph analysis than implemented here).
+    // Family 5: branching (geomorphon-based, 15px radius primary; 30px diagnostic).
     let branch = branching::compute_branching(&geom.data, w, h);
+    let branch_30px = branching::compute_branching_30px(&geom.data, w, h);
+
+    // Refinement 1: tier-based spacing.
+    const PRIMARY_THRESHOLD_KM: f64 = 8.0;
+    const SECONDARY_THRESHOLD_KM: f64 = 2.0;
+    let (tier_primary, tier_secondary) = if has_systems {
+        let tp = ridge_systems::measure_ridge_spacing_filtered(
+            &wsr.systems,
+            PRIMARY_THRESHOLD_KM / ridge_systems::PIXEL_TO_KM,
+            w, h, &transects,
+        );
+        let ts = ridge_systems::measure_ridge_spacing_filtered(
+            &wsr.systems,
+            SECONDARY_THRESHOLD_KM / ridge_systems::PIXEL_TO_KM,
+            w, h, &transects,
+        );
+        ((tp.spacing.mean_px, tp.n_systems), (ts.spacing.mean_px, ts.n_systems))
+    } else {
+        ((f64::NAN, 0), (f64::NAN, 0))
+    };
+
+    // Refinement 2: watershed-derived junction angles.
+    let junction_angle = if has_systems {
+        ridge_systems::measure_ridge_junction_angles(&wsr.systems, w, h)
+    } else {
+        ridge_systems::JunctionAngleResult::empty()
+    };
 
     // Family 6+7: unchanged.
     let flat = flat_patches::compute_flat_patches(&geom.data, w, h);
@@ -364,9 +437,13 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         asym_consistency,
         inter_system_valley_width_px: inter_vw,
         branching: branch,
+        branching_30px: branch_30px,
         flat_patches: flat,
         traversals: travs,
         n_ridge_systems: wsr.systems.len(),
+        tier_primary,
+        tier_secondary,
+        junction_angle,
     }
 }
 
@@ -443,6 +520,75 @@ fn aggregate_and_write(
         .map(|w| w.branching.mean_deg)
         .filter(|v| !v.is_nan())
         .collect();
+    let branch_30px_angles: Vec<f64> = windows.iter()
+        .map(|w| w.branching_30px.mean_deg)
+        .filter(|v| !v.is_nan())
+        .collect();
+
+    // Tier-based spacing (Refinement 1).
+    let primary_spacing_km: Vec<f64> = windows.iter()
+        .map(|w| w.tier_primary.0 * ridge_systems::PIXEL_TO_KM)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let primary_n_sys: Vec<f64> = windows.iter()
+        .map(|w| w.tier_primary.1 as f64)
+        .collect();
+    let secondary_spacing_km: Vec<f64> = windows.iter()
+        .map(|w| w.tier_secondary.0 * ridge_systems::PIXEL_TO_KM)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let secondary_n_sys: Vec<f64> = windows.iter()
+        .map(|w| w.tier_secondary.1 as f64)
+        .collect();
+    // Tertiary = all systems; spacing already in rs_means_km, count in n_ridge_systems.
+    let tertiary_n_sys: Vec<f64> = windows.iter()
+        .map(|w| w.n_ridge_systems as f64)
+        .collect();
+
+    // Junction angles (Refinement 2) — aggregate per-junction observations across all windows.
+    let junction_means: Vec<f64> = windows.iter()
+        .map(|w| w.junction_angle.mean_deg)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let total_junctions: usize = windows.iter().map(|w| w.junction_angle.n_junctions).sum();
+    // Weighted mean across windows.
+    let junction_global_mean = if junction_means.is_empty() {
+        f64::NAN
+    } else {
+        let weighted_sum: f64 = windows.iter()
+            .filter(|w| !w.junction_angle.mean_deg.is_nan())
+            .map(|w| w.junction_angle.mean_deg * w.junction_angle.n_junctions as f64)
+            .sum();
+        if total_junctions > 0 { weighted_sum / total_junctions as f64 } else { f64::NAN }
+    };
+    let junction_p10 = aggregate_scalar(
+        &windows.iter().map(|w| w.junction_angle.p10).filter(|v| !v.is_nan()).collect::<Vec<_>>()
+    ).p10;
+    let junction_p90 = aggregate_scalar(
+        &windows.iter().map(|w| w.junction_angle.p90).filter(|v| !v.is_nan()).collect::<Vec<_>>()
+    ).p90;
+    let junction_std = aggregate_scalar(
+        &windows.iter().map(|w| w.junction_angle.std_deg).filter(|v| !v.is_nan()).collect::<Vec<_>>()
+    ).mean;
+
+    // Ceiling metrics (Refinement 3).
+    let all_n_systems: Vec<f64> = windows.iter().map(|w| w.n_ridge_systems as f64).collect();
+    let all_max_len_km: Vec<f64> = windows.iter()
+        .filter(|w| w.n_ridge_systems > 0)
+        .map(|w| ridge_continuity::to_km_max(&w.ridge_continuity))
+        .filter(|v| !v.is_nan() && *v > 0.0)
+        .collect();
+    let n_zero_frac = if n_total > 0 {
+        windows.iter().filter(|w| w.n_ridge_systems == 0).count() as f64 / n_total as f64
+    } else { f64::NAN };
+    let mut sorted_n_systems = all_n_systems.clone();
+    sorted_n_systems.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let ceiling_max_systems = percentile(&sorted_n_systems, 90.0);
+    let ceiling_max_length_km = {
+        let mut s = all_max_len_km.clone();
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        percentile(&s, 90.0)
+    };
 
     // Flat patches.
     let flat_median_km2: Vec<f64> = windows.iter()
@@ -525,6 +671,37 @@ fn aggregate_and_write(
             consistency: aggregate_scalar(&asym_consist).into(),
         },
         spur_branching_angle_deg: aggregate_scalar(&branch_angles).into(),
+        spur_branching_angle_30px_deg: aggregate_scalar(&branch_30px_angles).into(),
+        ridge_junction_angle_deg: JunctionAngleJson {
+            mean: junction_global_mean,
+            std: junction_std,
+            p10: junction_p10,
+            p90: junction_p90,
+            n_junctions: total_junctions,
+            measurement_method: "watershed_system_skeleton".to_string(),
+        },
+        ridge_spacing_by_tier: RidgeSpacingByTierJson {
+            primary: TierJson {
+                length_threshold_km: 8.0,
+                systems_per_window: aggregate_scalar(&primary_n_sys).into(),
+                spacing_km: aggregate_scalar(&primary_spacing_km).into(),
+            },
+            secondary: TierJson {
+                length_threshold_km: 2.0,
+                systems_per_window: aggregate_scalar(&secondary_n_sys).into(),
+                spacing_km: aggregate_scalar(&secondary_spacing_km).into(),
+            },
+            tertiary: TierJson {
+                length_threshold_km: 0.0,
+                systems_per_window: aggregate_scalar(&tertiary_n_sys).into(),
+                spacing_km: aggregate_scalar(&rs_means_km).into(),
+            },
+        },
+        ridge_system_ceiling: RidgeSystemCeilingJson {
+            max_systems_per_window: ceiling_max_systems,
+            max_system_length_km: ceiling_max_length_km,
+            zero_system_fraction: n_zero_frac,
+        },
         flat_patch_size: FlatPatchJson {
             median_area_km2: aggregate_scalar(&flat_median_km2).into(),
             max_area_km2: aggregate_scalar(&flat_max_km2).into(),

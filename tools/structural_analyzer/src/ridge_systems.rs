@@ -672,6 +672,230 @@ pub fn measure_inter_system_valley_width(
     (mean, var.sqrt())
 }
 
+// ── Tier-based ridge spacing ──────────────────────────────────────────────────
+
+/// Result for one spacing tier.
+pub struct TierSpacingResult {
+    /// Spacing in pixels (NaN if fewer than 2 runs detected along transects).
+    pub spacing: crate::ridge_spacing::RidgeSpacingResult,
+    /// Number of ridge systems qualifying for this tier.
+    pub n_systems: usize,
+}
+
+/// System length in pixels: max bounding-box dimension.
+fn system_length_px(sys: &RidgeSystem) -> f64 {
+    sys.grain_extent_px.max(sys.perp_extent_px)
+}
+
+/// Measure ridge spacing using only systems whose length is >= `min_length_px`.
+/// Spacing is measured with the same transect method as `measure_ridge_spacing`.
+pub fn measure_ridge_spacing_filtered(
+    systems: &[RidgeSystem],
+    min_length_px: f64,
+    width: usize,
+    height: usize,
+    transects: &[crate::transects::Transect],
+) -> TierSpacingResult {
+    use crate::ridge_spacing::RidgeSpacingResult;
+
+    let filtered: Vec<&RidgeSystem> = systems.iter()
+        .filter(|s| system_length_px(s) >= min_length_px)
+        .collect();
+    let n_systems = filtered.len();
+
+    if filtered.is_empty() {
+        return TierSpacingResult {
+            spacing: RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN },
+            n_systems,
+        };
+    }
+
+    let n = width * height;
+    let mut system_mask = vec![false; n];
+    for sys in &filtered {
+        for &p in &sys.pixels {
+            if p < n { system_mask[p] = true; }
+        }
+    }
+
+    let mut spacings: Vec<f64> = Vec::new();
+    for transect in transects {
+        let mut centers: Vec<f64> = Vec::new();
+        let mut run_start: Option<usize> = None;
+        for (ti, &(r, c)) in transect.iter().enumerate() {
+            let in_sys = r >= 0 && c >= 0
+                && (r as usize) < height && (c as usize) < width
+                && system_mask[r as usize * width + c as usize];
+            if in_sys {
+                if run_start.is_none() { run_start = Some(ti); }
+            } else if let Some(start) = run_start {
+                centers.push((start + ti - 1) as f64 / 2.0);
+                run_start = None;
+            }
+        }
+        if let Some(start) = run_start {
+            centers.push((start + transect.len() - 1) as f64 / 2.0);
+        }
+        for pair in centers.windows(2) {
+            spacings.push(pair[1] - pair[0]);
+        }
+    }
+
+    let spacing = if spacings.is_empty() {
+        RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN }
+    } else {
+        let n_sp = spacings.len() as f64;
+        let mean = spacings.iter().sum::<f64>() / n_sp;
+        let var = spacings.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n_sp;
+        RidgeSpacingResult { mean_px: mean, std_px: var.sqrt() }
+    };
+
+    TierSpacingResult { spacing, n_systems }
+}
+
+// ── Watershed-derived ridge junction angles ────────────────────────────────────
+
+pub struct JunctionAngleResult {
+    pub mean_deg: f64,
+    pub std_deg: f64,
+    pub p10: f64,
+    pub p90: f64,
+    pub n_junctions: usize,
+}
+
+impl JunctionAngleResult {
+    pub fn empty() -> Self {
+        JunctionAngleResult {
+            mean_deg: f64::NAN,
+            std_deg: f64::NAN,
+            p10: f64::NAN,
+            p90: f64::NAN,
+            n_junctions: 0,
+        }
+    }
+}
+
+/// PCA direction for pixels of one system within `radius` px of a junction point.
+/// Returns angle in radians, or None if fewer than 5 pixels found.
+fn pca_direction_of_system(
+    sys: &RidgeSystem,
+    junc_r: i32,
+    junc_c: i32,
+    radius: i32,
+    width: usize,
+) -> Option<f64> {
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    for &p in &sys.pixels {
+        let r = (p / width) as i32;
+        let c = (p % width) as i32;
+        if (r - junc_r).abs() <= radius && (c - junc_c).abs() <= radius {
+            pts.push((r as f64, c as f64));
+        }
+    }
+    if pts.len() < 5 { return None; }
+    let n = pts.len() as f64;
+    let mean_r = pts.iter().map(|p| p.0).sum::<f64>() / n;
+    let mean_c = pts.iter().map(|p| p.1).sum::<f64>() / n;
+    let mut cov_rr = 0.0f64;
+    let mut cov_rc = 0.0f64;
+    let mut cov_cc = 0.0f64;
+    for &(r, c) in &pts {
+        let dr = r - mean_r;
+        let dc = c - mean_c;
+        cov_rr += dr * dr;
+        cov_rc += dr * dc;
+        cov_cc += dc * dc;
+    }
+    cov_rr /= n; cov_rc /= n; cov_cc /= n;
+    let trace = cov_rr + cov_cc;
+    let det = cov_rr * cov_cc - cov_rc * cov_rc;
+    let disc = (trace * trace / 4.0 - det).max(0.0).sqrt();
+    let lambda1 = trace / 2.0 + disc;
+    let (ev_r, ev_c) = if cov_rc.abs() > 1e-10 {
+        (cov_rc, lambda1 - cov_rr)
+    } else if cov_rr >= cov_cc {
+        (1.0, 0.0)
+    } else {
+        (0.0, 1.0)
+    };
+    Some(ev_r.atan2(ev_c))
+}
+
+/// Measure ridge junction angles from watershed-derived system skeletons.
+///
+/// Finds all pairs of ridge systems that come within 3 pixels of each other and
+/// computes the angle between their local directions at each junction using a
+/// 20-pixel PCA window. Returns the distribution of angles across all junctions.
+pub fn measure_ridge_junction_angles(
+    systems: &[RidgeSystem],
+    width: usize,
+    height: usize,
+) -> JunctionAngleResult {
+    if systems.len() < 2 {
+        return JunctionAngleResult::empty();
+    }
+
+    let n = width * height;
+    let mut px_to_sys = vec![usize::MAX; n];
+    for (si, sys) in systems.iter().enumerate() {
+        for &p in &sys.pixels {
+            if p < n { px_to_sys[p] = si; }
+        }
+    }
+
+    const TOLERANCE: i32 = 3;
+    const PCA_RADIUS: i32 = 20;
+
+    // Find all (si, sj) junction pairs; record one junction point per pair.
+    let mut junction_map: std::collections::HashMap<(usize, usize), (i32, i32)> =
+        std::collections::HashMap::new();
+    for (si, sys) in systems.iter().enumerate() {
+        for &p in &sys.pixels {
+            let r = (p / width) as i32;
+            let c = (p % width) as i32;
+            for dr in -TOLERANCE..=TOLERANCE {
+                for dc in -TOLERANCE..=TOLERANCE {
+                    if dr == 0 && dc == 0 { continue; }
+                    let nr = r + dr;
+                    let nc = c + dc;
+                    if nr < 0 || nc < 0 || nr >= height as i32 || nc >= width as i32 { continue; }
+                    let j = nr as usize * width + nc as usize;
+                    let sj = px_to_sys[j];
+                    if sj == usize::MAX || sj == si { continue; }
+                    let key = (si.min(sj), si.max(sj));
+                    junction_map.entry(key).or_insert(((r + nr) / 2, (c + nc) / 2));
+                }
+            }
+        }
+    }
+
+    let mut angles_deg: Vec<f64> = Vec::new();
+    for (&(si, sj), &(junc_r, junc_c)) in &junction_map {
+        let dir_i = pca_direction_of_system(&systems[si], junc_r, junc_c, PCA_RADIUS, width);
+        let dir_j = pca_direction_of_system(&systems[sj], junc_r, junc_c, PCA_RADIUS, width);
+        let (Some(di), Some(dj)) = (dir_i, dir_j) else { continue };
+        let mut diff = (di - dj).abs();
+        while diff > std::f64::consts::FRAC_PI_2 {
+            diff = (std::f64::consts::PI - diff).abs();
+        }
+        angles_deg.push(diff.to_degrees());
+    }
+
+    if angles_deg.is_empty() {
+        return JunctionAngleResult::empty();
+    }
+    let nn = angles_deg.len() as f64;
+    let mean = angles_deg.iter().sum::<f64>() / nn;
+    let var = angles_deg.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / nn;
+    let mut sorted = angles_deg.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let len = sorted.len();
+    let p10 = sorted[((0.10 * (len - 1) as f64).round() as usize).min(len - 1)];
+    let p90 = sorted[((0.90 * (len - 1) as f64).round() as usize).min(len - 1)];
+
+    JunctionAngleResult { mean_deg: mean, std_deg: var.sqrt(), p10, p90, n_junctions: len }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -731,6 +955,43 @@ mod tests {
             "two ridges: expected >= 1 system, got {}", result.systems.len());
         // Total ridge pixels should be non-zero.
         assert!(result.total_ridge_pixels > 0);
+    }
+
+    #[test]
+    fn tier_filter_excludes_short_systems() {
+        // Build two systems with different lengths.
+        // system A: 1 pixel (tiny, length ≈ 0)
+        // system B: 10 pixels in a row (length ≈ 10)
+        let w = 30usize;
+        let h = 30usize;
+        let dem = make_dem(h, w, |_, c| 100.0 + c as f32 * 10.0);
+        let result = detect_ridge_systems(&dem, w, h, 5);
+        if result.systems.is_empty() { return; }
+
+        // All-systems spacing (tertiary tier).
+        let tsects = crate::transects::build_transects(w, h, 0.0, 5);
+        let all = measure_ridge_spacing_filtered(&result.systems, 0.0, w, h, &tsects);
+        // Filtered with very high threshold: should return 0 systems.
+        let none = measure_ridge_spacing_filtered(&result.systems, 1e9, w, h, &tsects);
+        assert_eq!(none.n_systems, 0);
+        // All-systems count should equal number of ridge systems.
+        assert_eq!(all.n_systems, result.systems.len());
+    }
+
+    #[test]
+    fn junction_angles_no_adjacent_systems_returns_empty() {
+        // Single system: no junctions possible.
+        let dem = make_dem(20, 25, |_, c| {
+            let dist = (c as isize - 12).unsigned_abs() as f32;
+            200.0 - dist * 15.0
+        });
+        let result = detect_ridge_systems(&dem, 25, 20, 5);
+        // Whether 0 or 1 system, junction angle should be empty (NaN).
+        let ja = measure_ridge_junction_angles(&result.systems, 25, 20);
+        if result.systems.len() < 2 {
+            assert!(ja.mean_deg.is_nan());
+            assert_eq!(ja.n_junctions, 0);
+        }
     }
 
     #[test]
