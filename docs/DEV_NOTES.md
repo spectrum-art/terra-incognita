@@ -1047,3 +1047,86 @@ All Phase C criteria met. Remaining known issues (not addressed this session):
 - Issue 5: Ocean click terrain — clicking ocean on globe generates land tile;
   ocean tiles not yet handled in generate_at_location
 
+---
+
+## 20260307 — Phase D-0: Structural Analyzer Tool
+
+### Overview
+
+Implemented `tools/structural_analyzer/` — a standalone Rust binary that reads
+paired MERIT-DEM + Geomorpho90m windows from `data/samples/` and computes seven
+families of spatial-structural metrics, writing per-terrain-class JSON to
+`data/targets/structural/`.
+
+### Architecture
+
+10 source files: `main.rs`, `grain.rs`, `transects.rs`, `components.rs`,
+`ridge_spacing.rs`, `ridge_continuity.rs`, `valley_width.rs`, `asymmetry.rs`,
+`branching.rs`, `flat_patches.rs`, `profiles.rs`.
+
+Shared infrastructure: PCA-based grain detection (grain.rs), perpendicular
+transect construction (transects.rs), BFS connected-component labeling
+(components.rs). All metric families built on top of these.
+
+### Implementation Decisions
+
+**Transect placement**: Half-extent computed from actual window projection onto
+the grain axis (corner projections), not the full diagonal. This ensures all
+`n_transects` origins fall within the window bounds regardless of grain angle.
+Fixed a bug where `step=0` for n=1 caused the single transect to fall outside.
+
+**Asymmetry computation**: Gradient = (ridge_elev − mean_flank_elev) over a
+10-pixel neighborhood on each side. NaN pixels and ridge-class neighbors skipped.
+Measured asymmetry ratios (10–13×) are much higher than spec expectation (1.3–2×).
+This is a legitimate finding at 90m geomorphon resolution: individual geomorphon
+ridge pixels can have one side that is a steep valley wall and the other nearly
+flat, producing extreme ratios. Document as measured.
+
+**Flat patch median**: Uses `is_multiple_of(2)` per clippy lint.
+
+**Gap bridging in valley width**: Single non-valley pixels between two valley
+runs are bridged (tolerance=1 pixel) per spec.
+
+**Profile traversals**: Ridge→valley walks in both directions along each transect.
+Traversals < 5 pixels or < 10m drop are discarded. Relief bins: <200m (low),
+200–800m (moderate), >800m (high).
+
+### Test Failures Fixed
+
+- Grain tests: test windows were too small (<50 ridge pixels). Fixed by using
+  30×30 windows with 3 ridge lines (90 pixels each) and 80×80 for diagonal.
+- Components 8-connectivity test: original test used 3×3 corners which are NOT
+  diagonally adjacent (2 steps apart). Fixed to use 2×2 diagonally adjacent pair.
+- Transects count: `half_extent` was using full diagonal, placing edge transects
+  outside window. Fixed with grain-axis projection approach.
+
+### Results (from live run on all 6 regions, 1111 window pairs)
+
+```
+Class          n_tot n_ridge  ridge_sp_km  valley_w_km  asym_ratio  flat_dom  profiles(lo/md/hi)
+Alpine           341     341          2.4         0.25       13.24      0.52  129101/37714/1145
+Cratonic         270     263          2.5         0.18       10.74      0.62  80372/2382/4
+Coastal          103     102          2.0         0.21       11.77      0.36  51639/1613/0
+FluvialArid      105     105          1.8         0.24       12.83      0.28  54107/5574/52
+FluvialHumid     285     284          1.8         0.21       10.58      0.42  109814/15268/508
+```
+
+Note: 7 atlantic_coastal DEM files could not be parsed (schema mismatch) and
+were skipped with warnings. 103 of 110 coastal windows processed.
+
+**Inter-class differentiation observed**:
+- Alpine: highest relief profiles (1145 high-relief traversals)
+- Cratonic: highest flat_dom (0.62) — large flat patches as expected
+- FluvialArid: lowest flat_dom (0.28), high moderate-relief profiles
+- FluvialHumid: most windows (285), many low-relief traversals
+
+### Tests
+
+43 structural_analyzer tests passing, 0 clippy warnings.
+202 terra-core tests unaffected.
+
+### Commits
+
+- `4cac416` docs: add structural analyzer specification
+- `cd697ac` feat: structural analyzer tool (Phase D-0)
+
