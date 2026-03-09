@@ -100,6 +100,8 @@ struct WindowResult {
     tier_secondary: (f64, usize),
     /// Watershed-derived ridge junction angles.
     junction_angle: ridge_systems::JunctionAngleResult,
+    /// Range-level merging metrics.
+    range_metrics: ridge_systems::RangeMetricsResult,
 }
 
 // ── Aggregation helpers ───────────────────────────────────────────────────────
@@ -200,6 +202,24 @@ struct RidgeSystemCeilingJson {
 }
 
 #[derive(Serialize)]
+struct RangeLengthJson {
+    mean: StatsJson,
+    max: StatsJson,
+}
+
+#[derive(Serialize)]
+struct RangeMetricsJson {
+    ranges_per_window: StatsJson,
+    range_spacing_km: StatsJson,
+    range_length_km: RangeLengthJson,
+    ridges_per_range: StatsJson,
+    intra_range_ridge_spacing_km: StatsJson,
+    inter_range_valley_width_km: StatsJson,
+    merge_d_max_km: f64,
+    merge_threshold: f64,
+}
+
+#[derive(Serialize)]
 struct ProfileBinJson {
     n_traversals: usize,
     n_windows: usize,
@@ -248,6 +268,8 @@ struct OutputJson {
     ridge_spacing_by_tier: RidgeSpacingByTierJson,
     /// Ridge system ceiling (upper-tail constraint for scoring).
     ridge_system_ceiling: RidgeSystemCeilingJson,
+    /// Range-level merging: mountain ranges formed by collinear segment groups.
+    range_metrics: RangeMetricsJson,
     flat_patch_size: FlatPatchJson,
     ridge_to_valley_profiles: ProfilesJson,
 }
@@ -477,6 +499,22 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         ridge_systems::JunctionAngleResult::empty()
     };
 
+    // Step 3b: range-level merging.
+    let ranges = if has_systems {
+        ridge_systems::merge_into_ranges(
+            &wsr.systems, w,
+            ridge_systems::RANGE_MERGE_D_MAX_PX,
+            ridge_systems::RANGE_MERGE_THRESHOLD,
+        )
+    } else {
+        Vec::new()
+    };
+    let range_metrics = if !ranges.is_empty() {
+        ridge_systems::compute_range_metrics(&ranges, &wsr.systems, w, h, &transects)
+    } else {
+        ridge_systems::RangeMetricsResult::empty()
+    };
+
     // Family 6+7: unchanged.
     let flat = flat_patches::compute_flat_patches(&geom.data, w, h);
     let travs = profiles::extract_traversals(&dem.data, &geom.data, w, h, &transects);
@@ -497,6 +535,7 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         tier_primary,
         tier_secondary,
         junction_angle,
+        range_metrics,
     }
 }
 
@@ -705,6 +744,38 @@ fn aggregate_and_write(
     } else { 0.0 };
     let n_zero_systems = windows.iter().filter(|w| w.n_ridge_systems == 0).count();
 
+    // Range-level aggregation.
+    let rm_ranges_per_win: Vec<f64> = windows.iter()
+        .map(|w| w.range_metrics.ranges_per_window as f64)
+        .collect();
+    let rm_spacing_km: Vec<f64> = windows.iter()
+        .map(|w| w.range_metrics.range_spacing_px * ridge_systems::PIXEL_TO_KM)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let rm_len_mean_km: Vec<f64> = windows.iter()
+        .filter(|w| w.range_metrics.ranges_per_window > 0)
+        .map(|w| w.range_metrics.range_length_mean_km)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let rm_len_max_km: Vec<f64> = windows.iter()
+        .filter(|w| w.range_metrics.ranges_per_window > 0)
+        .map(|w| w.range_metrics.range_length_max_km)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let rm_ridges_per_range: Vec<f64> = windows.iter()
+        .filter(|w| w.range_metrics.ranges_per_window > 0)
+        .map(|w| w.range_metrics.ridges_per_range_mean)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let rm_intra_sp_km: Vec<f64> = windows.iter()
+        .map(|w| w.range_metrics.intra_range_ridge_spacing_km)
+        .filter(|v| !v.is_nan())
+        .collect();
+    let rm_inter_vw_km: Vec<f64> = windows.iter()
+        .map(|w| w.range_metrics.inter_range_valley_width_px * ridge_systems::PIXEL_TO_KM)
+        .filter(|v| !v.is_nan())
+        .collect();
+
     let out = OutputJson {
         terrain_class: terrain_class.to_string(),
         n_windows: n_total,
@@ -754,6 +825,19 @@ fn aggregate_and_write(
             max_systems_per_window: ceiling_max_systems,
             max_system_length_km: ceiling_max_length_km,
             zero_system_fraction: n_zero_frac,
+        },
+        range_metrics: RangeMetricsJson {
+            ranges_per_window: aggregate_scalar(&rm_ranges_per_win).into(),
+            range_spacing_km: aggregate_scalar(&rm_spacing_km).into(),
+            range_length_km: RangeLengthJson {
+                mean: aggregate_scalar(&rm_len_mean_km).into(),
+                max: aggregate_scalar(&rm_len_max_km).into(),
+            },
+            ridges_per_range: aggregate_scalar(&rm_ridges_per_range).into(),
+            intra_range_ridge_spacing_km: aggregate_scalar(&rm_intra_sp_km).into(),
+            inter_range_valley_width_km: aggregate_scalar(&rm_inter_vw_km).into(),
+            merge_d_max_km: ridge_systems::RANGE_MERGE_D_MAX_PX * ridge_systems::PIXEL_TO_KM,
+            merge_threshold: ridge_systems::RANGE_MERGE_THRESHOLD,
         },
         flat_patch_size: FlatPatchJson {
             median_area_km2: aggregate_scalar(&flat_median_km2).into(),

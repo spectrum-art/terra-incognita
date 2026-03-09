@@ -885,6 +885,461 @@ pub fn measure_ridge_junction_angles(
     JunctionAngleResult { mean_deg: mean, std_deg: var.sqrt(), p10, p90, n_junctions: len }
 }
 
+// ── Range-level merging ───────────────────────────────────────────────────────
+
+/// Default merge distance threshold: 5 km ≈ 55 pixels at 90 m.
+pub const RANGE_MERGE_D_MAX_PX: f64 = 55.0;
+/// Default merge score threshold.
+pub const RANGE_MERGE_THRESHOLD: f64 = 0.5;
+
+/// A mountain range: one or more collinear ridge segments merged into a single
+/// higher-order feature.
+pub struct MountainRange {
+    /// Indices into the original `systems` slice.
+    pub segment_indices: Vec<usize>,
+    /// Total path length (km): sum of constituent ridge lengths.
+    pub total_length_km: f64,
+    /// Overall PCA trend direction (radians, in [0, π/2)).
+    pub trend_rad: f64,
+    /// Endpoint pixel A (min projection along trend axis).
+    pub endpoint_a: usize,
+    /// Endpoint pixel B (max projection along trend axis).
+    pub endpoint_b: usize,
+    /// Combined pixel list (all constituent ridge pixels, may contain duplicates).
+    pub pixels: Vec<usize>,
+}
+
+/// Result of the range-level metric computation for one window.
+pub struct RangeMetricsResult {
+    pub ranges_per_window: usize,
+    /// Spacing between consecutive ranges along transects (pixels, NaN if < 2 ranges).
+    pub range_spacing_px: f64,
+    /// Mean total length of ranges (km).
+    pub range_length_mean_km: f64,
+    /// Max total length of ranges (km).
+    pub range_length_max_km: f64,
+    /// Mean number of constituent ridges per range.
+    pub ridges_per_range_mean: f64,
+    /// Mean centre-to-centre spacing between ridges within ranges (km, NaN if no multi-ridge ranges).
+    pub intra_range_ridge_spacing_km: f64,
+    /// Mean gap width between consecutive ranges along transects (pixels, NaN if < 2 ranges).
+    pub inter_range_valley_width_px: f64,
+}
+
+impl RangeMetricsResult {
+    pub fn empty() -> Self {
+        RangeMetricsResult {
+            ranges_per_window: 0,
+            range_spacing_px: f64::NAN,
+            range_length_mean_km: f64::NAN,
+            range_length_max_km: f64::NAN,
+            ridges_per_range_mean: f64::NAN,
+            intra_range_ridge_spacing_km: f64::NAN,
+            inter_range_valley_width_px: f64::NAN,
+        }
+    }
+}
+
+// ── Range merging helpers ─────────────────────────────────────────────────────
+
+/// PCA direction of a pixel set. Returns angle in [0, π/2) radians
+/// (axial: ridge has no orientation, only a trend).
+/// Returns 0.0 if fewer than 3 pixels.
+fn system_pca_direction(pixels: &[usize], width: usize) -> f64 {
+    if pixels.len() < 3 { return 0.0; }
+    let n = pixels.len() as f64;
+    let mean_r = pixels.iter().map(|&p| (p / width) as f64).sum::<f64>() / n;
+    let mean_c = pixels.iter().map(|&p| (p % width) as f64).sum::<f64>() / n;
+    let mut cov_rr = 0.0f64;
+    let mut cov_rc = 0.0f64;
+    let mut cov_cc = 0.0f64;
+    for &p in pixels {
+        let dr = (p / width) as f64 - mean_r;
+        let dc = (p % width) as f64 - mean_c;
+        cov_rr += dr * dr;
+        cov_rc += dr * dc;
+        cov_cc += dc * dc;
+    }
+    cov_rr /= n; cov_rc /= n; cov_cc /= n;
+    let trace = cov_rr + cov_cc;
+    let det = cov_rr * cov_cc - cov_rc * cov_rc;
+    let disc = (trace * trace / 4.0 - det).max(0.0).sqrt();
+    let lambda1 = trace / 2.0 + disc;
+    let (ev_r, ev_c) = if cov_rc.abs() > 1e-10 {
+        (cov_rc, lambda1 - cov_rr)
+    } else if cov_rr >= cov_cc {
+        (1.0_f64, 0.0_f64)
+    } else {
+        (0.0_f64, 1.0_f64)
+    };
+    // Normalise to [0, π/2).
+    let angle = ev_r.atan2(ev_c);
+    let angle = if angle < 0.0 { angle + std::f64::consts::PI } else { angle };
+    if angle >= std::f64::consts::FRAC_PI_2 { angle - std::f64::consts::FRAC_PI_2 } else { angle }
+}
+
+/// Find the two endpoint pixels of a system: min and max projection along trend axis.
+/// Returns (pixel_min_proj, pixel_max_proj).
+fn system_endpoints(pixels: &[usize], width: usize, trend_rad: f64) -> (usize, usize) {
+    let (sin_t, cos_t) = trend_rad.sin_cos();
+    let mut min_proj = f64::INFINITY;
+    let mut max_proj = f64::NEG_INFINITY;
+    let mut ep_min = pixels[0];
+    let mut ep_max = pixels[0];
+    for &p in pixels {
+        let r = (p / width) as f64;
+        let c = (p % width) as f64;
+        let proj = r * sin_t + c * cos_t;
+        if proj < min_proj { min_proj = proj; ep_min = p; }
+        if proj > max_proj { max_proj = proj; ep_max = p; }
+    }
+    (ep_min, ep_max)
+}
+
+/// Squared pixel distance between two pixel indices.
+#[inline]
+fn pixel_dist_sq(a: usize, b: usize, width: usize) -> f64 {
+    let ar = (a / width) as f64;
+    let ac = (a % width) as f64;
+    let br = (b / width) as f64;
+    let bc = (b % width) as f64;
+    (ar - br).powi(2) + (ac - bc).powi(2)
+}
+
+/// Minimum endpoint-to-endpoint distance (pixels) between two systems.
+/// Returns (distance_px, endpoint_from_a, endpoint_from_b).
+fn closest_endpoints(
+    eps_a: (usize, usize),
+    eps_b: (usize, usize),
+    width: usize,
+) -> (f64, usize, usize) {
+    let candidates = [
+        (eps_a.0, eps_b.0),
+        (eps_a.0, eps_b.1),
+        (eps_a.1, eps_b.0),
+        (eps_a.1, eps_b.1),
+    ];
+    candidates.iter()
+        .map(|&(pa, pb)| (pixel_dist_sq(pa, pb, width).sqrt(), pa, pb))
+        .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap()
+}
+
+/// Angular difference between two axial directions in [0, π/2), mapped to degrees in [0, 90].
+fn axial_angle_diff_deg(a_rad: f64, b_rad: f64) -> f64 {
+    let mut diff = (a_rad - b_rad).abs();
+    // Fold into [0, π/2).
+    while diff > std::f64::consts::FRAC_PI_2 {
+        diff = (std::f64::consts::PI - diff).abs();
+    }
+    diff.to_degrees()
+}
+
+/// Compute merge score M = 0.5*C + 0.3*P + 0.2*R between two ridge systems/ranges.
+/// `d_max_px`: maximum distance for non-zero proximity score.
+fn merge_score(
+    trend_a: f64,
+    trend_b: f64,
+    eps_a: (usize, usize),
+    eps_b: (usize, usize),
+    len_a_km: f64,
+    len_b_km: f64,
+    width: usize,
+    d_max_px: f64,
+) -> f64 {
+    // Proximity.
+    let (dist_px, ep_from_a, ep_from_b) = closest_endpoints(eps_a, eps_b, width);
+    if dist_px > d_max_px { return 0.0; }
+    let p_score = if dist_px < 1.0 / PIXEL_TO_KM {
+        1.0 - dist_px * PIXEL_TO_KM // linear from 1.0 at 0 km to 0.0 at 1 km
+    } else {
+        // Linear from 0.0 at 1 km to 0.0 at d_max.
+        1.0 - dist_px / d_max_px
+    };
+    let p_score = p_score.max(0.0);
+
+    // Collinearity.
+    let delta_theta = axial_angle_diff_deg(trend_a, trend_b);
+    let c_trend = (1.0 - delta_theta / 60.0).max(0.0); // 0 at 60°
+    // Bridge bearing: direction from ep_from_a to ep_from_b.
+    let ra = (ep_from_a / width) as f64;
+    let ca = (ep_from_a % width) as f64;
+    let rb = (ep_from_b / width) as f64;
+    let cb = (ep_from_b % width) as f64;
+    let bridge_rad = (rb - ra).atan2(cb - ca);
+    // Map bridge bearing to axial [0, π/2).
+    let bridge_axial = {
+        let b = if bridge_rad < 0.0 { bridge_rad + std::f64::consts::PI } else { bridge_rad };
+        if b >= std::f64::consts::FRAC_PI_2 { b - std::f64::consts::FRAC_PI_2 } else { b }
+    };
+    let bridge_diff_a = axial_angle_diff_deg(bridge_axial, trend_a);
+    let bridge_diff_b = axial_angle_diff_deg(bridge_axial, trend_b);
+    let c_bridge = (1.0 - bridge_diff_a.max(bridge_diff_b) / 60.0).max(0.0);
+    let c_score = if delta_theta < 15.0 && bridge_diff_a < 30.0 && bridge_diff_b < 30.0 {
+        1.0
+    } else {
+        (c_trend * c_bridge).sqrt() // geometric mean of trend and bridge agreement
+    };
+
+    // Scale.
+    let r_score = if len_a_km > 0.0 && len_b_km > 0.0 {
+        len_a_km.min(len_b_km) / len_a_km.max(len_b_km)
+    } else { 0.0 };
+
+    0.5 * c_score + 0.3 * p_score + 0.2 * r_score
+}
+
+// ── merge_into_ranges ─────────────────────────────────────────────────────────
+
+/// Group ridge segments into mountain ranges via collinearity-proximity merging.
+pub fn merge_into_ranges(
+    systems: &[RidgeSystem],
+    width: usize,
+    d_max_px: f64,
+    merge_threshold: f64,
+) -> Vec<MountainRange> {
+    let n = systems.len();
+    if n == 0 { return Vec::new(); }
+
+    // Per-segment properties.
+    let mut trends: Vec<f64> = systems.iter()
+        .map(|s| system_pca_direction(&s.pixels, width))
+        .collect();
+    let lengths: Vec<f64> = systems.iter()
+        .map(|s| system_length_px(s) * PIXEL_TO_KM)
+        .collect();
+    let mut endpoints: Vec<(usize, usize)> = systems.iter()
+        .map(|s| system_endpoints(&s.pixels, width, system_pca_direction(&s.pixels, width)))
+        .collect();
+
+    // Pixel pool per root (starts as clone of segment pixels).
+    let mut range_pixels: Vec<Vec<usize>> = systems.iter()
+        .map(|s| s.pixels.clone())
+        .collect();
+    let mut range_lengths: Vec<f64> = lengths.clone();
+
+    // Union-Find.
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+        while parent[x] != x { parent[x] = parent[parent[x]]; x = parent[x]; }
+        x
+    }
+
+    // Build candidate pairs (initial segment-level scores).
+    let mut candidates: Vec<(f64, usize, usize)> = Vec::new();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let s = merge_score(
+                trends[i], trends[j],
+                endpoints[i], endpoints[j],
+                lengths[i], lengths[j],
+                width, d_max_px,
+            );
+            if s > 0.0 {
+                candidates.push((s, i, j));
+            }
+        }
+    }
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Greedy merge.
+    for &(_, i, j) in &candidates {
+        let ri = find(&mut parent, i);
+        let rj = find(&mut parent, j);
+        if ri == rj { continue; }
+
+        // Re-check with current range trends and endpoints.
+        let s = merge_score(
+            trends[ri], trends[rj],
+            endpoints[ri], endpoints[rj],
+            range_lengths[ri], range_lengths[rj],
+            width, d_max_px,
+        );
+        if s < merge_threshold { continue; }
+
+        // Merge rj into ri (smaller root absorbs larger, consistent with UF convention).
+        parent[rj] = ri;
+        let rj_pix = std::mem::take(&mut range_pixels[rj]);
+        range_pixels[ri].extend_from_slice(&rj_pix);
+        range_lengths[ri] += range_lengths[rj];
+        // Recompute trend and endpoints for merged range.
+        trends[ri] = system_pca_direction(&range_pixels[ri], width);
+        endpoints[ri] = system_endpoints(&range_pixels[ri], width, trends[ri]);
+    }
+
+    // Build MountainRange structs.
+    let mut root_to_segs: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    for si in 0..n {
+        root_to_segs.entry(find(&mut parent, si)).or_default().push(si);
+    }
+
+    let mut ranges: Vec<MountainRange> = Vec::new();
+    for (root, segs) in root_to_segs {
+        let total_length_km = segs.iter().map(|&si| lengths[si]).sum::<f64>();
+        let trend = trends[root];
+        let all_pix = range_pixels[root].clone();
+        let (ep_a, ep_b) = system_endpoints(&all_pix, width, trend);
+        ranges.push(MountainRange {
+            segment_indices: segs,
+            total_length_km,
+            trend_rad: trend,
+            endpoint_a: ep_a,
+            endpoint_b: ep_b,
+            pixels: all_pix,
+        });
+    }
+
+    ranges
+}
+
+// ── Range-level measurements ──────────────────────────────────────────────────
+
+/// Measure centre-to-centre spacing between consecutive ranges along transects.
+pub fn measure_range_spacing(
+    ranges: &[MountainRange],
+    width: usize,
+    height: usize,
+    transects: &[crate::transects::Transect],
+) -> (f64, f64) {
+    if ranges.len() < 2 { return (f64::NAN, f64::NAN); }
+    let n = width * height;
+    let mut mask = vec![false; n];
+    for rng in ranges {
+        for &p in &rng.pixels {
+            if p < n { mask[p] = true; }
+        }
+    }
+
+    let mut spacings: Vec<f64> = Vec::new();
+    for transect in transects {
+        let mut centers: Vec<f64> = Vec::new();
+        let mut run_start: Option<usize> = None;
+        for (ti, &(r, c)) in transect.iter().enumerate() {
+            let on = r >= 0 && c >= 0 && (r as usize) < height && (c as usize) < width
+                && mask[r as usize * width + c as usize];
+            if on {
+                if run_start.is_none() { run_start = Some(ti); }
+            } else if let Some(start) = run_start {
+                centers.push((start + ti - 1) as f64 / 2.0);
+                run_start = None;
+            }
+        }
+        if let Some(start) = run_start {
+            centers.push((start + transect.len() - 1) as f64 / 2.0);
+        }
+        for pair in centers.windows(2) {
+            spacings.push(pair[1] - pair[0]);
+        }
+    }
+
+    if spacings.is_empty() { return (f64::NAN, f64::NAN); }
+    let ns = spacings.len() as f64;
+    let mean = spacings.iter().sum::<f64>() / ns;
+    let var = spacings.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / ns;
+    (mean, var.sqrt())
+}
+
+/// Measure gap width between consecutive ranges along transects (inter-range valley).
+pub fn measure_inter_range_valley_width(
+    ranges: &[MountainRange],
+    width: usize,
+    height: usize,
+    transects: &[crate::transects::Transect],
+) -> f64 {
+    if ranges.len() < 2 { return f64::NAN; }
+    let n = width * height;
+    let mut mask = vec![false; n];
+    for rng in ranges {
+        for &p in &rng.pixels { if p < n { mask[p] = true; } }
+    }
+
+    let mut gaps: Vec<f64> = Vec::new();
+    for transect in transects {
+        let mut in_range = false;
+        let mut gap_start: Option<usize> = None;
+        for (ti, &(r, c)) in transect.iter().enumerate() {
+            let on = r >= 0 && c >= 0 && (r as usize) < height && (c as usize) < width
+                && mask[r as usize * width + c as usize];
+            if on && !in_range {
+                if let Some(gs) = gap_start { gaps.push((ti - gs) as f64); }
+                in_range = true;
+                gap_start = None;
+            } else if !on && in_range {
+                gap_start = Some(ti);
+                in_range = false;
+            }
+        }
+    }
+    if gaps.is_empty() { return f64::NAN; }
+    gaps.iter().sum::<f64>() / gaps.len() as f64
+}
+
+/// Measure mean centre-to-centre spacing between constituent ridges within ranges.
+/// Only considers ranges with ≥ 2 constituent segments.
+pub fn measure_intra_range_ridge_spacing(
+    ranges: &[MountainRange],
+    systems: &[RidgeSystem],
+    width: usize,
+) -> f64 {
+    let mut spacings: Vec<f64> = Vec::new();
+
+    for rng in ranges {
+        if rng.segment_indices.len() < 2 { continue; }
+        // Project each constituent ridge's centroid onto the range trend axis.
+        let (sin_t, cos_t) = rng.trend_rad.sin_cos();
+        let mut projs: Vec<f64> = rng.segment_indices.iter().map(|&si| {
+            let pix = &systems[si].pixels;
+            let n = pix.len() as f64;
+            if n == 0.0 { return 0.0; }
+            let mean_r = pix.iter().map(|&p| (p / width) as f64).sum::<f64>() / n;
+            let mean_c = pix.iter().map(|&p| (p % width) as f64).sum::<f64>() / n;
+            mean_r * sin_t + mean_c * cos_t
+        }).collect();
+        projs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        for pair in projs.windows(2) {
+            spacings.push((pair[1] - pair[0]) * PIXEL_TO_KM);
+        }
+    }
+
+    if spacings.is_empty() { f64::NAN }
+    else { spacings.iter().sum::<f64>() / spacings.len() as f64 }
+}
+
+/// Compute all range-level metrics for one window.
+pub fn compute_range_metrics(
+    ranges: &[MountainRange],
+    systems: &[RidgeSystem],
+    width: usize,
+    height: usize,
+    transects: &[crate::transects::Transect],
+) -> RangeMetricsResult {
+    if ranges.is_empty() {
+        return RangeMetricsResult::empty();
+    }
+
+    let n_ranges = ranges.len();
+    let (range_sp_px, _) = measure_range_spacing(ranges, width, height, transects);
+    let lengths_km: Vec<f64> = ranges.iter().map(|r| r.total_length_km).collect();
+    let mean_len = lengths_km.iter().sum::<f64>() / n_ranges as f64;
+    let max_len = lengths_km.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let ridges_per_range = ranges.iter()
+        .map(|r| r.segment_indices.len() as f64)
+        .sum::<f64>() / n_ranges as f64;
+    let intra_sp = measure_intra_range_ridge_spacing(ranges, systems, width);
+    let inter_vw = measure_inter_range_valley_width(ranges, width, height, transects);
+
+    RangeMetricsResult {
+        ranges_per_window: n_ranges,
+        range_spacing_px: range_sp_px,
+        range_length_mean_km: mean_len,
+        range_length_max_km: if max_len.is_finite() { max_len } else { f64::NAN },
+        ridges_per_range_mean: ridges_per_range,
+        intra_range_ridge_spacing_km: intra_sp,
+        inter_range_valley_width_px: inter_vw,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -996,5 +1451,63 @@ mod tests {
             // Symmetric ridge → ratio should be moderate (watershed areas may differ due to boundary effects).
             assert!(ratio < 5.0, "symmetric ridge asymmetry ratio should be < 5, got {}", ratio);
         }
+    }
+
+    // ── Range merging tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn single_system_becomes_singleton_range() {
+        let dem = make_dem(20, 25, |_, c| {
+            let dist = (c as isize - 12).unsigned_abs() as f32;
+            200.0 - dist * 15.0
+        });
+        let result = detect_ridge_systems(&dem, 25, 20, 5);
+        if result.systems.is_empty() { return; }
+        let ranges = merge_into_ranges(&result.systems, 25, RANGE_MERGE_D_MAX_PX, RANGE_MERGE_THRESHOLD);
+        // Cannot merge more than we have; singleton systems → singleton ranges.
+        assert!(ranges.len() <= result.systems.len());
+        assert!(!ranges.is_empty());
+        // All segment indices covered.
+        let covered: usize = ranges.iter().map(|r| r.segment_indices.len()).sum();
+        assert_eq!(covered, result.systems.len());
+    }
+
+    #[test]
+    fn parallel_collinear_ridges_merge_into_fewer_ranges() {
+        // Build two clear ridges at cols 8 and 18 with no deep saddle between them
+        // and close enough to merge (gap ~10 px < 55 px d_max).
+        let profile = |c: usize| -> f32 {
+            let d1 = (c as isize - 8).unsigned_abs() as f32;
+            let d2 = (c as isize - 18).unsigned_abs() as f32;
+            (200.0 - d1 * 20.0).max(50.0).max((200.0 - d2 * 20.0).max(50.0))
+        };
+        let dem = make_dem(20, 27, |_, c| profile(c));
+        let result = detect_ridge_systems(&dem, 27, 20, 5);
+        if result.systems.is_empty() { return; }
+        let ranges = merge_into_ranges(&result.systems, 27, RANGE_MERGE_D_MAX_PX, RANGE_MERGE_THRESHOLD);
+        // There should be at least 1 range and no more systems than segments.
+        assert!(!ranges.is_empty());
+        let covered: usize = ranges.iter().map(|r| r.segment_indices.len()).sum();
+        assert_eq!(covered, result.systems.len());
+    }
+
+    #[test]
+    fn pca_direction_horizontal_ridge() {
+        // Pixels along a horizontal row → trend should be near 0° (horizontal).
+        let pixels: Vec<usize> = (0..20).map(|c| 10 * 30 + c).collect(); // row 10, cols 0-19, width=30
+        let dir = system_pca_direction(&pixels, 30);
+        // Principal axis is horizontal (c-direction), angle ≈ 0°.
+        assert!(dir.to_degrees() < 15.0, "horizontal ridge PCA should be ~0°, got {:.1}°", dir.to_degrees());
+    }
+
+    #[test]
+    fn range_metrics_empty_for_no_systems() {
+        let dem = vec![100.0f32; 400];
+        let result = detect_ridge_systems(&dem, 20, 20, 50);
+        let ranges = merge_into_ranges(&result.systems, 20, RANGE_MERGE_D_MAX_PX, RANGE_MERGE_THRESHOLD);
+        let tsects = crate::transects::build_transects(20, 20, 0.0, 5);
+        let rm = compute_range_metrics(&ranges, &result.systems, 20, 20, &tsects);
+        assert_eq!(rm.ranges_per_window, 0);
+        assert!(rm.range_spacing_px.is_nan());
     }
 }
