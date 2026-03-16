@@ -1,116 +1,405 @@
-//! Structural elevation field for the planet overview (Phase A, PA.2).
+//! Isostatic planet-scale elevation derived from crustal thickness.
 //!
-//! Generates a normalised [0, 1] elevation map at any resolution directly from
-//! the plate simulation outputs (regime, crust type, age). No hydraulic shaping.
+//! The overview elevation field is driven directly by plate geometry:
+//! - crust type sets the base thickness
+//! - subduction thickens the overriding plate into mountain belts
+//! - ridges thin continental crust and buoy up young oceanic crust
+//! - hotspots locally thicken the crust
 //!
-//!   0.0 = deepest ocean abyss   ·   0.5 = sea level   ·   1.0 = highest peak
-//!
-//! Performance target: < 200 ms at 1024 × 512.
+//! Output remains normalised to `[0, 1]` with `0.5` at sea level.
+
+use std::collections::VecDeque;
 
 use noise::{NoiseFn, Perlin};
+
 use crate::plates::{
     PlateSimulation,
+    age_field::cell_to_vec3,
     continents::CrustType,
     regime_field::TectonicRegime,
+    ridges::RidgeSegment,
+    subduction::{SubductionArc, point_to_subduction_distance},
 };
+use crate::sphere::{Vec3, great_circle_distance_rad, point_to_arc_distance};
 
-// ── Elevation ranges (normalised [0, 1]) ──────────────────────────────────────
-// 0.0 = deepest ocean abyss · 0.5 = sea level · 1.0 = highest mountain.
-// Crust type is the primary discriminant; regime is an additive modifier.
+const EARTH_RADIUS_KM: f64 = 6371.0;
 
-/// Return (base, amplitude) in normalised [0, 1] elevation space.
-fn structural_elevation(regime: TectonicRegime, crust: CrustType, age: f32) -> (f32, f32) {
-    let a = age.clamp(0.0, 1.0);
+const OCEANIC_BASE_THICKNESS_KM: f32 = 7.0;
+const CONTINENTAL_BASE_THICKNESS_KM: f32 = 35.0;
+
+const ARC_INFLUENCE_KM: f64 = 600.0;
+const RIDGE_RIFT_INFLUENCE_KM: f64 = 300.0;
+const RIDGE_THERMAL_INFLUENCE_KM: f64 = 500.0;
+const HOTSPOT_INFLUENCE_KM: f64 = 300.0;
+
+const MAX_ARC_THICKENING_KM: f32 = 30.0;
+const MAX_RIFT_THINNING_KM: f32 = 15.0;
+const MIN_CONTINENTAL_THICKNESS_KM: f32 = 20.0;
+const MAX_HOTSPOT_THICKENING_KM: f32 = 10.0;
+
+/// Convert physical elevation to the repo's normalised overview range.
+///
+/// Sea level stays exactly at `0.5`. Bathymetry uses a tighter scale than land
+/// so abyssal plains retain contrast without flattening continental relief.
+fn normalize_elevation_km(elevation_km: f32) -> f32 {
+    let normalized = if elevation_km >= 0.0 {
+        0.5 + elevation_km / 10.0
+    } else {
+        0.5 + elevation_km / 5.0
+    };
+    normalized.clamp(0.0, 1.0)
+}
+
+fn build_cell_points(width: usize, height: usize) -> Vec<Vec3> {
+    let mut points = Vec::with_capacity(width * height);
+    for r in 0..height {
+        for c in 0..width {
+            points.push(cell_to_vec3(r, c, width, height));
+        }
+    }
+    points
+}
+
+fn multi_source_grid_distance(seeds: &[bool], width: usize, height: usize) -> Vec<f32> {
+    let n = width * height;
+    let mut distances = vec![f32::INFINITY; n];
+    let mut queue = VecDeque::new();
+
+    for (idx, &is_seed) in seeds.iter().enumerate() {
+        if is_seed {
+            distances[idx] = 0.0;
+            queue.push_back(idx);
+        }
+    }
+
+    while let Some(idx) = queue.pop_front() {
+        let r = idx / width;
+        let c = idx % width;
+        let next_distance = distances[idx] + 1.0;
+        let neighbours = [
+            if r > 0 { Some((r - 1) * width + c) } else { None },
+            if r + 1 < height {
+                Some((r + 1) * width + c)
+            } else {
+                None
+            },
+            Some(r * width + if c > 0 { c - 1 } else { width - 1 }),
+            Some(r * width + if c + 1 < width { c + 1 } else { 0 }),
+        ];
+        for neighbour in neighbours.into_iter().flatten() {
+            if next_distance < distances[neighbour] {
+                distances[neighbour] = next_distance;
+                queue.push_back(neighbour);
+            }
+        }
+    }
+
+    distances
+}
+
+fn passive_margin_fraction(
+    crust: CrustType,
+    distance_to_continent: f32,
+    distance_to_ocean: f32,
+) -> f32 {
     match crust {
-        CrustType::Oceanic => {
-            // Ridge (age≈0) → 0.30 (shallow);  abyssal plain (age≈1) → 0.05 (deep).
-            let base = (0.30 - 0.25 * a).clamp(0.03, 0.33);
-            (base, 0.05)
-        }
+        CrustType::Oceanic => 0.0,
+        CrustType::Continental | CrustType::ActiveMargin => 1.0,
         CrustType::PassiveMargin => {
-            // Continental shelf: just at or below sea level; older = more subsided.
-            let base = 0.44 + 0.06 * (1.0 - a); // 0.44–0.50
-            (base, 0.04)
+            let sum = distance_to_continent + distance_to_ocean;
+            if sum <= f32::EPSILON {
+                0.5
+            } else {
+                (distance_to_ocean / sum).clamp(0.0, 1.0)
+            }
         }
-        CrustType::ActiveMargin | CrustType::Continental => match regime {
-            TectonicRegime::ActiveCompressional => {
-                // Mountain belts: young orogens highest, old ones eroded.
-                let base = 0.60 + 0.25 * (1.0 - a); // 0.60–0.85
-                (base, 0.08)
-            }
-            TectonicRegime::ActiveExtensional => {
-                // Rift valleys: below continental average, subside with age.
-                let base = 0.45 - 0.07 * a; // 0.38–0.45
-                (base, 0.05)
-            }
-            TectonicRegime::VolcanicHotspot => {
-                // Volcanic islands / plateaus.
-                let base = 0.54 + 0.16 * (1.0 - a); // 0.54–0.70
-                (base, 0.06)
-            }
-            TectonicRegime::CratonicShield => {
-                // Stable cratons: moderate, gently lower with age.
-                let base = 0.52 + 0.08 * (1.0 - a); // 0.52–0.60
-                (base, 0.03)
-            }
-            TectonicRegime::PassiveMargin => {
-                // Low continental margin.
-                let base = 0.46 + 0.08 * (1.0 - a); // 0.46–0.54
-                (base, 0.04)
-            }
-        },
     }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+fn base_thickness_km(crust: CrustType, continental_fraction: f32) -> f32 {
+    match crust {
+        CrustType::Oceanic => OCEANIC_BASE_THICKNESS_KM,
+        CrustType::Continental | CrustType::ActiveMargin => CONTINENTAL_BASE_THICKNESS_KM,
+        CrustType::PassiveMargin => OCEANIC_BASE_THICKNESS_KM
+            + (CONTINENTAL_BASE_THICKNESS_KM - OCEANIC_BASE_THICKNESS_KM) * continental_fraction,
+    }
+}
+
+fn arc_thickening_km(distance_km: f64, modulation: f32, overriding_side: bool) -> f32 {
+    if distance_km >= ARC_INFLUENCE_KM {
+        return 0.0;
+    }
+    let taper = (-3.0 * (distance_km / ARC_INFLUENCE_KM).powi(2)).exp() as f32;
+    let side_scale = if overriding_side { 1.0 } else { 0.3 };
+    MAX_ARC_THICKENING_KM * taper * modulation.max(0.7) * side_scale
+}
+
+fn rift_thinning_km(distance_km: f64, continental_share: f32) -> f32 {
+    if continental_share <= 0.2 || distance_km >= RIDGE_RIFT_INFLUENCE_KM {
+        return 0.0;
+    }
+    let taper = (-4.0 * (distance_km / RIDGE_RIFT_INFLUENCE_KM).powi(2)).exp() as f32;
+    MAX_RIFT_THINNING_KM * taper * continental_share.max(0.35)
+}
+
+fn hotspot_thickening_km(distance_km: f64) -> f32 {
+    if distance_km >= HOTSPOT_INFLUENCE_KM {
+        return 0.0;
+    }
+    let taper = (-4.0 * (distance_km / HOTSPOT_INFLUENCE_KM).powi(2)).exp() as f32;
+    MAX_HOTSPOT_THICKENING_KM * taper
+}
+
+fn oceanic_thermal_uplift_km(age: f32, ridge_modulation: f32) -> f32 {
+    2.5 * (1.0 - age.clamp(0.0, 1.0).sqrt()) * ridge_modulation
+}
+
+fn nearest_arc_distance_km(points: &[Vec3], arcs: &[SubductionArc]) -> (Vec<f32>, Vec<bool>) {
+    let mut distances = vec![f32::INFINITY; points.len()];
+    let mut overriding_side = vec![false; points.len()];
+
+    for arc in arcs {
+        let radius_rad = arc.radius_rad();
+        for (idx, &point) in points.iter().enumerate() {
+            let distance_km = (point_to_subduction_distance(point, arc) * EARTH_RADIUS_KM) as f32;
+            if distance_km < distances[idx] {
+                distances[idx] = distance_km;
+                overriding_side[idx] =
+                    great_circle_distance_rad(point, arc.centre) <= radius_rad + 1e-9;
+            }
+        }
+    }
+
+    (distances, overriding_side)
+}
+
+fn nearest_ridge_distance_km(points: &[Vec3], ridges: &[RidgeSegment]) -> Vec<f32> {
+    struct RidgeArc {
+        a: Vec3,
+        b: Vec3,
+        normal: Vec3,
+    }
+
+    let ridge_arcs: Vec<RidgeArc> = ridges
+        .iter()
+        .map(|ridge| {
+            let (a, b) = (ridge.main_start, ridge.main_end);
+            let normal_raw = a.cross(b);
+            let normal = if normal_raw.length() > 1e-12 {
+                normal_raw.normalize()
+            } else {
+                Vec3::new(0.0, 0.0, 1.0)
+            };
+            RidgeArc { a, b, normal }
+        })
+        .collect();
+
+    let mut distances = vec![f32::INFINITY; points.len()];
+    for (idx, &point) in points.iter().enumerate() {
+        let mut nearest = f64::INFINITY;
+        for arc in &ridge_arcs {
+            let great_circle_floor = arc.normal.dot(point).abs().asin() * EARTH_RADIUS_KM;
+            if great_circle_floor >= nearest {
+                continue;
+            }
+            let distance_km = point_to_arc_distance(point, arc.a, arc.b) * EARTH_RADIUS_KM;
+            if distance_km < nearest {
+                nearest = distance_km;
+            }
+        }
+        distances[idx] = nearest as f32;
+    }
+    distances
+}
+
+fn nearest_hotspot_distance_km(points: &[Vec3], hotspots: &[Vec3]) -> Vec<f32> {
+    let mut distances = vec![f32::INFINITY; points.len()];
+    for (idx, &point) in points.iter().enumerate() {
+        let mut nearest = f64::INFINITY;
+        for &hotspot in hotspots {
+            let distance_km = point.dot(hotspot).clamp(-1.0, 1.0).acos() * EARTH_RADIUS_KM;
+            if distance_km < nearest {
+                nearest = distance_km;
+            }
+        }
+        distances[idx] = nearest as f32;
+    }
+    distances
+}
+
+fn isotropic_fbm(perlin: &Perlin, point: Vec3, base_frequency: f64, octaves: usize) -> f32 {
+    let mut sum = 0.0_f64;
+    let mut amplitude = 1.0_f64;
+    let mut frequency = base_frequency;
+    let mut normalizer = 0.0_f64;
+
+    for _ in 0..octaves {
+        sum += perlin.get([point.x * frequency, point.y * frequency, point.z * frequency])
+            * amplitude;
+        normalizer += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    (sum / normalizer.max(1e-6)) as f32
+}
+
+fn oriented_fbm(
+    perlin: &Perlin,
+    point: Vec3,
+    angle_rad: f64,
+    base_frequency: f64,
+    octaves: usize,
+) -> f32 {
+    let (lat_deg, lon_deg) = point.to_latlon();
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let x = lon * lat.cos();
+    let y = lat;
+
+    let mut sum = 0.0_f64;
+    let mut amplitude = 1.0_f64;
+    let mut frequency = base_frequency;
+    let mut normalizer = 0.0_f64;
+    let cos_angle = angle_rad.cos();
+    let sin_angle = angle_rad.sin();
+
+    for _ in 0..octaves {
+        let u = x * cos_angle + y * sin_angle;
+        let v = -x * sin_angle + y * cos_angle;
+        sum += perlin.get([u * frequency, v * frequency * 0.35]) * amplitude;
+        normalizer += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    (sum / normalizer.max(1e-6)) as f32
+}
+
+fn boundary_modulation(
+    perlin: &Perlin,
+    point: Vec3,
+    grain_angle: f32,
+    grain_intensity: f32,
+    rotate_by_quarter_turn: bool,
+) -> f32 {
+    let isotropic = isotropic_fbm(perlin, point, 10.0, 3);
+    if grain_intensity <= 0.0 {
+        return isotropic;
+    }
+
+    let angle = if rotate_by_quarter_turn {
+        grain_angle as f64 + std::f64::consts::FRAC_PI_2
+    } else {
+        grain_angle as f64
+    };
+    let oriented = oriented_fbm(perlin, point, angle, 12.0, 3);
+    isotropic * (1.0 - grain_intensity) + oriented * grain_intensity
+}
 
 /// Generate a structural elevation field from `PlateSimulation` outputs.
-///
-/// Returns a row-major `Vec<f32>` of length `plates.width × plates.height`,
-/// with values normalised to [0, 1] (0.5 = sea level).
-/// No erosion or hydraulic shaping is applied.
 pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32> {
-    let w = plates.width;
-    let h = plates.height;
+    let width = plates.width;
+    let height = plates.height;
+    let n = width * height;
 
-    // Low-frequency noise for regional variation (4 octaves, base period = w/2).
-    let perlin = Perlin::new((seed ^ 0xE1E_A710) as u32);
-    let base_freq = 2.0_f64; // period = half the grid width in normalised coords
+    if n == 0 {
+        return Vec::new();
+    }
 
-    let mut elevations = vec![0.0_f32; w * h];
+    let cell_points = build_cell_points(width, height);
+    let perlin = Perlin::new((seed ^ 0x15_05_7A_71) as u32);
 
-    for r in 0..h {
-        let ny = (r as f64 + 0.5) / h as f64; // latitude index [0, 1]
-        for c in 0..w {
-            let nx = (c as f64 + 0.5) / w as f64; // longitude index [0, 1]
-            let idx = r * w + c;
+    let (arc_distance_km, overriding_side) =
+        nearest_arc_distance_km(&cell_points, &plates.subduction_arcs);
+    let ridge_distance_km = nearest_ridge_distance_km(&cell_points, &plates.ridges);
+    let hotspot_distance_km = nearest_hotspot_distance_km(&cell_points, &plates.hotspots);
 
-            let age    = plates.age_field[idx];
-            let crust  = plates.crust_field[idx];
-            let regime = plates.regime_field.data[idx];
+    let continent_seeds: Vec<bool> = plates
+        .crust_field
+        .iter()
+        .map(|&crust| matches!(crust, CrustType::Continental | CrustType::ActiveMargin))
+        .collect();
+    let ocean_seeds: Vec<bool> = plates
+        .crust_field
+        .iter()
+        .map(|&crust| crust == CrustType::Oceanic)
+        .collect();
+    let distance_to_continent = multi_source_grid_distance(&continent_seeds, width, height);
+    let distance_to_ocean = multi_source_grid_distance(&ocean_seeds, width, height);
 
-            let (base, amp) = structural_elevation(regime, crust, age);
+    let continental_fraction: Vec<f32> = plates
+        .crust_field
+        .iter()
+        .enumerate()
+        .map(|(idx, &crust)| {
+            passive_margin_fraction(crust, distance_to_continent[idx], distance_to_ocean[idx])
+        })
+        .collect();
 
-            // 4-octave fBm for regional topographic variation.
-            let mut fbm = 0.0_f64;
-            let mut f   = base_freq;
-            let mut a   = 1.0_f64;
-            for _ in 0..4 {
-                fbm += perlin.get([nx * f, ny * f]) * a;
-                f   *= 2.0;
-                a   *= 0.5;
-            }
-            // fbm ≈ [−1, 1]; scale to ±amp and clamp to [0, 1].
-            let noise_v = (fbm * 0.667) as f32 * amp;
+    let mut elevations = vec![0.0_f32; n];
 
-            elevations[idx] = (base + noise_v).clamp(0.0, 1.0);
+    for idx in 0..n {
+        let point = cell_points[idx];
+        let crust = plates.crust_field[idx];
+        let regime = plates.regime_field.data[idx];
+        let age = plates.age_field[idx].clamp(0.0, 1.0);
+        let continental_share = continental_fraction[idx];
+        let oceanic_share = 1.0 - continental_share;
+
+        let mut thickness_km = base_thickness_km(crust, continental_share);
+
+        let grain_angle = plates.grain_field.angles[idx];
+        let grain_intensity = plates.grain_field.intensities[idx].clamp(0.0, 1.0);
+
+        let distance_arc = arc_distance_km[idx] as f64;
+        if distance_arc < ARC_INFLUENCE_KM {
+            let modulation = 1.0
+                + 0.2
+                    * boundary_modulation(&perlin, point, grain_angle, grain_intensity, true);
+            thickness_km += arc_thickening_km(distance_arc, modulation, overriding_side[idx]);
         }
+
+        let distance_ridge = ridge_distance_km[idx] as f64;
+        if continental_share > 0.2 && distance_ridge < RIDGE_RIFT_INFLUENCE_KM {
+            let thinning = rift_thinning_km(distance_ridge, continental_share);
+            thickness_km -= thinning;
+            let minimum_thickness =
+                OCEANIC_BASE_THICKNESS_KM + (MIN_CONTINENTAL_THICKNESS_KM - OCEANIC_BASE_THICKNESS_KM)
+                    * continental_share;
+            thickness_km = thickness_km.max(minimum_thickness);
+        }
+
+        let distance_hotspot = hotspot_distance_km[idx] as f64;
+        if distance_hotspot < HOTSPOT_INFLUENCE_KM {
+            thickness_km += hotspot_thickening_km(distance_hotspot);
+        }
+
+        let continental_elevation_km = (thickness_km - CONTINENTAL_BASE_THICKNESS_KM) * 0.15 + 0.5;
+
+        let ridge_modulation = if distance_ridge < RIDGE_THERMAL_INFLUENCE_KM {
+            let ridge_noise =
+                boundary_modulation(&perlin, point, grain_angle, grain_intensity, false);
+            1.0 + 0.1 * ridge_noise
+        } else {
+            1.0
+        };
+        let thermal_uplift_km = oceanic_thermal_uplift_km(age, ridge_modulation);
+        let oceanic_elevation_km =
+            -3.0 + thermal_uplift_km + (thickness_km - OCEANIC_BASE_THICKNESS_KM) * 0.15;
+
+        let mut elevation_km = continental_elevation_km * continental_share
+            + oceanic_elevation_km * oceanic_share;
+
+        if regime == TectonicRegime::CratonicShield {
+            elevation_km += 0.05 * isotropic_fbm(&perlin, point, 8.0, 2);
+        }
+
+        elevations[idx] = normalize_elevation_km(elevation_km);
     }
 
     elevations
 }
-
-// ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -118,10 +407,13 @@ mod tests {
     use crate::plates::simulate_plates;
 
     fn make_plates(seed: u64) -> PlateSimulation {
-        simulate_plates(seed, 0.5, 64, 32)
+        simulate_plates(seed, 0.5, 128, 64)
     }
 
-    /// Output length must equal width × height.
+    fn mean(values: &[f32]) -> f32 {
+        values.iter().sum::<f32>() / values.len() as f32
+    }
+
     #[test]
     fn output_length_correct() {
         let plates = make_plates(42);
@@ -129,63 +421,217 @@ mod tests {
         assert_eq!(elev.len(), plates.width * plates.height);
     }
 
-    /// Values span both land (>0.5) and ocean (<0.4) levels.
     #[test]
     fn has_land_and_ocean_elevations() {
         let plates = make_plates(42);
         let elev = generate_planet_elevation(&plates, 42);
-        let has_land  = elev.iter().any(|&v| v > 0.50);
-        let has_ocean = elev.iter().any(|&v| v < 0.40);
-        assert!(has_land,  "should have values above 0.50 (continental land)");
-        assert!(has_ocean, "should have values below 0.40 (ocean floor)");
+        assert!(elev.iter().any(|&v| v > 0.5));
+        assert!(elev.iter().any(|&v| v < 0.4));
     }
 
-    /// Compressional cells must be higher than oceanic on average.
     #[test]
     fn compressional_higher_than_oceanic_mean() {
         let plates = make_plates(99);
         let elev = generate_planet_elevation(&plates, 99);
-        let w = plates.width;
 
-        let mut comp_sum = 0.0_f32;
-        let mut comp_n   = 0usize;
-        let mut ocean_sum = 0.0_f32;
-        let mut ocean_n   = 0usize;
+        let compressional: Vec<f32> = elev
+            .iter()
+            .zip(plates.regime_field.data.iter())
+            .filter(|(_, &regime)| regime == TectonicRegime::ActiveCompressional)
+            .map(|(&elevation, _)| elevation)
+            .collect();
+        let oceanic: Vec<f32> = elev
+            .iter()
+            .zip(plates.crust_field.iter())
+            .filter(|(_, &crust)| crust == CrustType::Oceanic)
+            .map(|(&elevation, _)| elevation)
+            .collect();
 
-        for (idx, (&e, (&regime, &crust))) in elev.iter()
-            .zip(plates.regime_field.data.iter().zip(plates.crust_field.iter()))
-            .enumerate()
-        {
-            let _ = idx / w; // suppress unused warning
-            match regime {
-                TectonicRegime::ActiveCompressional => { comp_sum += e; comp_n += 1; }
-                _ => {}
-            }
-            match crust {
-                CrustType::Oceanic => { ocean_sum += e; ocean_n += 1; }
-                _ => {}
-            }
-        }
-
-        if comp_n > 0 && ocean_n > 0 {
-            let comp_mean  = comp_sum  / comp_n  as f32;
-            let ocean_mean = ocean_sum / ocean_n as f32;
-            assert!(comp_mean > ocean_mean,
-                "compressional mean {comp_mean:.3} must exceed oceanic mean {ocean_mean:.3}");
-        }
+        assert!(!compressional.is_empty());
+        assert!(!oceanic.is_empty());
+        assert!(mean(&compressional) > mean(&oceanic));
     }
 
-    /// structural_elevation: normalised values for specific inputs.
     #[test]
-    fn structural_elevation_values() {
-        // Young active compressional continental → high base (>0.55).
-        let (base, _amp) = structural_elevation(
-            TectonicRegime::ActiveCompressional, CrustType::Continental, 0.0);
-        assert!(base > 0.55, "young mountain belt base should exceed 0.55, got {base:.3}");
+    fn mountain_ranges_exceed_cratonic_shields() {
+        let plates = make_plates(42);
+        let elev = generate_planet_elevation(&plates, 42);
+        let points = build_cell_points(plates.width, plates.height);
+        let (arc_distance_km, _) = nearest_arc_distance_km(&points, &plates.subduction_arcs);
+        let ridge_distance_km = nearest_ridge_distance_km(&points, &plates.ridges);
 
-        // Old oceanic → deep ocean (<0.30).
-        let (base, _amp) = structural_elevation(
-            TectonicRegime::PassiveMargin, CrustType::Oceanic, 1.0);
-        assert!(base < 0.30, "old oceanic base should be below 0.30, got {base:.3}");
+        let mountains: Vec<f32> = elev
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.regime_field.data[*idx] == TectonicRegime::ActiveCompressional
+                    && arc_distance_km[*idx] < 200.0
+            })
+            .map(|(_, &value)| value)
+            .collect();
+        let cratons: Vec<f32> = elev
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.regime_field.data[*idx] == TectonicRegime::CratonicShield
+                    && ridge_distance_km[*idx] > 800.0
+                    && arc_distance_km[*idx] > 800.0
+            })
+            .map(|(_, &value)| value)
+            .collect();
+
+        assert!(!mountains.is_empty());
+        assert!(!cratons.is_empty());
+        assert!(mean(&mountains) > mean(&cratons) + 0.10);
+    }
+
+    #[test]
+    fn young_oceanic_crust_is_shallower_than_old_oceanic_crust() {
+        for seed in [42_u64, 7, 99, 3, 500] {
+            let plates = make_plates(seed);
+            let elev = generate_planet_elevation(&plates, seed);
+            let continent_seeds: Vec<bool> = plates
+                .crust_field
+                .iter()
+                .map(|&crust| matches!(crust, CrustType::Continental | CrustType::ActiveMargin))
+                .collect();
+            let ocean_seeds: Vec<bool> = plates
+                .crust_field
+                .iter()
+                .map(|&crust| crust == CrustType::Oceanic)
+                .collect();
+            let distance_to_continent =
+                multi_source_grid_distance(&continent_seeds, plates.width, plates.height);
+            let distance_to_ocean =
+                multi_source_grid_distance(&ocean_seeds, plates.width, plates.height);
+            let continental_fraction: Vec<f32> = plates
+                .crust_field
+                .iter()
+                .enumerate()
+                .map(|(idx, &crust)| {
+                    passive_margin_fraction(crust, distance_to_continent[idx], distance_to_ocean[idx])
+                })
+                .collect();
+
+            let young: Vec<f32> = elev
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| {
+                    continental_fraction[*idx] < 0.2 && plates.age_field[*idx] < 0.10
+                })
+                .map(|(_, &value)| value)
+                .collect();
+            let old: Vec<f32> = elev
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| {
+                    continental_fraction[*idx] < 0.2 && plates.age_field[*idx] > 0.35
+                })
+                .map(|(_, &value)| value)
+                .collect();
+
+            if !young.is_empty() && !old.is_empty() {
+                assert!(mean(&young) > mean(&old) + 0.10);
+                return;
+            }
+        }
+
+        panic!("no seed produced both young and old oceanic crust samples");
+    }
+
+    #[test]
+    fn passive_margin_slopes_from_continent_to_ocean() {
+        let plates = make_plates(42);
+        let elev = generate_planet_elevation(&plates, 42);
+        let continent_seeds: Vec<bool> = plates
+            .crust_field
+            .iter()
+            .map(|&crust| matches!(crust, CrustType::Continental | CrustType::ActiveMargin))
+            .collect();
+        let ocean_seeds: Vec<bool> = plates
+            .crust_field
+            .iter()
+            .map(|&crust| crust == CrustType::Oceanic)
+            .collect();
+        let distance_to_continent =
+            multi_source_grid_distance(&continent_seeds, plates.width, plates.height);
+        let distance_to_ocean = multi_source_grid_distance(&ocean_seeds, plates.width, plates.height);
+
+        let shelf_side: Vec<f32> = elev
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.crust_field[*idx] == CrustType::PassiveMargin
+                    && distance_to_continent[*idx] <= 1.0
+                    && distance_to_ocean[*idx] > 1.0
+            })
+            .map(|(_, &value)| value)
+            .collect();
+        let ocean_side: Vec<f32> = elev
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.crust_field[*idx] == CrustType::PassiveMargin
+                    && distance_to_ocean[*idx] <= 1.0
+                    && distance_to_continent[*idx] > 1.0
+            })
+            .map(|(_, &value)| value)
+            .collect();
+
+        assert!(!shelf_side.is_empty());
+        assert!(!ocean_side.is_empty());
+        assert!(mean(&shelf_side) > mean(&ocean_side));
+    }
+
+    #[test]
+    fn continental_rifts_are_lower_than_stable_interiors() {
+        let far_thickness = CONTINENTAL_BASE_THICKNESS_KM - rift_thinning_km(900.0, 1.0);
+        let near_thickness = CONTINENTAL_BASE_THICKNESS_KM - rift_thinning_km(0.0, 1.0);
+
+        let far_elevation = normalize_elevation_km((far_thickness - CONTINENTAL_BASE_THICKNESS_KM) * 0.15 + 0.5);
+        let near_elevation =
+            normalize_elevation_km((near_thickness - CONTINENTAL_BASE_THICKNESS_KM) * 0.15 + 0.5);
+
+        assert!(rift_thinning_km(0.0, 1.0) > 10.0);
+        assert!(near_elevation < far_elevation);
+    }
+
+    #[test]
+    fn elevation_spans_deep_ocean_to_high_mountains() {
+        let plates = make_plates(42);
+        let elev = generate_planet_elevation(&plates, 42);
+        let min = elev.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = elev.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(min <= 0.05, "minimum elevation should reach deep ocean, got {min:.3}");
+        assert!(max >= 0.85, "maximum elevation should reach high mountains, got {max:.3}");
+    }
+
+    #[test]
+    fn neighbouring_cells_remain_spatially_coherent() {
+        let plates = make_plates(42);
+        let elev = generate_planet_elevation(&plates, 42);
+        let mut diff_sum = 0.0_f32;
+        let mut diff_count = 0_usize;
+
+        for r in 0..plates.height {
+            for c in 0..plates.width {
+                let idx = r * plates.width + c;
+                let east = r * plates.width + if c + 1 < plates.width { c + 1 } else { 0 };
+                diff_sum += (elev[idx] - elev[east]).abs();
+                diff_count += 1;
+
+                if r + 1 < plates.height {
+                    let south = (r + 1) * plates.width + c;
+                    diff_sum += (elev[idx] - elev[south]).abs();
+                    diff_count += 1;
+                }
+            }
+        }
+
+        let mean_difference = diff_sum / diff_count as f32;
+        assert!(
+            mean_difference < 0.05,
+            "mean neighbour difference should stay small, got {mean_difference:.3}"
+        );
     }
 }
