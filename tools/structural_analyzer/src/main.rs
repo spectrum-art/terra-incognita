@@ -52,10 +52,6 @@ struct Args {
     /// Run ridge system calibration: sweep closing radius on Alpine (himalaya) data
     #[arg(long)]
     calibrate: bool,
-
-    /// Run length distribution analysis across all terrain classes
-    #[arg(long)]
-    distribution: bool,
 }
 
 // ── regions.json schema ───────────────────────────────────────────────────────
@@ -100,8 +96,6 @@ struct WindowResult {
     tier_secondary: (f64, usize),
     /// Watershed-derived ridge junction angles.
     junction_angle: ridge_systems::JunctionAngleResult,
-    /// Range-level merging metrics.
-    range_metrics: ridge_systems::RangeMetricsResult,
 }
 
 // ── Aggregation helpers ───────────────────────────────────────────────────────
@@ -202,24 +196,6 @@ struct RidgeSystemCeilingJson {
 }
 
 #[derive(Serialize)]
-struct RangeLengthJson {
-    mean: StatsJson,
-    max: StatsJson,
-}
-
-#[derive(Serialize)]
-struct RangeMetricsJson {
-    ranges_per_window: StatsJson,
-    range_spacing_km: StatsJson,
-    range_length_km: RangeLengthJson,
-    ridges_per_range: StatsJson,
-    intra_range_ridge_spacing_km: StatsJson,
-    inter_range_valley_width_km: StatsJson,
-    merge_d_max_km: f64,
-    merge_threshold: f64,
-}
-
-#[derive(Serialize)]
 struct ProfileBinJson {
     n_traversals: usize,
     n_windows: usize,
@@ -268,59 +244,8 @@ struct OutputJson {
     ridge_spacing_by_tier: RidgeSpacingByTierJson,
     /// Ridge system ceiling (upper-tail constraint for scoring).
     ridge_system_ceiling: RidgeSystemCeilingJson,
-    /// Range-level merging: mountain ranges formed by collinear segment groups.
-    range_metrics: RangeMetricsJson,
     flat_patch_size: FlatPatchJson,
     ridge_to_valley_profiles: ProfilesJson,
-}
-
-// ── Distribution JSON schema ───────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct HistBin {
-    label: String,
-    count: usize,
-}
-
-#[derive(Serialize)]
-struct LengthPercentiles {
-    p25: f64,
-    p50: f64,
-    p75: f64,
-    p90: f64,
-    p95: f64,
-    max: f64,
-}
-
-#[derive(Serialize)]
-struct SpacingRow {
-    top_n: String,
-    mean_n_per_window: f64,
-    mean_spacing_km: f64,
-    std_spacing_km: f64,
-    p10_km: f64,
-    p90_km: f64,
-}
-
-#[derive(Serialize)]
-struct ClassDistribution {
-    terrain_class: String,
-    n_systems: usize,
-    n_windows: usize,
-    histogram: Vec<HistBin>,
-    log_histogram: Vec<HistBin>,
-    distribution_shape: String,
-    break_km: Option<f64>,
-    p75: f64,
-    p90: f64,
-    p95: f64,
-    percentiles: LengthPercentiles,
-}
-
-#[derive(Serialize)]
-struct DistributionOutput {
-    classes: Vec<ClassDistribution>,
-    alpine_spacing_vs_rank: Vec<SpacingRow>,
 }
 
 // ── Calibration JSON schema ────────────────────────────────────────────────────
@@ -499,22 +424,6 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         ridge_systems::JunctionAngleResult::empty()
     };
 
-    // Step 3b: range-level merging.
-    let ranges = if has_systems {
-        ridge_systems::merge_into_ranges(
-            &wsr.systems, w,
-            ridge_systems::RANGE_MERGE_D_MAX_PX,
-            ridge_systems::RANGE_MERGE_THRESHOLD,
-        )
-    } else {
-        Vec::new()
-    };
-    let range_metrics = if !ranges.is_empty() {
-        ridge_systems::compute_range_metrics(&ranges, &wsr.systems, w, h, &transects)
-    } else {
-        ridge_systems::RangeMetricsResult::empty()
-    };
-
     // Family 6+7: unchanged.
     let flat = flat_patches::compute_flat_patches(&geom.data, w, h);
     let travs = profiles::extract_traversals(&dem.data, &geom.data, w, h, &transects);
@@ -535,7 +444,6 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         tier_primary,
         tier_secondary,
         junction_angle,
-        range_metrics,
     }
 }
 
@@ -744,38 +652,6 @@ fn aggregate_and_write(
     } else { 0.0 };
     let n_zero_systems = windows.iter().filter(|w| w.n_ridge_systems == 0).count();
 
-    // Range-level aggregation.
-    let rm_ranges_per_win: Vec<f64> = windows.iter()
-        .map(|w| w.range_metrics.ranges_per_window as f64)
-        .collect();
-    let rm_spacing_km: Vec<f64> = windows.iter()
-        .map(|w| w.range_metrics.range_spacing_px * ridge_systems::PIXEL_TO_KM)
-        .filter(|v| !v.is_nan())
-        .collect();
-    let rm_len_mean_km: Vec<f64> = windows.iter()
-        .filter(|w| w.range_metrics.ranges_per_window > 0)
-        .map(|w| w.range_metrics.range_length_mean_km)
-        .filter(|v| !v.is_nan())
-        .collect();
-    let rm_len_max_km: Vec<f64> = windows.iter()
-        .filter(|w| w.range_metrics.ranges_per_window > 0)
-        .map(|w| w.range_metrics.range_length_max_km)
-        .filter(|v| !v.is_nan())
-        .collect();
-    let rm_ridges_per_range: Vec<f64> = windows.iter()
-        .filter(|w| w.range_metrics.ranges_per_window > 0)
-        .map(|w| w.range_metrics.ridges_per_range_mean)
-        .filter(|v| !v.is_nan())
-        .collect();
-    let rm_intra_sp_km: Vec<f64> = windows.iter()
-        .map(|w| w.range_metrics.intra_range_ridge_spacing_km)
-        .filter(|v| !v.is_nan())
-        .collect();
-    let rm_inter_vw_km: Vec<f64> = windows.iter()
-        .map(|w| w.range_metrics.inter_range_valley_width_px * ridge_systems::PIXEL_TO_KM)
-        .filter(|v| !v.is_nan())
-        .collect();
-
     let out = OutputJson {
         terrain_class: terrain_class.to_string(),
         n_windows: n_total,
@@ -825,19 +701,6 @@ fn aggregate_and_write(
             max_systems_per_window: ceiling_max_systems,
             max_system_length_km: ceiling_max_length_km,
             zero_system_fraction: n_zero_frac,
-        },
-        range_metrics: RangeMetricsJson {
-            ranges_per_window: aggregate_scalar(&rm_ranges_per_win).into(),
-            range_spacing_km: aggregate_scalar(&rm_spacing_km).into(),
-            range_length_km: RangeLengthJson {
-                mean: aggregate_scalar(&rm_len_mean_km).into(),
-                max: aggregate_scalar(&rm_len_max_km).into(),
-            },
-            ridges_per_range: aggregate_scalar(&rm_ridges_per_range).into(),
-            intra_range_ridge_spacing_km: aggregate_scalar(&rm_intra_sp_km).into(),
-            inter_range_valley_width_km: aggregate_scalar(&rm_inter_vw_km).into(),
-            merge_d_max_km: ridge_systems::RANGE_MERGE_D_MAX_PX * ridge_systems::PIXEL_TO_KM,
-            merge_threshold: ridge_systems::RANGE_MERGE_THRESHOLD,
         },
         flat_patch_size: FlatPatchJson {
             median_area_km2: aggregate_scalar(&flat_median_km2).into(),
@@ -1297,359 +1160,6 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
     Ok(())
 }
 
-// ── Distribution analysis ─────────────────────────────────────────────────────
-
-fn run_distribution(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Result<()> {
-    let regions_text = fs::read_to_string(regions)
-        .with_context(|| format!("Cannot read {}", regions.display()))?;
-    let regions_file: RegionsFile = serde_json::from_str(&regions_text)
-        .context("Failed to parse regions.json")?;
-
-    // Collect per-class system lengths (km) and Alpine per-window sorted systems.
-    let mut class_lengths: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut class_window_counts: HashMap<String, usize> = HashMap::new();
-    // Alpine: per-window (sorted systems by length desc, transects)
-    let mut alpine_windows: Vec<(Vec<f64>, Vec<transects::Transect>, usize, usize)> = Vec::new();
-
-    for region in &regions_file.regions {
-        eprintln!("[distribution] Region: {} ({})", region.id, region.terrain_class);
-        let region_dir = samples_dir.join(&region.id);
-        let pairs = load_window_pairs(&region_dir)
-            .with_context(|| format!("Loading pairs for region {}", region.id))?;
-        eprintln!("  {} window pairs", pairs.len());
-
-        *class_window_counts.entry(region.terrain_class.clone()).or_insert(0) += pairs.len();
-
-        for (dem, geom) in &pairs {
-            let w = dem.width;
-            let h = dem.height;
-            let wsr = ridge_systems::detect_ridge_systems(&dem.data, w, h, POUR_THRESHOLD);
-
-            let lengths: Vec<f64> = wsr.systems.iter()
-                .map(|s| s.pixels.len() as f64 * 1.2 * ridge_systems::PIXEL_TO_KM)
-                .collect();
-
-            class_lengths.entry(region.terrain_class.clone()).or_default()
-                .extend_from_slice(&lengths);
-
-            if region.terrain_class == "Alpine" {
-                let grain = grain::compute_grain(&geom.data, w, h);
-                let tsects = transects::build_transects(w, h, grain.angle_rad, N_TRANSECTS);
-                // Sort systems by length descending, store lengths alongside.
-                let mut sorted_lens: Vec<f64> = lengths.clone();
-                sorted_lens.sort_by(|a, b| b.partial_cmp(a).unwrap());
-                let mut sorted_systems: Vec<&ridge_systems::RidgeSystem> =
-                    wsr.systems.iter().collect();
-                sorted_systems.sort_by(|a, b| {
-                    let la = a.pixels.len() as f64 * 1.2;
-                    let lb = b.pixels.len() as f64 * 1.2;
-                    lb.partial_cmp(&la).unwrap()
-                });
-                // Only keep windows with >= 5 systems for spacing analysis.
-                if sorted_systems.len() >= 5 {
-                    alpine_windows.push((sorted_lens, tsects, w, h));
-                    // Store sorted systems separately (we'll re-detect below in Analysis 2).
-                }
-            }
-        }
-    }
-
-    // We need to re-run Alpine analysis with actual RidgeSystem structs for spacing.
-    // Collect Alpine (dem, geom) pairs for Analysis 2.
-    let alpine_region = regions_file.regions.iter().find(|r| r.terrain_class == "Alpine");
-    let mut alpine_sys_windows: Vec<(Vec<usize>, Vec<transects::Transect>, usize, usize)> = Vec::new();
-    // system pixel counts sorted descending, transects, w, h
-    if let Some(ar) = alpine_region {
-        let region_dir = samples_dir.join(&ar.id);
-        let pairs = load_window_pairs(&region_dir)
-            .with_context(|| format!("Loading pairs for alpine distribution"))?;
-        for (dem, geom) in &pairs {
-            let w = dem.width; let h = dem.height;
-            let wsr = ridge_systems::detect_ridge_systems(&dem.data, w, h, POUR_THRESHOLD);
-            if wsr.systems.len() < 5 { continue; }
-            let grain = grain::compute_grain(&geom.data, w, h);
-            let tsects = transects::build_transects(w, h, grain.angle_rad, N_TRANSECTS);
-            // Sort systems by pixel count (length proxy) descending.
-            let mut sorted_sys: Vec<&ridge_systems::RidgeSystem> = wsr.systems.iter().collect();
-            sorted_sys.sort_by(|a, b| b.pixels.len().cmp(&a.pixels.len()));
-            // Store pixel counts (sorted desc) for length reference.
-            let px_counts: Vec<usize> = sorted_sys.iter().map(|s| s.pixels.len()).collect();
-            alpine_sys_windows.push((px_counts, tsects, w, h));
-        }
-    }
-
-    let ordered_classes = ["Alpine", "Cratonic", "Coastal", "FluvialArid", "FluvialHumid"];
-
-    // ── Analysis 1 + 3 + 4: per-class histograms and percentiles ──────────────
-    eprintln!("\n[distributions] Ridge system length histogram (km bins):\n");
-
-    let mut class_distributions: Vec<ClassDistribution> = Vec::new();
-
-    for class in &ordered_classes {
-        let empty = Vec::new();
-        let lengths = class_lengths.get(*class).unwrap_or(&empty);
-        let n_sys = lengths.len();
-        let n_win = *class_window_counts.get(*class).unwrap_or(&0);
-
-        // Histogram bins: 0-1, 1-2, ..., 7-8, 8-10, 10-15, 15-20, 20-30, 30-50
-        let bin_edges: &[(f64, f64, &str)] = &[
-            (0.0, 1.0, "0-1"), (1.0, 2.0, "1-2"), (2.0, 3.0, "2-3"),
-            (3.0, 4.0, "3-4"), (4.0, 5.0, "4-5"), (5.0, 6.0, "5-6"),
-            (6.0, 7.0, "6-7"), (7.0, 8.0, "7-8"), (8.0, 10.0, "8-10"),
-            (10.0, 15.0, "10-15"), (15.0, 20.0, "15-20"),
-            (20.0, 30.0, "20-30"), (30.0, 50.0, "30-50"),
-        ];
-
-        let mut counts = vec![0usize; bin_edges.len()];
-        for &l in lengths {
-            for (bi, &(lo, hi, _)) in bin_edges.iter().enumerate() {
-                if l >= lo && l < hi { counts[bi] += 1; break; }
-            }
-        }
-        let max_count = *counts.iter().max().unwrap_or(&1).max(&1);
-
-        eprintln!("{} (n={} systems across {} windows):", class, n_sys, n_win);
-        for (bi, &(_, _, lbl)) in bin_edges.iter().enumerate() {
-            let c = counts[bi];
-            let bar_len = (c * 40 / max_count).min(40);
-            let bar: String = "█".repeat(bar_len);
-            eprintln!("  {:>6}:  {:>5}  {}", lbl, c, bar);
-        }
-        eprintln!();
-
-        // Log-length histogram (10 bins from log10(0.05) to log10(50)).
-        let log_bins: Vec<(f64, f64)> = {
-            let lo = -1.3_f64; // log10(0.05)
-            let hi = 1.7_f64;  // log10(50)
-            let step = (hi - lo) / 10.0;
-            (0..10).map(|i| (lo + i as f64 * step, lo + (i + 1) as f64 * step)).collect()
-        };
-        let mut log_counts = vec![0usize; 10];
-        for &l in lengths {
-            if l > 0.0 {
-                let ll = l.log10();
-                for (bi, &(lo, hi)) in log_bins.iter().enumerate() {
-                    if ll >= lo && ll < hi { log_counts[bi] += 1; break; }
-                }
-            }
-        }
-        let log_histo: Vec<HistBin> = log_bins.iter().zip(log_counts.iter()).map(|(&(lo, hi), &c)| {
-            HistBin { label: format!("{:.2}-{:.2}", lo, hi), count: c }
-        }).collect();
-
-        // Percentiles.
-        let mut sorted_len = lengths.clone();
-        sorted_len.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let pctile = |p: f64| -> f64 {
-            if sorted_len.is_empty() { return f64::NAN; }
-            let idx = (p / 100.0 * (sorted_len.len() - 1) as f64).round() as usize;
-            sorted_len[idx.min(sorted_len.len() - 1)]
-        };
-        let p25 = pctile(25.0); let p50 = pctile(50.0);
-        let p75 = pctile(75.0); let p90 = pctile(90.0);
-        let p95 = pctile(95.0); let max = sorted_len.last().copied().unwrap_or(f64::NAN);
-
-        // Distribution shape: check if log-count histogram is bimodal.
-        let (shape, break_km) = detect_shape(&sorted_len, &log_bins, &log_counts);
-
-        class_distributions.push(ClassDistribution {
-            terrain_class: class.to_string(),
-            n_systems: n_sys,
-            n_windows: n_win,
-            histogram: bin_edges.iter().zip(counts.iter()).map(|(&(_, _, lbl), &c)| {
-                HistBin { label: lbl.to_string(), count: c }
-            }).collect(),
-            log_histogram: log_histo,
-            distribution_shape: shape,
-            break_km,
-            p75,
-            p90,
-            p95,
-            percentiles: LengthPercentiles { p25, p50, p75, p90, p95, max },
-        });
-    }
-
-    // ── Analysis 2: Alpine spacing vs top-N rank ───────────────────────────────
-    eprintln!("[distributions] Alpine spacing vs minimum system rank:\n");
-    eprintln!("{:>14}  {:>17}  {:>17}  {:>12}  {:>7}  {:>7}",
-        "Top N systems", "Mean N per window", "Mean spacing (km)", "Std spacing", "P10", "P90");
-
-    let top_ns: &[usize] = &[2, 3, 5, 10, usize::MAX];
-    let top_n_labels = ["2", "3", "5", "10", "all"];
-
-    // We need actual RidgeSystem structs for this analysis. Re-load Alpine.
-    let mut spacing_rows: Vec<SpacingRow> = Vec::new();
-
-    // For single-system case (top-1), spacing is always N/A.
-    eprintln!("{:>14}  {:>17}  {:>17}  {:>12}  {:>7}  {:>7}",
-        "1", "1.0", "N/A (single)", "", "", "");
-
-    for (ni, &n) in top_ns.iter().enumerate() {
-        let label = top_n_labels[ni];
-        let mut window_spacing_km: Vec<f64> = Vec::new();
-        let mut window_n_used: Vec<f64> = Vec::new();
-
-        // Re-run spacing on alpine pairs (already have alpine_sys_windows for counts,
-        // but we need actual RidgeSystems for spacing_for_subset).
-        // We stored pixel counts; now we need to re-detect. Use a separate approach:
-        // alpine_sys_windows stores (px_counts, transects, w, h) but not the systems.
-        // Fortunately we can use spacing_for_subset if we re-load.
-        // Let's use the alpine_region pairs directly:
-        if let Some(ar) = alpine_region {
-            let region_dir = samples_dir.join(&ar.id);
-            let pairs = load_window_pairs(&region_dir)
-                .with_context(|| format!("Loading alpine pairs for spacing (N={})", label))?;
-            for (dem, geom) in &pairs {
-                let w = dem.width; let h = dem.height;
-                let wsr = ridge_systems::detect_ridge_systems(&dem.data, w, h, POUR_THRESHOLD);
-                if wsr.systems.len() < 5 { continue; }
-                let grain = grain::compute_grain(&geom.data, w, h);
-                let tsects = transects::build_transects(w, h, grain.angle_rad, N_TRANSECTS);
-                let mut sorted_sys: Vec<&ridge_systems::RidgeSystem> = wsr.systems.iter().collect();
-                sorted_sys.sort_by(|a, b| b.pixels.len().cmp(&a.pixels.len()));
-                let take = n.min(sorted_sys.len());
-                if take < 2 { continue; } // need >= 2 systems for spacing
-
-                // Build mask from top-N systems using their pixels directly.
-                let num_px = w * h;
-                let mut mask = vec![false; num_px];
-                for sys in &sorted_sys[..take] {
-                    for &p in &sys.pixels {
-                        if p < num_px { mask[p] = true; }
-                    }
-                }
-                // Measure spacing via transects.
-                let mut spacings: Vec<f64> = Vec::new();
-                for transect in &tsects {
-                    let mut centers: Vec<f64> = Vec::new();
-                    let mut run_start: Option<usize> = None;
-                    for (ti, &(r, c)) in transect.iter().enumerate() {
-                        let on = r >= 0 && c >= 0
-                            && (r as usize) < h && (c as usize) < w
-                            && mask[r as usize * w + c as usize];
-                        if on {
-                            if run_start.is_none() { run_start = Some(ti); }
-                        } else if let Some(start) = run_start {
-                            centers.push((start + ti - 1) as f64 / 2.0);
-                            run_start = None;
-                        }
-                    }
-                    if let Some(start) = run_start {
-                        centers.push((start + transect.len() - 1) as f64 / 2.0);
-                    }
-                    for pair in centers.windows(2) {
-                        spacings.push((pair[1] - pair[0]) * ridge_systems::PIXEL_TO_KM);
-                    }
-                }
-                if spacings.is_empty() { continue; }
-                let mean_sp = spacings.iter().sum::<f64>() / spacings.len() as f64;
-                window_spacing_km.push(mean_sp);
-                window_n_used.push(take as f64);
-            }
-        }
-
-        let nn = window_spacing_km.len() as f64;
-        let mean_sp = if nn > 0.0 { window_spacing_km.iter().sum::<f64>() / nn } else { f64::NAN };
-        let std_sp = if nn > 1.0 {
-            let v = window_spacing_km.iter().map(|&x| (x - mean_sp).powi(2)).sum::<f64>() / nn;
-            v.sqrt()
-        } else { f64::NAN };
-        let mut sorted_sp = window_spacing_km.clone();
-        sorted_sp.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p10_sp = if sorted_sp.is_empty() { f64::NAN } else {
-            sorted_sp[((0.10 * (sorted_sp.len() - 1) as f64).round() as usize).min(sorted_sp.len()-1)]
-        };
-        let p90_sp = if sorted_sp.is_empty() { f64::NAN } else {
-            sorted_sp[((0.90 * (sorted_sp.len() - 1) as f64).round() as usize).min(sorted_sp.len()-1)]
-        };
-        let mean_n = if window_n_used.is_empty() { 0.0 } else {
-            window_n_used.iter().sum::<f64>() / window_n_used.len() as f64
-        };
-
-        let fmt_f = |v: f64| if v.is_nan() { "N/A".to_string() } else { format!("{:.1}", v) };
-        eprintln!("{:>14}  {:>17.1}  {:>17}  {:>12}  {:>7}  {:>7}",
-            label, mean_n, fmt_f(mean_sp), fmt_f(std_sp), fmt_f(p10_sp), fmt_f(p90_sp));
-
-        spacing_rows.push(SpacingRow {
-            top_n: label.to_string(),
-            mean_n_per_window: mean_n,
-            mean_spacing_km: mean_sp,
-            std_spacing_km: std_sp,
-            p10_km: p10_sp,
-            p90_km: p90_sp,
-        });
-    }
-
-    // ── Analysis 3: Natural breaks ─────────────────────────────────────────────
-    eprintln!("\n[distributions] Natural breaks:\n");
-    eprintln!("{:<14}  {:>18}  {:>12}  {:>6}  {:>6}  {:>6}",
-        "Class", "Distribution shape", "Break (km)", "P75", "P90", "P95");
-    for cd in &class_distributions {
-        let brk = cd.break_km.map(|b| format!("{:.1}", b)).unwrap_or_else(|| "—".to_string());
-        eprintln!("{:<14}  {:>18}  {:>12}  {:>6.2}  {:>6.2}  {:>6.2}",
-            cd.terrain_class, cd.distribution_shape, brk, cd.p75, cd.p90, cd.p95);
-    }
-
-    // ── Analysis 4: Cross-class percentiles ────────────────────────────────────
-    eprintln!("\n[distributions] System length percentiles (km):\n");
-    eprintln!("{:<14}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>8}",
-        "Class", "P25", "P50", "P75", "P90", "P95", "Max");
-    for cd in &class_distributions {
-        let p = &cd.percentiles;
-        let fmt = |v: f64| if v.is_nan() { " N/A".to_string() } else { format!("{:.2}", v) };
-        eprintln!("{:<14}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>8}",
-            cd.terrain_class, fmt(p.p25), fmt(p.p50), fmt(p.p75), fmt(p.p90), fmt(p.p95), fmt(p.max));
-    }
-
-    // ── Write distributions.json ───────────────────────────────────────────────
-    let out = DistributionOutput {
-        classes: class_distributions,
-        alpine_spacing_vs_rank: spacing_rows,
-    };
-    fs::create_dir_all(output_dir)?;
-    let out_path = output_dir.join("distributions.json");
-    let json = serde_json::to_string_pretty(&out)?;
-    fs::write(&out_path, &json)
-        .with_context(|| format!("Write failed: {}", out_path.display()))?;
-    eprintln!("\n[distribution] Wrote {}", out_path.display());
-
-    Ok(())
-}
-
-/// Detect whether a length distribution is unimodal, bimodal, or continuous.
-/// Returns (shape_description, optional_break_km).
-fn detect_shape(sorted_len: &[f64], log_bins: &[(f64, f64)], log_counts: &[usize]) -> (String, Option<f64>) {
-    if sorted_len.is_empty() { return ("empty".to_string(), None); }
-
-    // Look for a local minimum in the log-count histogram (bimodal indicator).
-    let n_bins = log_counts.len();
-    let mut local_min_idx: Option<usize> = None;
-    for i in 1..n_bins - 1 {
-        if log_counts[i] < log_counts[i - 1] && log_counts[i] < log_counts[i + 1] {
-            // Check if the dip is significant (< 50% of both neighbours).
-            let threshold = (log_counts[i - 1].min(log_counts[i + 1])) / 2;
-            if log_counts[i] <= threshold {
-                local_min_idx = Some(i);
-                break;
-            }
-        }
-    }
-
-    if let Some(idx) = local_min_idx {
-        let (lo, hi) = log_bins[idx];
-        let break_val = 10_f64.powf((lo + hi) / 2.0);
-        ("bimodal".to_string(), Some(break_val))
-    } else {
-        // Continuous — check if monotone decreasing (power-law like).
-        let monotone = log_counts.windows(2).all(|w| w[0] >= w[1] || w[1] <= 2);
-        if monotone {
-            ("continuous_monotone".to_string(), None)
-        } else {
-            ("continuous".to_string(), None)
-        }
-    }
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
@@ -1657,11 +1167,6 @@ fn main() -> Result<()> {
 
     if args.calibrate {
         run_calibration(&args.samples_dir, &args.regions, &args.output)?;
-        return Ok(());
-    }
-
-    if args.distribution {
-        run_distribution(&args.samples_dir, &args.regions, &args.output)?;
         return Ok(());
     }
 
