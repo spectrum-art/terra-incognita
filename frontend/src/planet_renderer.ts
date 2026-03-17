@@ -14,7 +14,7 @@
 
 export interface PlanetOverviewData {
   elevations:        number[];   // normalised [0, 1]  (0.5 = sea level)
-  ocean_mask:        boolean[];  // true = ocean
+  ocean_mask:        boolean[];  // true = ocean-connected water
   sea_level_m:       number;     // 0.5 in normalised scheme
   regimes:           number[];   // 0-4 TectonicRegime ordinals
   map_field:         number[];   // mm/yr
@@ -26,6 +26,8 @@ export interface PlanetOverviewData {
 // ── Regime ordinals ────────────────────────────────────────────────────────────
 // 0=PassiveMargin, 2=ActiveCompressional (both handled by elevation+MAP tint)
 const CRATONIC_SHIELD = 1;
+const ACTIVE_COMPRESSIONAL = 2;
+const ACTIVE_EXTENSIONAL = 3;
 
 // ── Hillshade helper ──────────────────────────────────────────────────────────
 
@@ -176,12 +178,16 @@ export function renderPlanetOverview(
 
   for (let i = 0; i < w * h; i++) {
     let rv: number, gv: number, bv: number;
-    if (data.ocean_mask[i]) {
-      [rv, gv, bv] = oceanRgb(data.elevations[i], data.sea_level_m);
+    const elev = data.elevations[i];
+    const tectonicOcean =
+      data.regimes[i] === ACTIVE_COMPRESSIONAL || data.regimes[i] === ACTIVE_EXTENSIONAL;
+    const isOcean = elev <= data.sea_level_m && (data.ocean_mask[i] || tectonicOcean);
+    if (isOcean) {
+      [rv, gv, bv] = oceanRgb(elev, data.sea_level_m);
     } else {
       [rv, gv, bv] = landRgb(
         data.regimes[i], data.map_field[i], data.glaciation[i],
-        data.elevations[i], data.sea_level_m,
+        elev, data.sea_level_m,
       );
     }
     // Power curve brightens midtones while keeping shadows dark, then
