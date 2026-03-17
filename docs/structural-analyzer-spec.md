@@ -93,6 +93,13 @@ The tool also needs the terrain class label for each window. This is available f
 - Cratonic/Coastal: very few segments, short
 - FluvialHumid: bimodal — some windows with moderate segments, some with none
 
+**Measured values (watershed-derived):** Alpine mean segment length 2.44 km,
+12.14 segments/window. The prediction of "9–36 km, few per window" reflected
+range-scale expectations; the watershed method correctly segments at saddle
+points, producing shorter, more numerous segments that represent inter-pass
+ridge sections. Range-level merging (future work) would recover the predicted
+scale.
+
 ---
 
 ### Family 3: Valley Width
@@ -151,6 +158,12 @@ The tool also needs the terrain class label for each window. This is available f
 - Cratonic: low asymmetry ratio (1.0–1.3), low consistency (~0.5)
 - Coastal: low asymmetry, low consistency
 - FluvialHumid: low to moderate asymmetry, low consistency
+
+**Measured values (watershed-derived):** Alpine ratio 2.05, consistency 0.63.
+Cratonic ratio 1.70, consistency 0.59. The prediction of low
+asymmetry/consistency for Cratonic was based on geomorphon-pixel expectations;
+watershed-derived asymmetry measures basin-area ratios which show moderate
+asymmetry even in low-relief terrain due to drainage network geometry.
 
 **Note:** The FluvialArid reference region is Colorado Plateau, which is canyon-cut plateau rather than Basin and Range extensional terrain. The asymmetry signal may be weaker than for a pure extensional sample. Document the measured values as-is; the structural templates for ActiveExtensional regime may need targets derived from a future Basin and Range reference region.
 

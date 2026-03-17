@@ -1046,6 +1046,10 @@ All Phase C criteria met. Remaining known issues (not addressed this session):
   coastal configurations; tracked for future calibration
 - Issue 5: Ocean click terrain — clicking ocean on globe generates land tile;
   ocean tiles not yet handled in generate_at_location
+  **Update (resolved):** Ocean clicks are now routed through PassiveMargin
+  handling in generator.rs. Regression test `generate_at_location_no_panic_ocean`
+  covers the basic case. Full ocean-specific terrain generation is deferred to
+  the overview-as-guide architecture (Phase D).
 
 ---
 
@@ -1060,9 +1064,10 @@ families of spatial-structural metrics, writing per-terrain-class JSON to
 
 ### Architecture
 
-10 source files: `main.rs`, `grain.rs`, `transects.rs`, `components.rs`,
-`ridge_spacing.rs`, `ridge_continuity.rs`, `valley_width.rs`, `asymmetry.rs`,
-`branching.rs`, `flat_patches.rs`, `profiles.rs`.
+13 source files: `main.rs`, `grain.rs`, `transects.rs`, `components.rs`,
+`ridge_spacing.rs`, `ridge_continuity.rs`, `valley_width.rs`, `branching.rs`,
+`flat_patches.rs`, `profiles.rs`, `morphology.rs`, `watershed.rs`,
+`ridge_systems.rs`.
 
 Shared infrastructure: PCA-based grain detection (grain.rs), perpendicular
 transect construction (transects.rs), BFS connected-component labeling
@@ -1400,3 +1405,20 @@ These are maximum-allowed values for generated tiles, not targets. A generated C
 - New tests: 2 added (ridge_systems.rs: tier_filter, junction_angle)
 - Total structural_analyzer: 66 tests, 0 clippy warnings
 - terra-core: 202 tests unchanged
+
+---
+
+## Entry 25 — 2026-03-16 — Repository Debt Cleanup
+
+Comprehensive cleanup based on full-workspace audit:
+- Fixed all 40 clippy warnings (zero-warning workspace)
+- Committed Cargo.lock for reproducible builds
+- Updated noise performance budget from 50ms to 600ms (reflects Phase 3 complexity)
+- Removed vacuous timing assertion in generator tests
+- Removed unused get_score WASM export
+- Deleted empty terra-test placeholder crate
+- Removed dead geomorphon-era code from structural analyzer
+- Tightened loose test assertions (drainage density, ridge detection, ocean generation)
+
+Known issues still open: ocean arc artifacts (Issue 2), Coastal MAP-blindness (Issue 4),
+geomorphon L1 ceiling, aspect CV threshold. These are documented in earlier entries.
