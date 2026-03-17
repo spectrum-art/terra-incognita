@@ -97,14 +97,26 @@ fn multi_source_grid_distance(seeds: &[bool], width: usize, height: usize) -> Ve
     distances
 }
 
-fn passive_margin_fraction(
+fn continental_core_anchor(distance_to_continental_core: f32) -> f32 {
+    (1.0 - distance_to_continental_core / 8.0).clamp(0.0, 1.0)
+}
+
+fn active_margin_continental_fraction(distance_to_continental_core: f32) -> f32 {
+    0.05 + 0.75 * continental_core_anchor(distance_to_continental_core)
+}
+
+fn continental_fraction_for_crust(
     crust: CrustType,
     distance_to_continent: f32,
     distance_to_ocean: f32,
+    distance_to_continental_core: f32,
 ) -> f32 {
     match crust {
         CrustType::Oceanic => 0.0,
-        CrustType::Continental | CrustType::ActiveMargin => 1.0,
+        CrustType::Continental => 1.0,
+        CrustType::ActiveMargin => {
+            active_margin_continental_fraction(distance_to_continental_core)
+        }
         CrustType::PassiveMargin => {
             let sum = distance_to_continent + distance_to_ocean;
             if sum <= f32::EPSILON {
@@ -125,13 +137,36 @@ fn base_thickness_km(crust: CrustType, continental_fraction: f32) -> f32 {
     }
 }
 
-fn arc_thickening_km(distance_km: f64, modulation: f32, overriding_side: bool) -> f32 {
+fn active_margin_arc_scale(distance_to_continental_core: f32) -> f32 {
+    0.10 + 0.55 * continental_core_anchor(distance_to_continental_core)
+}
+
+fn arc_thickening_scale(crust: CrustType, distance_to_continental_core: f32) -> f32 {
+    match crust {
+        CrustType::Continental => 1.0,
+        CrustType::ActiveMargin => active_margin_arc_scale(distance_to_continental_core),
+        CrustType::PassiveMargin => 0.65,
+        CrustType::Oceanic => 0.25,
+    }
+}
+
+fn arc_thickening_km(
+    distance_km: f64,
+    modulation: f32,
+    overriding_side: bool,
+    crust: CrustType,
+    distance_to_continental_core: f32,
+) -> f32 {
     if distance_km >= ARC_INFLUENCE_KM {
         return 0.0;
     }
     let taper = (-3.0 * (distance_km / ARC_INFLUENCE_KM).powi(2)).exp() as f32;
     let side_scale = if overriding_side { 1.0 } else { 0.3 };
-    MAX_ARC_THICKENING_KM * taper * modulation.max(0.7) * side_scale
+    MAX_ARC_THICKENING_KM
+        * taper
+        * modulation.max(0.7)
+        * side_scale
+        * arc_thickening_scale(crust, distance_to_continental_core)
 }
 
 fn rift_thinning_km(distance_km: f64, continental_share: f32) -> f32 {
@@ -325,15 +360,27 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
         .iter()
         .map(|&crust| crust == CrustType::Oceanic)
         .collect();
+    let continental_core_seeds: Vec<bool> = plates
+        .crust_field
+        .iter()
+        .map(|&crust| crust == CrustType::Continental)
+        .collect();
     let distance_to_continent = multi_source_grid_distance(&continent_seeds, width, height);
     let distance_to_ocean = multi_source_grid_distance(&ocean_seeds, width, height);
+    let distance_to_continental_core =
+        multi_source_grid_distance(&continental_core_seeds, width, height);
 
     let continental_fraction: Vec<f32> = plates
         .crust_field
         .iter()
         .enumerate()
         .map(|(idx, &crust)| {
-            passive_margin_fraction(crust, distance_to_continent[idx], distance_to_ocean[idx])
+            continental_fraction_for_crust(
+                crust,
+                distance_to_continent[idx],
+                distance_to_ocean[idx],
+                distance_to_continental_core[idx],
+            )
         })
         .collect();
 
@@ -357,7 +404,13 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
             let modulation = 1.0
                 + 0.2
                     * boundary_modulation(&perlin, point, grain_angle, grain_intensity, true);
-            thickness_km += arc_thickening_km(distance_arc, modulation, overriding_side[idx]);
+            thickness_km += arc_thickening_km(
+                distance_arc,
+                modulation,
+                overriding_side[idx],
+                crust,
+                distance_to_continental_core[idx],
+            );
         }
 
         let distance_ridge = ridge_distance_km[idx] as f64;
@@ -500,16 +553,28 @@ mod tests {
                 .iter()
                 .map(|&crust| crust == CrustType::Oceanic)
                 .collect();
+            let continental_core_seeds: Vec<bool> = plates
+                .crust_field
+                .iter()
+                .map(|&crust| crust == CrustType::Continental)
+                .collect();
             let distance_to_continent =
                 multi_source_grid_distance(&continent_seeds, plates.width, plates.height);
             let distance_to_ocean =
                 multi_source_grid_distance(&ocean_seeds, plates.width, plates.height);
+            let distance_to_continental_core =
+                multi_source_grid_distance(&continental_core_seeds, plates.width, plates.height);
             let continental_fraction: Vec<f32> = plates
                 .crust_field
                 .iter()
                 .enumerate()
                 .map(|(idx, &crust)| {
-                    passive_margin_fraction(crust, distance_to_continent[idx], distance_to_ocean[idx])
+                    continental_fraction_for_crust(
+                        crust,
+                        distance_to_continent[idx],
+                        distance_to_ocean[idx],
+                        distance_to_continental_core[idx],
+                    )
                 })
                 .collect();
 
@@ -581,6 +646,35 @@ mod tests {
         assert!(!shelf_side.is_empty());
         assert!(!ocean_side.is_empty());
         assert!(mean(&shelf_side) > mean(&ocean_side));
+    }
+
+    #[test]
+    fn oceanic_arc_lower_than_continental_arc() {
+        let continental_mean = arc_thickening_km(0.0, 1.0, true, CrustType::Continental, 0.0);
+        let active_margin_attached =
+            arc_thickening_km(0.0, 1.0, true, CrustType::ActiveMargin, 0.0);
+        let active_margin_island_arc =
+            arc_thickening_km(0.0, 1.0, true, CrustType::ActiveMargin, 12.0);
+        let passive_mean = arc_thickening_km(0.0, 1.0, true, CrustType::PassiveMargin, 0.0);
+        let oceanic_mean = arc_thickening_km(0.0, 1.0, true, CrustType::Oceanic, 99.0);
+
+        assert!(
+            active_margin_island_arc < passive_mean
+                && oceanic_mean < passive_mean
+                && passive_mean < active_margin_attached
+                && active_margin_attached < continental_mean,
+            "expected island-arc active margin ({active_margin_island_arc:.3}) and oceanic ({oceanic_mean:.3}) to stay below passive ({passive_mean:.3}), with attached active margin ({active_margin_attached:.3}) below continental ({continental_mean:.3})"
+        );
+        assert!(
+            (oceanic_mean / continental_mean - 0.25).abs() < 1e-6,
+            "oceanic arc thickening should be 25% of continental, got ratio {:.3}",
+            oceanic_mean / continental_mean
+        );
+        assert!(
+            (active_margin_attached / continental_mean - 0.65).abs() < 1e-6,
+            "attached active-margin thickening should be 65% of continental, got ratio {:.3}",
+            active_margin_attached / continental_mean
+        );
     }
 
     #[test]

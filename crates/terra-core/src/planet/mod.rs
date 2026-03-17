@@ -75,6 +75,7 @@ pub struct PlanetOverview {
 fn ocean_mask_from_bfs(
     regimes: &[TectonicRegime],
     crust_field: &[CrustType],
+    elevations: &[f32],
     water_abundance: f32,
     width: usize,
     height: usize,
@@ -206,6 +207,10 @@ fn ocean_mask_from_bfs(
     // Remove isolated land fragments smaller than 200 cells to eliminate
     // residual arc artifacts and small BFS noise that escaped the arc_wall filter.
     remove_small_land_components(&mut ocean, width, height, 200);
+
+    // Detached low-relief active margins should read as island arcs or
+    // submerged ridges rather than continuous continental ribbons.
+    submerge_detached_low_active_margins(&mut ocean, elevations, crust_field, width, height);
 
     (ocean, 0.5)
 }
@@ -339,6 +344,55 @@ fn remove_small_land_components(ocean: &mut [bool], width: usize, height: usize,
     }
 }
 
+fn has_nearby_continental_core(
+    crust_field: &[CrustType],
+    width: usize,
+    height: usize,
+    idx: usize,
+    radius: usize,
+) -> bool {
+    let row = idx / width;
+    let col = idx % width;
+
+    for dr in -(radius as isize)..=(radius as isize) {
+        let nr = row as isize + dr;
+        if nr < 0 || nr >= height as isize {
+            continue;
+        }
+        for dc in -(radius as isize)..=(radius as isize) {
+            let nc = (col as isize + dc).rem_euclid(width as isize) as usize;
+            let nidx = nr as usize * width + nc;
+            if crust_field[nidx] == CrustType::Continental {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn submerge_detached_low_active_margins(
+    ocean: &mut [bool],
+    elevations: &[f32],
+    crust_field: &[CrustType],
+    width: usize,
+    height: usize,
+) {
+    const DETACHED_RADIUS: usize = 6;
+    const SUBMERGE_THRESHOLD: f32 = 0.70;
+
+    for idx in 0..ocean.len() {
+        if ocean[idx]
+            || crust_field[idx] != CrustType::ActiveMargin
+            || elevations[idx] >= SUBMERGE_THRESHOLD
+            || has_nearby_continental_core(crust_field, width, height, idx, DETACHED_RADIUS)
+        {
+            continue;
+        }
+        ocean[idx] = true;
+    }
+}
+
 /// Hash two indices to a uniform f32 in [0, 1].
 fn hash_f32(idx: u64, seed: u64) -> f32 {
     let mut h = idx.wrapping_mul(2_654_435_761).wrapping_add(seed);
@@ -417,6 +471,7 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     let (ocean_mask, sea_level_m) = ocean_mask_from_bfs(
         &plates.regime_field.data,
         &plates.crust_field,
+        &elevations,
         params.water_abundance,
         w,
         h,
