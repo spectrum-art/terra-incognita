@@ -94,7 +94,11 @@ mod tests {
     fn slider_zero_gives_no_glaciation() {
         let mask = compute_glaciation_mask(64, 32, 0.0);
         for &c in &mask {
-            assert_eq!(c, GlacialClass::None, "slider=0 should produce no glaciation");
+            assert_eq!(
+                c,
+                GlacialClass::None,
+                "slider=0 should produce no glaciation"
+            );
         }
     }
 
@@ -102,8 +106,11 @@ mod tests {
     #[test]
     fn slider_one_has_active_cells() {
         let mask = compute_glaciation_mask(64, 32, 1.0);
-        let has_active = mask.iter().any(|&c| c == GlacialClass::Active);
-        assert!(has_active, "slider=1 should produce Active glaciation cells");
+        let has_active = mask.contains(&GlacialClass::Active);
+        assert!(
+            has_active,
+            "slider=1 should produce Active glaciation cells"
+        );
     }
 
     /// Output length matches grid.

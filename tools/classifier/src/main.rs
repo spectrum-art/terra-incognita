@@ -6,7 +6,7 @@
 ///   3. Computes local relief and mean elevation from the DEM
 ///   4. Nearest-neighbour samples the Köppen-Geiger TIF at the window centre
 ///   5. Applies fraction-based classification rules in priority order:
-///        Alpine > Coastal > FluvialHumid > Cratonic > FluvialArid > unclassified
+///      Alpine > Coastal > FluvialHumid > Cratonic > FluvialArid > unclassified
 ///   6. Writes "terrain_class" into each DEM JSON (overwrites any prior label)
 ///
 /// Rationale for fraction-based rules:
@@ -167,8 +167,14 @@ struct WindowJson {
 // ── Köppen sampler ────────────────────────────────────────────────────────────
 
 enum TiffLayout {
-    Stripped { chunk_height: u32 },
-    Tiled { tile_width: u32, tile_height: u32, tiles_per_row: u32 },
+    Stripped {
+        chunk_height: u32,
+    },
+    Tiled {
+        tile_width: u32,
+        tile_height: u32,
+        tiles_per_row: u32,
+    },
 }
 
 /// Nearest-neighbour sampler over the global Köppen-Geiger TIF.
@@ -192,15 +198,20 @@ impl KoppenSampler {
         let mut decoder = tiff::decoder::Decoder::new(reader)
             .context("Köppen TIF: failed to initialise TIFF decoder")?;
 
-        let (img_width, img_height) =
-            decoder.dimensions().context("Köppen TIF: cannot read dimensions")?;
+        let (img_width, img_height) = decoder
+            .dimensions()
+            .context("Köppen TIF: cannot read dimensions")?;
         let (chunk_width, chunk_height) = decoder.chunk_dimensions();
 
         let layout = if chunk_width == img_width {
             TiffLayout::Stripped { chunk_height }
         } else {
             let tiles_per_row = img_width.div_ceil(chunk_width);
-            TiffLayout::Tiled { tile_width: chunk_width, tile_height: chunk_height, tiles_per_row }
+            TiffLayout::Tiled {
+                tile_width: chunk_width,
+                tile_height: chunk_height,
+                tiles_per_row,
+            }
         };
 
         let pixels_per_deg = img_width as f64 / 360.0;
@@ -211,10 +222,21 @@ impl KoppenSampler {
             img_height,
             chunk_width,
             chunk_height,
-            if chunk_width == img_width { "stripped" } else { "tiled" }
+            if chunk_width == img_width {
+                "stripped"
+            } else {
+                "tiled"
+            }
         );
 
-        Ok(Self { decoder, img_width, img_height, pixels_per_deg, layout, cache: HashMap::new() })
+        Ok(Self {
+            decoder,
+            img_width,
+            img_height,
+            pixels_per_deg,
+            layout,
+            cache: HashMap::new(),
+        })
     }
 
     /// Nearest-neighbour sample at (lat, lon). Returns 0 for out-of-bounds.
@@ -229,7 +251,11 @@ impl KoppenSampler {
             TiffLayout::Stripped { chunk_height } => {
                 (row / chunk_height, row % chunk_height, col, self.img_width)
             }
-            TiffLayout::Tiled { tile_width, tile_height, tiles_per_row } => {
+            TiffLayout::Tiled {
+                tile_width,
+                tile_height,
+                tiles_per_row,
+            } => {
                 let tile_row = row / tile_height;
                 let tile_col = col / tile_width;
                 let chunk_idx = tile_row * tiles_per_row + tile_col;
@@ -274,7 +300,7 @@ impl GeomStats {
         let mut valid = 0u32;
         for &v in data {
             let cls = v as u8;
-            if !v.is_nan() && cls >= 1 && cls <= 10 {
+            if !v.is_nan() && (1..=10).contains(&cls) {
                 counts[cls as usize - 1] += 1;
                 valid += 1;
             }
@@ -318,8 +344,15 @@ impl DemStats {
             }
         }
         let relief_m = if hi > lo { hi - lo } else { 0.0 };
-        let mean_elev_m = if count > 0 { (sum / count as f64) as f32 } else { 0.0 };
-        Self { relief_m, mean_elev_m }
+        let mean_elev_m = if count > 0 {
+            (sum / count as f64) as f32
+        } else {
+            0.0
+        };
+        Self {
+            relief_m,
+            mean_elev_m,
+        }
     }
 }
 
@@ -353,7 +386,10 @@ fn classify(
     // Priority 1 — Alpine: high relief + orographic signature + non-arid.
     // Canyon terrain (Colorado) also shows high alpine_frac but is excluded by arid Köppen.
     if dem.relief_m > ALPINE_RELIEF_MIN && alpine_frac > ALPINE_FRAC_MIN && !is_arid {
-        return ("Alpine", "high relief with ridge/shoulder/summit fraction and non-arid Köppen");
+        return (
+            "Alpine",
+            "high relief with ridge/shoulder/summit fraction and non-arid Köppen",
+        );
     }
 
     // Priority 2 — Coastal: low-elevation depositional surface in a known coastal region.
@@ -362,7 +398,10 @@ fn classify(
         && dem.mean_elev_m < COASTAL_ELEV_MAX
         && (flat_frac + footslope_frac) > COASTAL_FLAT_MIN
     {
-        return ("Coastal", "low-elevation flat/footslope surface in coastal region");
+        return (
+            "Coastal",
+            "low-elevation flat/footslope surface in coastal region",
+        );
     }
 
     // Priority 3 — FluvialHumid: humid climate + strong slope/flat/valley cover.
@@ -380,7 +419,10 @@ fn classify(
     // Priority 4 — Cratonic: high flat fraction + non-humid + low valley density.
     // Ahaggar: flat=65%, BWh (not humid), hollow+valley=4% → passes.
     if flat_frac > CRATONIC_FLAT_MIN && !is_humid && fluvial_frac < CRATONIC_FLUVIAL_MAX {
-        return ("Cratonic", "high flat fraction, non-humid climate, low valley/hollow density");
+        return (
+            "Cratonic",
+            "high flat fraction, non-humid climate, low valley/hollow density",
+        );
     }
 
     // Priority 5 — FluvialArid: arid climate + incised drainage signature.
@@ -401,8 +443,8 @@ fn classify(
 /// string splice — every original float value byte is preserved exactly.
 /// Overwrites any previously written terrain_class field.
 fn set_terrain_class(path: &Path, class: &str) -> Result<()> {
-    let mut content = fs::read_to_string(path)
-        .with_context(|| format!("Cannot read {}", path.display()))?;
+    let mut content =
+        fs::read_to_string(path).with_context(|| format!("Cannot read {}", path.display()))?;
 
     // Strip any existing terrain_class field (written by a previous classifier run).
     const PREFIX: &str = ",\"terrain_class\":\"";
@@ -439,7 +481,7 @@ fn process_region(
         .with_context(|| format!("Cannot list {}", dem_dir.display()))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |x| x == "json"))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     dem_files.sort();
 
@@ -449,8 +491,11 @@ fn process_region(
 
     for dem_path in &dem_files {
         let dem_stem = dem_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let dem_fname =
-            dem_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_owned();
+        let dem_fname = dem_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
 
         // Pair: DEM "n30e075_0000" → geom "geom_90M_n30e075_0000"
         let geom_path = geom_dir.join(format!("geom_90M_{}.json", dem_stem));
@@ -558,8 +603,12 @@ fn main() -> Result<()> {
             region.id, region.terrain_class
         );
 
-        let manifest =
-            process_region(&region.id, &region.terrain_class, &args.samples_dir, &mut koppen)?;
+        let manifest = process_region(
+            &region.id,
+            &region.terrain_class,
+            &args.samples_dir,
+            &mut koppen,
+        )?;
 
         // Log distribution.
         eprintln!(
@@ -571,7 +620,10 @@ fn main() -> Result<()> {
             eprintln!("    {:16}  {:4}  ({:.1}%)", cls, count, pct);
         }
         if manifest.unclassified_count > 0 {
-            eprintln!("    {:16}  {:4}", "unclassified", manifest.unclassified_count);
+            eprintln!(
+                "    {:16}  {:4}",
+                "unclassified", manifest.unclassified_count
+            );
         }
 
         let manifest_path = region_dir.join("manifest.json");
@@ -645,7 +697,10 @@ mod tests {
     fn classify_alpine_high_relief_non_arid() {
         // ridge=10%, slope=50%, hollow=20%, valley=20%; Cwb (12); relief=2000 m
         let gs = geom_with_fracs(&[(3, 0.10), (6, 0.50), (7, 0.20), (9, 0.20)]);
-        let ds = DemStats { relief_m: 2000.0, mean_elev_m: 3000.0 };
+        let ds = DemStats {
+            relief_m: 2000.0,
+            mean_elev_m: 3000.0,
+        };
         assert_eq!(classify(&gs, &ds, 12, false).0, "Alpine");
     }
 
@@ -653,7 +708,10 @@ mod tests {
     fn classify_alpine_beats_coastal_and_fluvial() {
         // Same ridge fraction but in a coastal humid region — Alpine still wins.
         let gs = geom_with_fracs(&[(3, 0.10), (1, 0.60), (8, 0.30)]);
-        let ds = DemStats { relief_m: 2000.0, mean_elev_m: 100.0 };
+        let ds = DemStats {
+            relief_m: 2000.0,
+            mean_elev_m: 100.0,
+        };
         assert_eq!(classify(&gs, &ds, 1, true).0, "Alpine"); // Af, coastal
     }
 
@@ -661,7 +719,10 @@ mod tests {
     fn classify_no_alpine_if_arid_koppen() {
         // High relief + ridge fraction, but BWk (5) is arid → not Alpine.
         let gs = geom_with_fracs(&[(3, 0.10), (6, 0.50), (7, 0.20), (9, 0.20)]);
-        let ds = DemStats { relief_m: 2000.0, mean_elev_m: 2000.0 };
+        let ds = DemStats {
+            relief_m: 2000.0,
+            mean_elev_m: 2000.0,
+        };
         // Should fall through to FluvialArid (slope+hollow+valley=0.90 > 0.30)
         assert_ne!(classify(&gs, &ds, 5, false).0, "Alpine");
         assert_eq!(classify(&gs, &ds, 5, false).0, "FluvialArid");
@@ -671,7 +732,10 @@ mod tests {
     fn classify_no_alpine_if_low_relief() {
         // Ridge fraction present but relief below threshold.
         let gs = geom_with_fracs(&[(3, 0.10), (6, 0.90)]);
-        let ds = DemStats { relief_m: 500.0, mean_elev_m: 1000.0 };
+        let ds = DemStats {
+            relief_m: 500.0,
+            mean_elev_m: 1000.0,
+        };
         assert_ne!(classify(&gs, &ds, 12, false).0, "Alpine");
     }
 
@@ -681,7 +745,10 @@ mod tests {
     fn classify_coastal_low_elev_flat() {
         // flat=70%, footslope=10%, Cfa, low elevation — coastal region.
         let gs = geom_with_fracs(&[(1, 0.70), (6, 0.20), (8, 0.10)]);
-        let ds = DemStats { relief_m: 100.0, mean_elev_m: 50.0 };
+        let ds = DemStats {
+            relief_m: 100.0,
+            mean_elev_m: 50.0,
+        };
         assert_eq!(classify(&gs, &ds, 14, true).0, "Coastal");
     }
 
@@ -689,7 +756,10 @@ mod tests {
     fn classify_coastal_beats_fluvial_humid() {
         // flat=70% in humid climate; coastal check fires at priority 2.
         let gs = geom_with_fracs(&[(1, 0.70), (6, 0.30)]);
-        let ds = DemStats { relief_m: 80.0, mean_elev_m: 60.0 };
+        let ds = DemStats {
+            relief_m: 80.0,
+            mean_elev_m: 60.0,
+        };
         assert_eq!(classify(&gs, &ds, 14, true).0, "Coastal"); // Cfa
     }
 
@@ -697,7 +767,10 @@ mod tests {
     fn classify_no_coastal_if_high_elevation() {
         // Flat + footslope but mean elevation >200 m → not Coastal.
         let gs = geom_with_fracs(&[(1, 0.70), (8, 0.10), (6, 0.20)]);
-        let ds = DemStats { relief_m: 100.0, mean_elev_m: 400.0 };
+        let ds = DemStats {
+            relief_m: 100.0,
+            mean_elev_m: 400.0,
+        };
         // Falls through to FluvialHumid (Cfa, flat+slope=0.90>0.60, relief=100>20)
         assert_ne!(classify(&gs, &ds, 14, true).0, "Coastal");
     }
@@ -707,9 +780,20 @@ mod tests {
     #[test]
     fn classify_fluvial_humid_af_zone() {
         // Congo-like: flat=61%, slope=14%, hollow+valley=8%; Af (1); relief=75 m
-        let gs = geom_with_fracs(&[(1, 0.61), (6, 0.14), (7, 0.05), (9, 0.03), (4, 0.05),
-                                   (5, 0.04), (8, 0.04), (3, 0.04)]);
-        let ds = DemStats { relief_m: 75.0, mean_elev_m: 330.0 };
+        let gs = geom_with_fracs(&[
+            (1, 0.61),
+            (6, 0.14),
+            (7, 0.05),
+            (9, 0.03),
+            (4, 0.05),
+            (5, 0.04),
+            (8, 0.04),
+            (3, 0.04),
+        ]);
+        let ds = DemStats {
+            relief_m: 75.0,
+            mean_elev_m: 330.0,
+        };
         assert_eq!(classify(&gs, &ds, 1, false).0, "FluvialHumid");
     }
 
@@ -717,7 +801,10 @@ mod tests {
     fn classify_fluvial_humid_requires_min_relief() {
         // Humid but relief < 20 m → unclassified (likely standing water / lake).
         let gs = geom_with_fracs(&[(1, 0.80), (6, 0.20)]);
-        let ds = DemStats { relief_m: 10.0, mean_elev_m: 100.0 };
+        let ds = DemStats {
+            relief_m: 10.0,
+            mean_elev_m: 100.0,
+        };
         assert_ne!(classify(&gs, &ds, 1, false).0, "FluvialHumid");
     }
 
@@ -727,7 +814,10 @@ mod tests {
     fn classify_cratonic_high_flat_arid() {
         // Ahaggar-like: flat=65%, hollow+valley=4%; BWh (4); relief=400 m
         let gs = geom_with_fracs(&[(1, 0.65), (6, 0.25), (7, 0.02), (9, 0.02), (8, 0.06)]);
-        let ds = DemStats { relief_m: 400.0, mean_elev_m: 1000.0 };
+        let ds = DemStats {
+            relief_m: 400.0,
+            mean_elev_m: 1000.0,
+        };
         assert_eq!(classify(&gs, &ds, 4, false).0, "Cratonic");
     }
 
@@ -735,7 +825,10 @@ mod tests {
     fn classify_no_cratonic_if_humid() {
         // High flat fraction but humid Köppen → FluvialHumid fires first.
         let gs = geom_with_fracs(&[(1, 0.70), (6, 0.20), (9, 0.05), (7, 0.05)]);
-        let ds = DemStats { relief_m: 100.0, mean_elev_m: 200.0 };
+        let ds = DemStats {
+            relief_m: 100.0,
+            mean_elev_m: 200.0,
+        };
         assert_ne!(classify(&gs, &ds, 1, false).0, "Cratonic"); // Af
         assert_eq!(classify(&gs, &ds, 1, false).0, "FluvialHumid");
     }
@@ -746,7 +839,10 @@ mod tests {
     fn classify_fluvial_arid_canyon_terrain() {
         // Colorado-like: slope=43%, hollow=14%, valley=9%; BWk (5)
         let gs = geom_with_fracs(&[(6, 0.43), (7, 0.14), (9, 0.09), (5, 0.25), (3, 0.09)]);
-        let ds = DemStats { relief_m: 1080.0, mean_elev_m: 2000.0 };
+        let ds = DemStats {
+            relief_m: 1080.0,
+            mean_elev_m: 2000.0,
+        };
         assert_eq!(classify(&gs, &ds, 5, false).0, "FluvialArid");
     }
 
@@ -756,7 +852,10 @@ mod tests {
     fn classify_unclassified_dry_temperate_no_drainage() {
         // Dry temperate (Csb=9), not arid, not humid; slope-only, low flat.
         let gs = geom_with_fracs(&[(6, 0.95), (9, 0.05)]);
-        let ds = DemStats { relief_m: 200.0, mean_elev_m: 500.0 };
+        let ds = DemStats {
+            relief_m: 200.0,
+            mean_elev_m: 500.0,
+        };
         assert_eq!(classify(&gs, &ds, 9, false).0, "unclassified");
     }
 }

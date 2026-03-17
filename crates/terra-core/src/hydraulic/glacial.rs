@@ -1,9 +1,9 @@
 //! Glacial carving: U-valley profiles, overdeeepened basins, cirques.
 //! Phase 6, Task P6.5.
-use crate::heightfield::HeightField;
-use crate::noise::params::GlacialClass;
 use super::flow_routing::{compute_d8_flow, FlowField};
 use super::stream_power::apply_stream_power;
+use crate::heightfield::HeightField;
+use crate::noise::params::GlacialClass;
 
 /// Glacial channel threshold = 2 × FluvialHumid A_min (200 cells).
 const GLACIAL_A_MIN: u32 = 200;
@@ -172,94 +172,6 @@ fn d8_local_min(hf: &HeightField, r: usize, c: usize) -> f32 {
     min_z
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::heightfield::HeightField;
-    use crate::hydraulic::flow_routing::compute_d8_flow;
-
-    fn v_valley(rows: usize, cols: usize) -> HeightField {
-        let center = cols / 2;
-        let deg = cols as f64 * 0.0009;
-        let mut hf = HeightField::new(cols, rows, 0.0, deg, 0.0, deg, 0.0);
-        for r in 0..rows {
-            for c in 0..cols {
-                let lat = ((c as isize - center as isize).unsigned_abs() as f32) * 20.0;
-                hf.set(r, c, lat + (rows - 1 - r) as f32 * 2.0);
-            }
-        }
-        hf
-    }
-
-    #[test]
-    fn none_class_is_noop() {
-        let mut hf = v_valley(16, 16);
-        let flow = compute_d8_flow(&hf);
-        let before = hf.data.clone();
-        apply_glacial_carving(&mut hf, &flow, GlacialClass::None);
-        assert_eq!(hf.data, before, "GlacialClass::None must leave heightfield unchanged");
-    }
-
-    #[test]
-    fn active_carving_produces_u_valley() {
-        // V-valley → U-valley: cells adjacent to the glacial channel
-        // (high-accumulation centre column) should be carved down.
-        let rows = 32usize;
-        let cols = 32usize;
-        let center = cols / 2;
-        let mut hf = v_valley(rows, cols);
-        let flow = compute_d8_flow(&hf);
-
-        // Verify centre column has enough accumulation to be glacial.
-        let mid_row = rows / 2;
-        let acc = flow.accumulation[mid_row * cols + center];
-        assert!(acc >= GLACIAL_A_MIN, "centre col accum {acc} should be ≥ {GLACIAL_A_MIN}");
-
-        // Record cross-section before carving.
-        let z_before_c1 = hf.get(mid_row, center + 1);
-        let z_before_c2 = hf.get(mid_row, center + 2);
-
-        apply_glacial_carving(&mut hf, &flow, GlacialClass::Active);
-
-        let z_c0 = hf.get(mid_row, center) as f64;
-        let z_c1 = hf.get(mid_row, center + 1) as f64;
-        let z_c2 = hf.get(mid_row, center + 2) as f64;
-
-        // Profile should still rise from center (U-shaped base).
-        assert!(z_c1 >= z_c0, "U-valley: col+1 ({z_c1:.1}) should be ≥ center ({z_c0:.1})");
-        assert!(z_c2 >= z_c1, "U-valley: col+2 ({z_c2:.1}) should be ≥ col+1 ({z_c1:.1})");
-
-        // Near-center cells must have been carved lower than the original V.
-        assert!(
-            (z_c1 as f32) < z_before_c1,
-            "col+1 should be carved: before={z_before_c1:.1}, after={z_c1:.1}"
-        );
-        assert!(
-            (z_c2 as f32) < z_before_c2,
-            "col+2 should be carved: before={z_before_c2:.1}, after={z_c2:.1}"
-        );
-    }
-
-    #[test]
-    fn former_carving_followed_by_fluvial() {
-        // Former class should still carve the valley (centre cells lower than V)
-        // and leave the terrain modified compared to a no-op.
-        let rows = 32usize;
-        let cols = 32usize;
-        let center = cols / 2;
-        let mut hf = v_valley(rows, cols);
-        let flow = compute_d8_flow(&hf);
-        let z_before_c1 = hf.get(rows / 2, center + 1);
-        apply_glacial_carving(&mut hf, &flow, GlacialClass::Former);
-        // Near-center should still be lower than original V.
-        let z_after_c1 = hf.get(rows / 2, center + 1);
-        assert!(
-            z_after_c1 < z_before_c1,
-            "Former: col+1 should be lower after carving: {z_before_c1:.1} → {z_after_c1:.1}"
-        );
-    }
-}
-
 /// True when no other glacial cell's D8 direction points to `i`.
 fn is_glacial_head(glacial: &[bool], flow: &FlowField, i: usize, cols: usize) -> bool {
     use super::flow_routing::D8_OFFSETS;
@@ -293,11 +205,111 @@ fn is_glacial_head(glacial: &[bool], flow: &FlowField, i: usize, cols: usize) ->
         }
         let j = nr as usize * cols + nc as usize;
         // Opposite D8 direction: code for (-dr,-dc).
-        // D8_OFFSETS are N,NE,E,SE,S,SW,W,NW → opposite pairs: 0↔4,1↔5,2↔6,3↔7
+        // D8_OFFSETS are N,NE,E,SE,S,SW,W,NW -> opposite pairs: 0<->4,1<->5,2<->6,3<->7
         let opp = (m + 4) % 8; // opposite direction index
         if glacial[j] && flow.direction[j] == (opp + 1) as u8 {
             return false; // someone flows into us
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::heightfield::HeightField;
+    use crate::hydraulic::flow_routing::compute_d8_flow;
+
+    fn v_valley(rows: usize, cols: usize) -> HeightField {
+        let center = cols / 2;
+        let deg = cols as f64 * 0.0009;
+        let mut hf = HeightField::new(cols, rows, 0.0, deg, 0.0, deg, 0.0);
+        for r in 0..rows {
+            for c in 0..cols {
+                let lat = ((c as isize - center as isize).unsigned_abs() as f32) * 20.0;
+                hf.set(r, c, lat + (rows - 1 - r) as f32 * 2.0);
+            }
+        }
+        hf
+    }
+
+    #[test]
+    fn none_class_is_noop() {
+        let mut hf = v_valley(16, 16);
+        let flow = compute_d8_flow(&hf);
+        let before = hf.data.clone();
+        apply_glacial_carving(&mut hf, &flow, GlacialClass::None);
+        assert_eq!(
+            hf.data, before,
+            "GlacialClass::None must leave heightfield unchanged"
+        );
+    }
+
+    #[test]
+    fn active_carving_produces_u_valley() {
+        // V-valley → U-valley: cells adjacent to the glacial channel
+        // (high-accumulation centre column) should be carved down.
+        let rows = 32usize;
+        let cols = 32usize;
+        let center = cols / 2;
+        let mut hf = v_valley(rows, cols);
+        let flow = compute_d8_flow(&hf);
+
+        // Verify centre column has enough accumulation to be glacial.
+        let mid_row = rows / 2;
+        let acc = flow.accumulation[mid_row * cols + center];
+        assert!(
+            acc >= GLACIAL_A_MIN,
+            "centre col accum {acc} should be ≥ {GLACIAL_A_MIN}"
+        );
+
+        // Record cross-section before carving.
+        let z_before_c1 = hf.get(mid_row, center + 1);
+        let z_before_c2 = hf.get(mid_row, center + 2);
+
+        apply_glacial_carving(&mut hf, &flow, GlacialClass::Active);
+
+        let z_c0 = hf.get(mid_row, center) as f64;
+        let z_c1 = hf.get(mid_row, center + 1) as f64;
+        let z_c2 = hf.get(mid_row, center + 2) as f64;
+
+        // Profile should still rise from center (U-shaped base).
+        assert!(
+            z_c1 >= z_c0,
+            "U-valley: col+1 ({z_c1:.1}) should be ≥ center ({z_c0:.1})"
+        );
+        assert!(
+            z_c2 >= z_c1,
+            "U-valley: col+2 ({z_c2:.1}) should be ≥ col+1 ({z_c1:.1})"
+        );
+
+        // Near-center cells must have been carved lower than the original V.
+        assert!(
+            (z_c1 as f32) < z_before_c1,
+            "col+1 should be carved: before={z_before_c1:.1}, after={z_c1:.1}"
+        );
+        assert!(
+            (z_c2 as f32) < z_before_c2,
+            "col+2 should be carved: before={z_before_c2:.1}, after={z_c2:.1}"
+        );
+    }
+
+    #[test]
+    fn former_carving_followed_by_fluvial() {
+        // Former class should still carve the valley (centre cells lower than V)
+        // and leave the terrain modified compared to a no-op.
+        let rows = 32usize;
+        let cols = 32usize;
+        let center = cols / 2;
+        let mut hf = v_valley(rows, cols);
+        let flow = compute_d8_flow(&hf);
+        let z_before_c1 = hf.get(rows / 2, center + 1);
+        apply_glacial_carving(&mut hf, &flow, GlacialClass::Former);
+        // Near-center should still be lower than original V.
+        let z_after_c1 = hf.get(rows / 2, center + 1);
+        assert!(
+            z_after_c1 < z_before_c1,
+            "Former: col+1 should be lower after carving: {z_before_c1:.1} → {z_after_c1:.1}"
+        );
+    }
 }

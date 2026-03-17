@@ -81,7 +81,10 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
     // Flat-field check.
     let max_gamma = gamma.iter().cloned().fold(0f64, f64::max);
     if max_gamma < 1e-6 {
-        return HurstResult { h: f32::NAN, r_squared: 0.0 };
+        return HurstResult {
+            h: f32::NAN,
+            r_squared: 0.0,
+        };
     }
 
     // OLS fit: log(gamma) = 2H * log(lag) + c
@@ -96,24 +99,37 @@ pub fn compute_hurst(hf: &HeightField) -> HurstResult {
     let sum_xy: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| x * y).sum();
 
     let denom = n * sum_xx - sum_x * sum_x;
-    let slope = if denom.abs() < 1e-12 { 0.0 } else { (n * sum_xy - sum_x * sum_y) / denom };
+    let slope = if denom.abs() < 1e-12 {
+        0.0
+    } else {
+        (n * sum_xy - sum_x * sum_y) / denom
+    };
     let intercept = (sum_y - slope * sum_x) / n;
 
     // R² = 1 − SS_res / SS_tot
     let y_mean = sum_y / n;
     let ss_tot: f64 = ys.iter().map(|y| (y - y_mean).powi(2)).sum();
-    let ss_res: f64 = xs.iter().zip(ys.iter())
+    let ss_res: f64 = xs
+        .iter()
+        .zip(ys.iter())
         .map(|(x, y)| {
             let y_hat = slope * x + intercept;
             (y - y_hat).powi(2)
         })
         .sum();
-    let r_squared = if ss_tot < 1e-12 { 0.0 } else { 1.0 - ss_res / ss_tot };
+    let r_squared = if ss_tot < 1e-12 {
+        0.0
+    } else {
+        1.0 - ss_res / ss_tot
+    };
 
     // H = slope / 2 (since D(h) ∝ h^(2H))
     let h = (slope / 2.0) as f32;
 
-    HurstResult { h, r_squared: r_squared as f32 }
+    HurstResult {
+        h,
+        r_squared: r_squared as f32,
+    }
 }
 
 /// Subtract a local box-filter mean from every pixel.
@@ -130,10 +146,9 @@ fn local_detrend(hf: &HeightField) -> Vec<f32> {
     for row in 1..=h {
         for col in 1..=w {
             let val = hf.get(row - 1, col - 1) as f64;
-            psum[row * (w + 1) + col] = val
-                + psum[(row - 1) * (w + 1) + col]
-                + psum[row * (w + 1) + (col - 1)]
-                - psum[(row - 1) * (w + 1) + (col - 1)];
+            psum[row * (w + 1) + col] =
+                val + psum[(row - 1) * (w + 1) + col] + psum[row * (w + 1) + (col - 1)]
+                    - psum[(row - 1) * (w + 1) + (col - 1)];
         }
     }
 
@@ -175,7 +190,9 @@ mod tests {
         // LCG: seed → u32 sequence, phases in [0, 2π)
         let mut lcg: u64 = 0xdeadbeef_cafe1234;
         let lcg_next = |s: &mut u64| -> f64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((*s >> 33) as f64) / (u32::MAX as f64) * (2.0 * std::f64::consts::PI)
         };
 
@@ -194,11 +211,13 @@ mod tests {
         // Combine into n×n field.
         let mut hf = HeightField::flat(n, n);
         // Give it some geographic bounds (doesn't affect the variogram).
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
-        for r in 0..n {
-            for c in 0..n {
-                hf.set(r, c, (z_row[r] + z_col[c]) as f32);
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
+        for (r, &row_val) in z_row.iter().enumerate() {
+            for (c, &col_val) in z_col.iter().enumerate() {
+                hf.set(r, c, (row_val + col_val) as f32);
             }
         }
         hf

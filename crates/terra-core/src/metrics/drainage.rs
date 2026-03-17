@@ -134,6 +134,10 @@ mod tests {
             }
         }
         let res = compute_drainage_density(&hf);
-        assert!(res.density_km_per_km2 >= 0.0);
+        assert!(
+            (0.0..=5.0).contains(&res.density_km_per_km2),
+            "drainage density {} outside [0, 5]",
+            res.density_km_per_km2
+        );
     }
 }

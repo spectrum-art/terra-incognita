@@ -8,6 +8,8 @@ const SPUR_CLASS: f32 = 5.0;
 const LOCAL_RADIUS: i32 = 15;
 const LOCAL_RADIUS_30: i32 = 30;
 
+// Fields are retained for diagnostic output and test coverage even though the
+// current aggregate pipeline only consumes the mean branching angle.
 #[allow(dead_code)]
 pub struct BranchingResult {
     /// Mean branching angle in degrees [0, 90].
@@ -34,14 +36,18 @@ fn local_pca_direction(
         for dc in -radius..=radius {
             let r = center_r + dr;
             let c = center_c + dc;
-            if r < 0 || r >= height as i32 || c < 0 || c >= width as i32 { continue; }
+            if r < 0 || r >= height as i32 || c < 0 || c >= width as i32 {
+                continue;
+            }
             let v = geom[r as usize * width + c as usize];
             if !v.is_nan() && (v - target_class).abs() < 0.5 {
                 pts.push((r as f64, c as f64));
             }
         }
     }
-    if pts.len() < 5 { return None; }
+    if pts.len() < 5 {
+        return None;
+    }
 
     let n = pts.len() as f64;
     let mean_r = pts.iter().map(|p| p.0).sum::<f64>() / n;
@@ -57,7 +63,9 @@ fn local_pca_direction(
         cov_rc += dr * dc;
         cov_cc += dc * dc;
     }
-    cov_rr /= n; cov_rc /= n; cov_cc /= n;
+    cov_rr /= n;
+    cov_rc /= n;
+    cov_cc /= n;
 
     let trace = cov_rr + cov_cc;
     let det = cov_rr * cov_cc - cov_rc * cov_rc;
@@ -75,33 +83,48 @@ fn local_pca_direction(
     Some(ev_r.atan2(ev_c))
 }
 
-fn compute_branching_with_radius(geom: &[f32], width: usize, height: usize, radius: i32) -> BranchingResult {
+fn compute_branching_with_radius(
+    geom: &[f32],
+    width: usize,
+    height: usize,
+    radius: i32,
+) -> BranchingResult {
     let mut angles_deg: Vec<f64> = Vec::new();
 
     for r in 0..height as i32 {
         for c in 0..width as i32 {
             let v = geom[r as usize * width + c as usize];
-            if v.is_nan() || (v - SPUR_CLASS).abs() >= 0.5 { continue; }
+            if v.is_nan() || (v - SPUR_CLASS).abs() >= 0.5 {
+                continue;
+            }
 
             // Check if this spur pixel is adjacent (8-conn) to a ridge pixel.
-            let adjacent_to_ridge = (-1i32..=1).flat_map(|dr| {
-                (-1i32..=1).map(move |dc| (dr, dc))
-            }).any(|(dr, dc)| {
-                if dr == 0 && dc == 0 { return false; }
-                let nr = r + dr;
-                let nc = c + dc;
-                if nr < 0 || nr >= height as i32 || nc < 0 || nc >= width as i32 { return false; }
-                let nv = geom[nr as usize * width + nc as usize];
-                !nv.is_nan() && (nv - RIDGE_CLASS).abs() < 0.5
-            });
+            let adjacent_to_ridge = (-1i32..=1)
+                .flat_map(|dr| (-1i32..=1).map(move |dc| (dr, dc)))
+                .any(|(dr, dc)| {
+                    if dr == 0 && dc == 0 {
+                        return false;
+                    }
+                    let nr = r + dr;
+                    let nc = c + dc;
+                    if nr < 0 || nr >= height as i32 || nc < 0 || nc >= width as i32 {
+                        return false;
+                    }
+                    let nv = geom[nr as usize * width + nc as usize];
+                    !nv.is_nan() && (nv - RIDGE_CLASS).abs() < 0.5
+                });
 
-            if !adjacent_to_ridge { continue; }
+            if !adjacent_to_ridge {
+                continue;
+            }
 
             // Local PCA for spur direction and ridge direction.
             let spur_dir = local_pca_direction(geom, width, height, r, c, SPUR_CLASS, radius);
             let ridge_dir = local_pca_direction(geom, width, height, r, c, RIDGE_CLASS, radius);
 
-            let (Some(sd), Some(rd)) = (spur_dir, ridge_dir) else { continue };
+            let (Some(sd), Some(rd)) = (spur_dir, ridge_dir) else {
+                continue;
+            };
 
             // Angle between the two directions, normalized to [0°, 90°].
             let mut diff = (sd - rd).abs();
@@ -114,7 +137,11 @@ fn compute_branching_with_radius(geom: &[f32], width: usize, height: usize, radi
     }
 
     if angles_deg.is_empty() {
-        return BranchingResult { mean_deg: f64::NAN, std_deg: f64::NAN, junction_count: 0 };
+        return BranchingResult {
+            mean_deg: f64::NAN,
+            std_deg: f64::NAN,
+            junction_count: 0,
+        };
     }
 
     let n = angles_deg.len() as f64;
@@ -158,14 +185,22 @@ mod tests {
         let mut geom = vec![6.0f32; w * h];
 
         // Horizontal ridge along row 30.
-        for c in 0..w { geom[30 * w + c] = 3.0; }
+        for c in 0..w {
+            geom[30 * w + c] = 3.0;
+        }
         // Vertical spur branching down from ridge at col 30 (perpendicular).
-        for r in 30..45 { geom[r * w + 30] = 5.0; }
+        for r in 30..45 {
+            geom[r * w + 30] = 5.0;
+        }
 
         let result = compute_branching(&geom, w, h);
         if result.junction_count > 0 {
             // Perpendicular spur → should be near 90°.
-            assert!(result.mean_deg > 60.0, "expected ~90° branching, got {}°", result.mean_deg);
+            assert!(
+                result.mean_deg > 60.0,
+                "expected ~90° branching, got {}°",
+                result.mean_deg
+            );
         }
     }
 
@@ -176,14 +211,22 @@ mod tests {
         let mut geom = vec![6.0f32; w * h];
 
         // Horizontal ridge along row 30.
-        for c in 5..w { geom[30 * w + c] = 3.0; }
+        for c in 5..w {
+            geom[30 * w + c] = 3.0;
+        }
         // Parallel spur just below the ridge at row 31.
-        for c in 5..40 { geom[31 * w + c] = 5.0; }
+        for c in 5..40 {
+            geom[31 * w + c] = 5.0;
+        }
 
         let result = compute_branching(&geom, w, h);
         if result.junction_count > 0 {
             // Parallel spur → angle near 0°.
-            assert!(result.mean_deg < 45.0, "expected near-0° branching, got {}°", result.mean_deg);
+            assert!(
+                result.mean_deg < 45.0,
+                "expected near-0° branching, got {}°",
+                result.mean_deg
+            );
         }
     }
 }

@@ -39,7 +39,6 @@ terra-incognita/
   crates/
     terra-core/                 # Pure Rust library — all generation logic
     terra-wasm/                 # WASM bindings (wasm-bindgen)
-    terra-test/                 # Offline test harness CLI
   tools/
     sampler/                    # Phase 1: MERIT-DEM GeoTIFF sampling
     classifier/                 # Phase 1: terrain class labeling

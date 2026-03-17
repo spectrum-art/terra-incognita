@@ -20,14 +20,14 @@ pub mod sea_level;
 use crate::climate::simulate_climate;
 use crate::generator::GlobalParams;
 use crate::noise::params::GlacialClass;
-use crate::plates::{simulate_plates, continents::CrustType, regime_field::TectonicRegime};
+use crate::plates::{continents::CrustType, regime_field::TectonicRegime, simulate_plates};
 
-use field_smoothing::{SmoothingParams, gaussian_blur};
+use field_smoothing::{gaussian_blur, SmoothingParams};
 use planet_elevation::generate_planet_elevation;
-use planet_metrics::{PlanetMetrics, PlanetMetricsConfig, compute_planet_metrics};
+use planet_metrics::{compute_planet_metrics, PlanetMetrics, PlanetMetricsConfig};
 
 /// Default overview resolution (2:1 equirectangular).
-pub const OVERVIEW_WIDTH:  usize = 1024;
+pub const OVERVIEW_WIDTH: usize = 1024;
 pub const OVERVIEW_HEIGHT: usize = 512;
 
 // ── Output struct ─────────────────────────────────────────────────────────────
@@ -80,28 +80,31 @@ fn ocean_mask_from_bfs(
     height: usize,
     seed: u64,
 ) -> (Vec<bool>, f32) {
-    use std::collections::BinaryHeap;
     use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
 
     let n = width * height;
     let target_land = ((1.0 - water_abundance.clamp(0.0, 1.0)) * n as f32).round() as usize;
 
     // Ridge walls: ActiveExtensional cells bound the continental plates.
-    let ridge_wall: Vec<bool> = regimes.iter()
+    let ridge_wall: Vec<bool> = regimes
+        .iter()
         .map(|&r| r == TectonicRegime::ActiveExtensional)
         .collect();
 
     // Arc walls: oceanic ActiveCompressional cells are subduction arc zones.
     // They must never be captured as land by BFS — only continental AC cells
     // (genuine mountain belts) may be land.
-    let arc_wall: Vec<bool> = regimes.iter().zip(crust_field.iter())
+    let arc_wall: Vec<bool> = regimes
+        .iter()
+        .zip(crust_field.iter())
         .map(|(&r, &c)| r == TectonicRegime::ActiveCompressional && c == CrustType::Oceanic)
         .collect();
 
     // Low-frequency roughness field for priority-BFS.  Period ≈ 128 cells
     // (≈5 000 km), delay amplitude 60 BFS steps — enough to break full-grid
     // Manhattan diamonds even when no ridge walls are present.
-    let rw = (width  / 128).max(4);
+    let rw = (width / 128).max(4);
     let rh = (height / 128).max(4);
     let roughness: Vec<f32> = (0..rw * rh)
         .map(|i| hash_f32(i as u64, seed ^ 0x9E37_79B1))
@@ -110,9 +113,11 @@ fn ocean_mask_from_bfs(
         let r = idx / width;
         let c = idx % width;
         let noise = bilinear_noise(
-            &roughness, rw, rh,
+            &roughness,
+            rw,
+            rh,
             r as f32 / height as f32 * rh as f32,
-            c as f32 / width  as f32 * rw as f32,
+            c as f32 / width as f32 * rw as f32,
         );
         (noise * 60.0) as u32
     };
@@ -170,10 +175,18 @@ fn ocean_mask_from_bfs(
         let r = idx / width;
         let c = idx % width;
         let neighbours = [
-            if r > 0          { Some((r - 1) * width + c)                       } else { None },
-            if r + 1 < height { Some((r + 1) * width + c)                       } else { None },
-            Some(r * width + if c > 0          { c - 1 } else { width - 1 }),
-            Some(r * width + if c + 1 < width  { c + 1 } else { 0         }),
+            if r > 0 {
+                Some((r - 1) * width + c)
+            } else {
+                None
+            },
+            if r + 1 < height {
+                Some((r + 1) * width + c)
+            } else {
+                None
+            },
+            Some(r * width + if c > 0 { c - 1 } else { width - 1 }),
+            Some(r * width + if c + 1 < width { c + 1 } else { 0 }),
         ];
         for nb in neighbours.into_iter().flatten() {
             if ocean[nb] && !ridge_wall[nb] && !arc_wall[nb] {
@@ -210,35 +223,42 @@ fn ocean_mask_from_bfs(
 /// ActiveExtensional, ActiveCompressional, and VolcanicHotspot seed cells are
 /// protected to preserve geological character and regime diversity.
 fn apply_coastline_noise(
-    ocean:   &mut [bool],
+    ocean: &mut [bool],
     regimes: &[TectonicRegime],
-    width:    usize,
-    height:   usize,
-    seed:     u64,
+    width: usize,
+    height: usize,
+    seed: u64,
 ) {
     let n = width * height;
     // Coarse noise grid: one sample per 16×16 cell block.
-    let cw = (width  / 16).max(4);
+    let cw = (width / 16).max(4);
     let ch = (height / 16).max(4);
     let coarse: Vec<f32> = (0..(cw * ch))
         .map(|i| hash_f32(i as u64, seed ^ 0xC0A5_7E13))
         .collect();
 
     // Build boundary masks from the current (pre-noise) state.
-    let mut flip_to_land  = vec![false; n];
+    let mut flip_to_land = vec![false; n];
     let mut flip_to_ocean = vec![false; n];
 
     for r in 0..height {
         for c in 0..width {
             let idx = r * width + c;
             let nbs = [
-                if r > 0          { Some((r-1) * width + c)                       } else { None },
-                if r+1 < height   { Some((r+1) * width + c)                       } else { None },
-                Some(r * width + if c > 0         { c-1 } else { width-1 }),
-                Some(r * width + if c+1 < width   { c+1 } else { 0       }),
+                if r > 0 {
+                    Some((r - 1) * width + c)
+                } else {
+                    None
+                },
+                if r + 1 < height {
+                    Some((r + 1) * width + c)
+                } else {
+                    None
+                },
+                Some(r * width + if c > 0 { c - 1 } else { width - 1 }),
+                Some(r * width + if c + 1 < width { c + 1 } else { 0 }),
             ];
-            let noise = bilinear_noise(&coarse, cw, ch,
-                                       r as f32 / 16.0, c as f32 / 16.0);
+            let noise = bilinear_noise(&coarse, cw, ch, r as f32 / 16.0, c as f32 / 16.0);
             if ocean[idx] {
                 let has_land_nb = nbs.into_iter().flatten().any(|nb| !ocean[nb]);
                 if has_land_nb && noise > 0.70 {
@@ -259,8 +279,12 @@ fn apply_coastline_noise(
     }
 
     for i in 0..n {
-        if flip_to_land[i]  { ocean[i] = false; }
-        if flip_to_ocean[i] { ocean[i] = true;  }
+        if flip_to_land[i] {
+            ocean[i] = false;
+        }
+        if flip_to_ocean[i] {
+            ocean[i] = true;
+        }
     }
 }
 
@@ -287,10 +311,18 @@ fn remove_small_land_components(ocean: &mut [bool], width: usize, height: usize,
             let r = idx / width;
             let c = idx % width;
             let neighbours = [
-                if r > 0          { Some((r - 1) * width + c)                       } else { None },
-                if r + 1 < height { Some((r + 1) * width + c)                       } else { None },
-                Some(r * width + if c > 0         { c - 1 } else { width - 1 }),
-                Some(r * width + if c + 1 < width { c + 1 } else { 0         }),
+                if r > 0 {
+                    Some((r - 1) * width + c)
+                } else {
+                    None
+                },
+                if r + 1 < height {
+                    Some((r + 1) * width + c)
+                } else {
+                    None
+                },
+                Some(r * width + if c > 0 { c - 1 } else { width - 1 }),
+                Some(r * width + if c + 1 < width { c + 1 } else { 0 }),
             ];
             for nb in neighbours.into_iter().flatten() {
                 if !ocean[nb] && !visited[nb] {
@@ -326,8 +358,8 @@ fn bilinear_noise(coarse: &[f32], cw: usize, ch: usize, ny: f32, nx: f32) -> f32
     let v10 = coarse[iy * cw + (ix + 1).min(cw - 1)];
     let v01 = coarse[(iy + 1).min(ch - 1) * cw + ix];
     let v11 = coarse[(iy + 1).min(ch - 1) * cw + (ix + 1).min(cw - 1)];
-    let v0  = v00 * (1.0 - fx) + v10 * fx;
-    let v1  = v01 * (1.0 - fx) + v11 * fx;
+    let v0 = v00 * (1.0 - fx) + v10 * fx;
+    let v1 = v01 * (1.0 - fx) + v11 * fx;
     v0 * (1.0 - fy) + v1 * fy
 }
 
@@ -342,11 +374,7 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     let h = OVERVIEW_HEIGHT;
 
     // ── 1. Plate simulation at overview resolution ────────────────────────
-    let plates = simulate_plates(
-        params.seed,
-        params.continental_fragmentation,
-        w, h,
-    );
+    let plates = simulate_plates(params.seed, params.continental_fragmentation, w, h);
 
     // ── 2. Climate layer at overview resolution ───────────────────────────
     let climate = simulate_climate(
@@ -355,7 +383,8 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
         params.climate_diversity,
         params.glaciation,
         &plates.regime_field,
-        w, h,
+        w,
+        h,
     );
 
     // ── 3. PA.6 Field smoothing ───────────────────────────────────────────
@@ -368,10 +397,15 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     let erodibility_smoothed = gaussian_blur(&plates.erodibility_field, w, h, sp.erodibility_sigma);
 
     // Regime: encode as f32 ordinals, smooth, decode back (nearest-regime snap).
-    let regime_f32: Vec<f32> = plates.regime_field.data.iter()
-        .map(|&r| r as u8 as f32).collect();
+    let regime_f32: Vec<f32> = plates
+        .regime_field
+        .data
+        .iter()
+        .map(|&r| r as u8 as f32)
+        .collect();
     let regime_smoothed_f32 = gaussian_blur(&regime_f32, w, h, sp.regime_sigma);
-    let regimes: Vec<TectonicRegime> = regime_smoothed_f32.iter()
+    let regimes: Vec<TectonicRegime> = regime_smoothed_f32
+        .iter()
         .map(|&v| ordinal_to_regime(v.round() as u8))
         .collect();
 
@@ -384,7 +418,8 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
         &plates.regime_field.data,
         &plates.crust_field,
         params.water_abundance,
-        w, h,
+        w,
+        h,
         params.seed,
     );
 
@@ -400,9 +435,9 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
         &plates.regime_field.data,
         &climate.glaciation_mask,
         PlanetMetricsConfig {
-            water_abundance:   params.water_abundance,
+            water_abundance: params.water_abundance,
             glaciation_slider: params.glaciation,
-            width:  w,
+            width: w,
             height: h,
         },
     );
@@ -459,26 +494,35 @@ mod tests {
         let ocean_frac = overview.ocean_mask.iter().filter(|&&o| o).count() as f32
             / (OVERVIEW_WIDTH * OVERVIEW_HEIGHT) as f32;
         let diff = (ocean_frac - params.water_abundance).abs();
-        assert!(diff <= 0.12,
+        assert!(
+            diff <= 0.12,
             "ocean_frac={ocean_frac:.3} should be within 0.12 of wa={:.2} (diff={diff:.3})",
-            params.water_abundance);
+            params.water_abundance
+        );
     }
 
     /// Regime field must contain more than one distinct value (variety).
     #[test]
     fn regime_field_has_variety() {
         let overview = generate_planet_overview(&GlobalParams::default());
-        let has_compressional = overview.regimes.iter().any(|&r| r == TectonicRegime::ActiveCompressional);
-        let has_cratonic      = overview.regimes.iter().any(|&r| r == TectonicRegime::CratonicShield);
-        assert!(has_compressional || has_cratonic, "regime field must contain varied regimes");
+        let has_compressional = overview
+            .regimes
+            .contains(&TectonicRegime::ActiveCompressional);
+        let has_cratonic = overview.regimes.contains(&TectonicRegime::CratonicShield);
+        assert!(
+            has_compressional || has_cratonic,
+            "regime field must contain varied regimes"
+        );
     }
 
     /// PC.1: regime entropy must exceed 1.2 bits for seeds 42, 7, 99 after Fix 2.
     #[test]
     fn regime_entropy_passes_three_seeds() {
         for seed in [42u64, 7, 99] {
-            let mut params = GlobalParams::default();
-            params.seed = seed;
+            let params = GlobalParams {
+                seed,
+                ..GlobalParams::default()
+            };
             let overview = generate_planet_overview(&params);
             let entropy = overview.planet_metrics.metrics[3].raw_value;
             let land_count = overview.ocean_mask.iter().filter(|&&o| !o).count();
@@ -499,8 +543,10 @@ mod tests {
                 counts[3] as f32 / land_count as f32 * 100.0,
                 counts[4] as f32 / land_count as f32 * 100.0,
             );
-            assert!(entropy >= 1.2,
-                "seed={seed}: regime entropy {entropy:.3} < 1.2 bits");
+            assert!(
+                entropy >= 1.2,
+                "seed={seed}: regime entropy {entropy:.3} < 1.2 bits"
+            );
         }
     }
 }

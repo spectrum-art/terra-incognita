@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/terra-core",
     "crates/terra-wasm",
-    "crates/terra-test",
     "tools/sampler",
     "tools/classifier",
     "tools/distributions",

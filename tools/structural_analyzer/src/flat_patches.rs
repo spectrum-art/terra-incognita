@@ -8,6 +8,8 @@ use crate::components::{label_components, Connectivity};
 const FLAT_CLASS: f32 = 1.0;
 const PIXEL_AREA_KM2: f64 = 0.09 * 0.09; // (90m)^2
 
+// Fields are retained for diagnostic output and tests even though the current
+// aggregate pipeline only consumes median/max area and dominance.
 #[allow(dead_code)]
 pub struct FlatPatchResult {
     /// Number of flat patches.
@@ -23,7 +25,10 @@ pub struct FlatPatchResult {
 }
 
 pub fn compute_flat_patches(geom: &[f32], width: usize, height: usize) -> FlatPatchResult {
-    let mask: Vec<bool> = geom.iter().map(|&v| !v.is_nan() && (v - FLAT_CLASS).abs() < 0.5).collect();
+    let mask: Vec<bool> = geom
+        .iter()
+        .map(|&v| !v.is_nan() && (v - FLAT_CLASS).abs() < 0.5)
+        .collect();
 
     let components = label_components(&mask, width, height, Connectivity::Four);
 
@@ -60,8 +65,12 @@ pub fn compute_flat_patches(geom: &[f32], width: usize, height: usize) -> FlatPa
     }
 }
 
-pub fn median_area_km2(result: &FlatPatchResult) -> f64 { result.median_area_px * PIXEL_AREA_KM2 }
-pub fn max_area_km2(result: &FlatPatchResult) -> f64 { result.max_area_px * PIXEL_AREA_KM2 }
+pub fn median_area_km2(result: &FlatPatchResult) -> f64 {
+    result.median_area_px * PIXEL_AREA_KM2
+}
+pub fn max_area_km2(result: &FlatPatchResult) -> f64 {
+    result.max_area_px * PIXEL_AREA_KM2
+}
 
 #[cfg(test)]
 mod tests {
@@ -98,9 +107,17 @@ mod tests {
         let h = 20usize;
         let mut geom = vec![6.0f32; w * h];
         // Patch 1: 2×2 = 4 pixels at rows 1-2, cols 1-2.
-        for r in 1..3 { for c in 1..3 { geom[r * w + c] = 1.0; } }
+        for r in 1..3 {
+            for c in 1..3 {
+                geom[r * w + c] = 1.0;
+            }
+        }
         // Patch 2: 3×3 = 9 pixels at rows 10-12, cols 10-12.
-        for r in 10..13 { for c in 10..13 { geom[r * w + c] = 1.0; } }
+        for r in 10..13 {
+            for c in 10..13 {
+                geom[r * w + c] = 1.0;
+            }
+        }
 
         let result = compute_flat_patches(&geom, w, h);
         assert_eq!(result.n_patches, 2);
@@ -116,7 +133,7 @@ mod tests {
         let h = 5usize;
         let mut geom = vec![6.0f32; w * h];
         // Two flat pixels touching only diagonally at (1,1) and (2,2).
-        geom[1 * w + 1] = 1.0;
+        geom[w + 1] = 1.0;
         geom[2 * w + 2] = 1.0;
         let result = compute_flat_patches(&geom, w, h);
         // 4-connectivity: diagonals are NOT connected.
@@ -129,9 +146,17 @@ mod tests {
         let h = 10usize;
         let mut geom = vec![6.0f32; w * h];
         // Three patches: sizes 1, 4, 9.
-        geom[0 * w + 0] = 1.0; // size 1
-        for r in 3..5 { for c in 3..5 { geom[r * w + c] = 1.0; } } // size 4
-        for r in 6..9 { for c in 6..9 { geom[r * w + c] = 1.0; } } // size 9
+        geom[0] = 1.0; // size 1
+        for r in 3..5 {
+            for c in 3..5 {
+                geom[r * w + c] = 1.0;
+            }
+        } // size 4
+        for r in 6..9 {
+            for c in 6..9 {
+                geom[r * w + c] = 1.0;
+            }
+        } // size 9
         let result = compute_flat_patches(&geom, w, h);
         assert_eq!(result.n_patches, 3);
         assert_eq!(result.median_area_px, 4.0); // middle of [1, 4, 9]

@@ -10,20 +10,26 @@ use std::collections::BinaryHeap;
 /// D8 neighbour (Δrow, Δcol) offsets.  Index `k` corresponds to direction
 /// code `k + 1` (so code 1 = N, code 8 = NW).
 pub(crate) const D8_OFFSETS: [(isize, isize); 8] = [
-    (-1,  0), // 1: N
-    (-1,  1), // 2: NE
-    ( 0,  1), // 3: E
-    ( 1,  1), // 4: SE
-    ( 1,  0), // 5: S
-    ( 1, -1), // 6: SW
-    ( 0, -1), // 7: W
+    (-1, 0),  // 1: N
+    (-1, 1),  // 2: NE
+    (0, 1),   // 3: E
+    (1, 1),   // 4: SE
+    (1, 0),   // 5: S
+    (1, -1),  // 6: SW
+    (0, -1),  // 7: W
     (-1, -1), // 8: NW
 ];
 
 /// Normalised distance to each D8 neighbour (cardinal = 1, diagonal = √2).
 pub(crate) const D8_DIST: [f64; 8] = [
-    1.0, std::f64::consts::SQRT_2, 1.0, std::f64::consts::SQRT_2,
-    1.0, std::f64::consts::SQRT_2, 1.0, std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
 ];
 
 /// D8 flow routing result.
@@ -74,7 +80,9 @@ pub fn compute_d8_flow(hf: &HeightField) -> FlowField {
     // ── Flow accumulation (topological sort, high → low) ────────────────────
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_unstable_by(|&a, &b| {
-        filled[b].partial_cmp(&filled[a]).unwrap_or(std::cmp::Ordering::Equal)
+        filled[b]
+            .partial_cmp(&filled[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     let mut accumulation = vec![1u32; n];
     for &i in &order {
@@ -92,7 +100,12 @@ pub fn compute_d8_flow(hf: &HeightField) -> FlowField {
         }
     }
 
-    FlowField { direction, accumulation, width: cols, height: rows }
+    FlowField {
+        direction,
+        accumulation,
+        width: cols,
+        height: rows,
+    }
 }
 
 /// Priority-flood pit filling (Barnes et al. 2014).
@@ -164,9 +177,9 @@ mod tests {
         }
         let flow = compute_d8_flow(&hf);
         let row = 4;
-        let hi = flow.accumulation[row * cols + 0];      // upslope
+        let hi = flow.accumulation[row * cols]; // upslope
         let mid = flow.accumulation[row * cols + cols / 2]; // midslope
-        let lo = flow.accumulation[row * cols + cols - 1];  // downslope
+        let lo = flow.accumulation[row * cols + cols - 1]; // downslope
         assert!(lo > mid, "downslope accum ({lo}) > mid ({mid})");
         assert!(mid > hi, "mid accum ({mid}) > upslope ({hi})");
     }
@@ -211,7 +224,10 @@ mod tests {
         let flow = compute_d8_flow(&hf);
         let max_accum = flow.accumulation.iter().cloned().max().unwrap_or(0);
         let total = (rows * cols) as u32;
-        assert!(max_accum < total, "max accum {max_accum} should be < total {total}");
+        assert!(
+            max_accum < total,
+            "max accum {max_accum} should be < total {total}"
+        );
     }
 }
 
@@ -226,6 +242,8 @@ impl PartialOrd for OrdF64 {
 }
 impl Ord for OrdF64 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }

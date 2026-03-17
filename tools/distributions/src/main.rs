@@ -16,7 +16,10 @@ use std::{
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
-#[command(name = "distributions", about = "Compute per-class metric target distributions from labeled tiles")]
+#[command(
+    name = "distributions",
+    about = "Compute per-class metric target distributions from labeled tiles"
+)]
 struct Args {
     /// Directory containing per-region sample sub-directories.
     #[arg(short, long)]
@@ -53,6 +56,7 @@ struct DemWindow {
     #[serde(deserialize_with = "null_as_nan_vec")]
     data: Vec<f32>,
     width: usize,
+    // Deserialized for schema completeness; not all fields are used in current processing.
     #[allow(dead_code)]
     height: usize,
     terrain_class: Option<String>,
@@ -135,7 +139,11 @@ fn pearson_r(x: &[f64], y: &[f64]) -> f64 {
     let n = x.len() as f64;
     let mx = x.iter().sum::<f64>() / n;
     let my = y.iter().sum::<f64>() / n;
-    let num: f64 = x.iter().zip(y.iter()).map(|(&a, &b)| (a - mx) * (b - my)).sum();
+    let num: f64 = x
+        .iter()
+        .zip(y.iter())
+        .map(|(&a, &b)| (a - mx) * (b - my))
+        .sum();
     let vx = x.iter().map(|&a| (a - mx).powi(2)).sum::<f64>().sqrt();
     let vy = y.iter().map(|&b| (b - my).powi(2)).sum::<f64>().sqrt();
     if vx < 1e-12 || vy < 1e-12 {
@@ -154,11 +162,18 @@ fn linear_detrend(seg: &[f64]) -> Vec<f64> {
     let my = seg.iter().sum::<f64>() / n as f64;
     let mx = (n - 1) as f64 / 2.0;
     let b = my - sl * mx;
-    seg.iter().enumerate().map(|(i, &v)| v - (sl * i as f64 + b)).collect()
+    seg.iter()
+        .enumerate()
+        .map(|(i, &v)| v - (sl * i as f64 + b))
+        .collect()
 }
 
 fn scalar_stats(vals: &[Option<f32>]) -> Option<Stats1> {
-    let mut valid: Vec<f32> = vals.iter().filter_map(|v| *v).filter(|v| v.is_finite()).collect();
+    let mut valid: Vec<f32> = vals
+        .iter()
+        .filter_map(|v| *v)
+        .filter(|v| v.is_finite())
+        .collect();
     if valid.is_empty() {
         return None;
     }
@@ -168,7 +183,12 @@ fn scalar_stats(vals: &[Option<f32>]) -> Option<Stats1> {
     valid.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let p10 = valid[((valid.len() - 1) as f32 * 0.1) as usize];
     let p90 = valid[((valid.len() - 1) as f32 * 0.9) as usize];
-    Some(Stats1 { mean, std, p10, p90 })
+    Some(Stats1 {
+        mean,
+        std,
+        p10,
+        p90,
+    })
 }
 
 fn hist_stats(hists: &[Option<[f32; 10]>]) -> Option<HistStats> {
@@ -221,7 +241,11 @@ fn hurst_exponent(data: &[f32], width: usize) -> Option<f32> {
         return None;
     }
     let h = h_vals.iter().sum::<f64>() / h_vals.len() as f64;
-    if h.is_finite() && h > 0.0 { Some(h as f32) } else { None }
+    if h.is_finite() && h > 0.0 {
+        Some(h as f32)
+    } else {
+        None
+    }
 }
 
 /// Structure function H estimator: H = slope(log E[(z(i+s)-z(i))^2] / log s) / 2.
@@ -236,7 +260,9 @@ fn variogram_hurst(profile: &[f64]) -> Option<f64> {
     let mut log_lags = Vec::new();
     let mut log_vars = Vec::new();
     for &lag in &lags {
-        if lag >= n { break; }
+        if lag >= n {
+            break;
+        }
         let mean_sq = (0..n - lag)
             .map(|i| (profile[i + lag] - profile[i]).powi(2))
             .sum::<f64>()
@@ -250,7 +276,11 @@ fn variogram_hurst(profile: &[f64]) -> Option<f64> {
         return None;
     }
     let h = linear_slope(&log_lags, &log_vars) / 2.0;
-    if h.is_finite() && h > 0.0 { Some(h.min(1.0)) } else { None }
+    if h.is_finite() && h > 0.0 {
+        Some(h.min(1.0))
+    } else {
+        None
+    }
 }
 
 /// Pearson correlation between local roughness (3×3 std dev) and elevation.
@@ -261,22 +291,37 @@ fn roughness_elev_corr(data: &[f32], width: usize) -> Option<f32> {
     for r in 1..height - 1 {
         for c in 1..width - 1 {
             let center = data[r * width + c];
-            if !center.is_finite() { continue; }
+            if !center.is_finite() {
+                continue;
+            }
             let nbrs: [f32; 8] = [
-                data[(r - 1) * width + c - 1], data[(r - 1) * width + c], data[(r - 1) * width + c + 1],
-                data[r * width + c - 1],                                   data[r * width + c + 1],
-                data[(r + 1) * width + c - 1], data[(r + 1) * width + c], data[(r + 1) * width + c + 1],
+                data[(r - 1) * width + c - 1],
+                data[(r - 1) * width + c],
+                data[(r - 1) * width + c + 1],
+                data[r * width + c - 1],
+                data[r * width + c + 1],
+                data[(r + 1) * width + c - 1],
+                data[(r + 1) * width + c],
+                data[(r + 1) * width + c + 1],
             ];
-            if nbrs.iter().any(|v| !v.is_finite()) { continue; }
+            if nbrs.iter().any(|v| !v.is_finite()) {
+                continue;
+            }
             let mn = nbrs.iter().sum::<f32>() / 8.0;
             let sd = (nbrs.iter().map(|&v| (v - mn).powi(2)).sum::<f32>() / 8.0).sqrt();
             elevs.push(center as f64);
             rough.push(sd as f64);
         }
     }
-    if elevs.len() < 100 { return None; }
+    if elevs.len() < 100 {
+        return None;
+    }
     let r = pearson_r(&elevs, &rough);
-    if r.is_finite() { Some(r as f32) } else { None }
+    if r.is_finite() {
+        Some(r as f32)
+    } else {
+        None
+    }
 }
 
 /// Simplified multifractal spectrum width via generalised Hurst H(q) for q ∈ {−4,−2,2,4}.
@@ -309,7 +354,11 @@ fn multifractal_width(data: &[f32], width: usize) -> Option<f32> {
                     Some(lm.exp())
                 } else {
                     let mp = fq_vals.iter().map(|v| v.powf(q)).sum::<f64>() / fq_vals.len() as f64;
-                    if mp > 0.0 { Some(mp.powf(1.0 / q)) } else { None }
+                    if mp > 0.0 {
+                        Some(mp.powf(1.0 / q))
+                    } else {
+                        None
+                    }
                 };
                 if let Some(fq) = fq_opt {
                     if fq.is_finite() && fq > 0.0 {
@@ -323,10 +372,16 @@ fn multifractal_width(data: &[f32], width: usize) -> Option<f32> {
             h_of_q.push(linear_slope(&log_s, &log_fq));
         }
     }
-    if h_of_q.len() < 2 { return None; }
+    if h_of_q.len() < 2 {
+        return None;
+    }
     let w = h_of_q.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
         - h_of_q.iter().cloned().fold(f64::INFINITY, f64::min);
-    if w.is_finite() && w >= 0.0 { Some(w as f32) } else { None }
+    if w.is_finite() && w >= 0.0 {
+        Some(w as f32)
+    } else {
+        None
+    }
 }
 
 /// Aspect circular variance (1 − R̄).  Higher = more isotropic; lower = stronger structural grain.
@@ -340,17 +395,23 @@ fn grain_anisotropy(data: &[f32], width: usize) -> Option<f32> {
             let w = data[r * width + c - 1] as f64;
             let nn = data[(r - 1) * width + c] as f64;
             let sv = data[(r + 1) * width + c] as f64;
-            if [e, w, nn, sv].iter().any(|v| !v.is_finite()) { continue; }
+            if [e, w, nn, sv].iter().any(|v| !v.is_finite()) {
+                continue;
+            }
             let dx = (e - w) / (2.0 * ps);
             let dy = (nn - sv) / (2.0 * ps);
-            if dx == 0.0 && dy == 0.0 { continue; }
+            if dx == 0.0 && dy == 0.0 {
+                continue;
+            }
             let asp = dy.atan2(-dx);
             ss += asp.sin();
             cs += asp.cos();
             n += 1;
         }
     }
-    if n < 100 { return None; }
+    if n < 100 {
+        return None;
+    }
     let r_bar = ((ss / n as f64).powi(2) + (cs / n as f64).powi(2)).sqrt();
     Some((1.0 - r_bar) as f32)
 }
@@ -358,11 +419,15 @@ fn grain_anisotropy(data: &[f32], width: usize) -> Option<f32> {
 /// Hypsometric integral: (mean − min) / (max − min).
 fn hypsometric_integral(data: &[f32]) -> Option<f32> {
     let valid: Vec<f32> = data.iter().cloned().filter(|v| v.is_finite()).collect();
-    if valid.is_empty() { return None; }
+    if valid.is_empty() {
+        return None;
+    }
     let mn = valid.iter().cloned().fold(f32::INFINITY, f32::min);
     let mx = valid.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let range = mx - mn;
-    if range < 1.0 { return None; }
+    if range < 1.0 {
+        return None;
+    }
     let mean = valid.iter().sum::<f32>() / valid.len() as f32;
     Some((mean - mn) / range)
 }
@@ -379,14 +444,25 @@ fn slope_mode_deg(data: &[f32], width: usize) -> Option<f32> {
             let w = data[r * width + c - 1];
             let nn = data[(r - 1) * width + c];
             let sv = data[(r + 1) * width + c];
-            if [e, w, nn, sv].iter().any(|v| !v.is_finite()) { continue; }
-            let slope = ((e - w) / (2.0 * ps)).hypot((nn - sv) / (2.0 * ps)).atan().to_degrees();
+            if [e, w, nn, sv].iter().any(|v| !v.is_finite()) {
+                continue;
+            }
+            let slope = ((e - w) / (2.0 * ps))
+                .hypot((nn - sv) / (2.0 * ps))
+                .atan()
+                .to_degrees();
             bins[(slope as usize).min(90)] += 1;
             any = true;
         }
     }
-    if !any { return None; }
-    let mode = bins.iter().enumerate().max_by_key(|(_, &v)| v).map(|(i, _)| i)?;
+    if !any {
+        return None;
+    }
+    let mode = bins
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, &v)| v)
+        .map(|(i, _)| i)?;
     Some(mode as f32 + 0.5)
 }
 
@@ -401,7 +477,9 @@ fn geomorphon_histogram(geom: &[f32]) -> Option<[f32; 10]> {
             total += 1;
         }
     }
-    if total == 0 { return None; }
+    if total == 0 {
+        return None;
+    }
     let mut hist = [0f32; 10];
     for i in 0..10 {
         hist[i] = counts[i] as f32 / total as f32;
@@ -415,14 +493,19 @@ fn geomorphon_histogram(geom: &[f32]) -> Option<[f32; 10]> {
 fn drainage_density(geom: &[f32], width: usize) -> Option<f32> {
     let pixel_km = 0.090f32;
     let tile_area_km2 = (width as f32 * pixel_km).powi(2);
-    let stream_cells = geom.iter()
+    let stream_cells = geom
+        .iter()
         .filter(|&&v| {
-            if !v.is_finite() { return false; }
+            if !v.is_finite() {
+                return false;
+            }
             let c = v.round() as i32;
             c == 7 || c == 9
         })
         .count();
-    if stream_cells == 0 { return None; }
+    if stream_cells == 0 {
+        return None;
+    }
     Some(stream_cells as f32 * pixel_km / tile_area_km2)
 }
 
@@ -432,7 +515,9 @@ fn morans_i_subbasins(data: &[f32], width: usize) -> Option<f32> {
     let block = 64usize;
     let nr = height / block;
     let nc = width / block;
-    if nr < 2 || nc < 2 { return None; }
+    if nr < 2 || nc < 2 {
+        return None;
+    }
     let mut hi_grid = vec![f32::NAN; nr * nc];
     for br in 0..nr {
         for bc in 0..nc {
@@ -451,7 +536,9 @@ fn morans_i_subbasins(data: &[f32], width: usize) -> Option<f32> {
         .filter(|(_, v)| v.is_finite())
         .map(|(i, &v)| (i, v))
         .collect();
-    if valid.len() < 4 { return None; }
+    if valid.len() < 4 {
+        return None;
+    }
     let mean_hi = valid.iter().map(|(_, v)| v).sum::<f32>() / valid.len() as f32;
     let (mut w_sum, mut num, mut den) = (0.0f64, 0.0f64, 0.0f64);
     for &(i, vi) in &valid {
@@ -460,10 +547,14 @@ fn morans_i_subbasins(data: &[f32], width: usize) -> Option<f32> {
         den += ((vi - mean_hi) * (vi - mean_hi)) as f64;
         for dr in -1i32..=1 {
             for dc in -1i32..=1 {
-                if dr == 0 && dc == 0 { continue; }
+                if dr == 0 && dc == 0 {
+                    continue;
+                }
                 let rn = ri + dr;
                 let cn = ci + dc;
-                if rn < 0 || cn < 0 || rn >= nr as i32 || cn >= nc as i32 { continue; }
+                if rn < 0 || cn < 0 || rn >= nr as i32 || cn >= nc as i32 {
+                    continue;
+                }
                 let j = rn as usize * nc + cn as usize;
                 if hi_grid[j].is_finite() {
                     num += ((vi - mean_hi) * (hi_grid[j] - mean_hi)) as f64;
@@ -472,9 +563,15 @@ fn morans_i_subbasins(data: &[f32], width: usize) -> Option<f32> {
             }
         }
     }
-    if den == 0.0 || w_sum == 0.0 { return None; }
+    if den == 0.0 || w_sum == 0.0 {
+        return None;
+    }
     let moran = (valid.len() as f64 / w_sum) * (num / den);
-    if moran.is_finite() { Some(moran as f32) } else { None }
+    if moran.is_finite() {
+        Some(moran as f32)
+    } else {
+        None
+    }
 }
 
 /// TPI scale ratio: std(TPI at r=3) / std(TPI at r=31). Subsampled at step=8 for performance.
@@ -496,9 +593,11 @@ fn tpi_scale_ratio(data: &[f32], width: usize) -> Option<f32> {
                     let mut cnt = 0usize;
                     for dr in -(half as i32)..=(half as i32) {
                         for dc in -(half as i32)..=(half as i32) {
-                            if dr == 0 && dc == 0 { continue; }
-                            let v = data[(r as i32 + dr) as usize * width
-                                + (c as i32 + dc) as usize];
+                            if dr == 0 && dc == 0 {
+                                continue;
+                            }
+                            let v =
+                                data[(r as i32 + dr) as usize * width + (c as i32 + dc) as usize];
                             if v.is_finite() {
                                 sum += v as f64;
                                 cnt += 1;
@@ -515,14 +614,20 @@ fn tpi_scale_ratio(data: &[f32], width: usize) -> Option<f32> {
         }
         if vals.len() >= 10 {
             let mn = vals.iter().sum::<f64>() / vals.len() as f64;
-            let sd = (vals.iter().map(|v| (v - mn).powi(2)).sum::<f64>() / vals.len() as f64)
-                .sqrt();
+            let sd =
+                (vals.iter().map(|v| (v - mn).powi(2)).sum::<f64>() / vals.len() as f64).sqrt();
             tpi_stds.push(sd);
         }
     }
-    if tpi_stds.len() < 2 { return None; }
+    if tpi_stds.len() < 2 {
+        return None;
+    }
     let ratio = tpi_stds[0] / tpi_stds.last().unwrap();
-    if ratio.is_finite() && ratio > 0.0 { Some(ratio as f32) } else { None }
+    if ratio.is_finite() && ratio > 0.0 {
+        Some(ratio as f32)
+    } else {
+        None
+    }
 }
 
 // ── Window discovery ──────────────────────────────────────────────────────────
@@ -540,14 +645,20 @@ fn discover_windows(samples_dir: &Path, region_filter: Option<&str>) -> Result<V
         let region_entry = region_entry?;
         let region = region_entry.file_name().to_string_lossy().into_owned();
         if let Some(rf) = region_filter {
-            if region != rf { continue; }
+            if region != rf {
+                continue;
+            }
         }
         let dem_dir = region_entry.path().join("dem");
-        if !dem_dir.is_dir() { continue; }
+        if !dem_dir.is_dir() {
+            continue;
+        }
         for dem_entry in fs::read_dir(&dem_dir)? {
             let dem_entry = dem_entry?;
             let dem_path = dem_entry.path();
-            if dem_path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+            if dem_path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
             let stem = dem_path.file_stem().unwrap().to_string_lossy().into_owned();
             let geom_path = region_entry
                 .path()
@@ -557,7 +668,10 @@ fn discover_windows(samples_dir: &Path, region_filter: Option<&str>) -> Result<V
                 eprintln!("Warning: no geom for {}, skipping", dem_path.display());
                 continue;
             }
-            entries.push(WinEntry { dem_path, geom_path });
+            entries.push(WinEntry {
+                dem_path,
+                geom_path,
+            });
         }
     }
     Ok(entries)
@@ -568,19 +682,22 @@ fn compute_window(entry: &WinEntry) -> Result<(String, WinMetrics)> {
         .with_context(|| format!("parsing {}", entry.dem_path.display()))?;
     let geom: GeomWin = serde_json::from_str(&fs::read_to_string(&entry.geom_path)?)
         .with_context(|| format!("parsing {}", entry.geom_path.display()))?;
-    let cls = dem.terrain_class.clone().unwrap_or_else(|| "unclassified".into());
+    let cls = dem
+        .terrain_class
+        .clone()
+        .unwrap_or_else(|| "unclassified".into());
     let w = dem.width;
     let m = WinMetrics {
-        hurst:          hurst_exponent(&dem.data, w),
+        hurst: hurst_exponent(&dem.data, w),
         roughness_elev: roughness_elev_corr(&dem.data, w),
-        mf_width:       multifractal_width(&dem.data, w),
-        anisotropy:     grain_anisotropy(&dem.data, w),
-        hi:             hypsometric_integral(&dem.data),
-        slope_mode:     slope_mode_deg(&dem.data, w),
-        geom_hist:      geomorphon_histogram(&geom.data),
-        drain_density:  drainage_density(&geom.data, w),
-        morans_i:       morans_i_subbasins(&dem.data, w),
-        tpi_ratio:      tpi_scale_ratio(&dem.data, w),
+        mf_width: multifractal_width(&dem.data, w),
+        anisotropy: grain_anisotropy(&dem.data, w),
+        hi: hypsometric_integral(&dem.data),
+        slope_mode: slope_mode_deg(&dem.data, w),
+        geom_hist: geomorphon_histogram(&geom.data),
+        drain_density: drainage_density(&geom.data, w),
+        morans_i: morans_i_subbasins(&dem.data, w),
+        tpi_ratio: tpi_scale_ratio(&dem.data, w),
     };
     Ok((cls, m))
 }
@@ -637,30 +754,32 @@ fn main() -> Result<()> {
     classes.sort();
 
     for cls in classes {
-        if cls == "unclassified" { continue; }
+        if cls == "unclassified" {
+            continue;
+        }
         let metrics = &by_class[cls];
 
-        let hurst_v:  Vec<Option<f32>>      = metrics.iter().map(|m| m.hurst).collect();
-        let re_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.roughness_elev).collect();
-        let mf_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.mf_width).collect();
-        let anis_v:   Vec<Option<f32>>      = metrics.iter().map(|m| m.anisotropy).collect();
-        let hi_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.hi).collect();
-        let sl_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.slope_mode).collect();
-        let geom_v:   Vec<Option<[f32; 10]>>= metrics.iter().map(|m| m.geom_hist).collect();
-        let dd_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.drain_density).collect();
-        let mi_v:     Vec<Option<f32>>      = metrics.iter().map(|m| m.morans_i).collect();
-        let tpi_v:    Vec<Option<f32>>      = metrics.iter().map(|m| m.tpi_ratio).collect();
+        let hurst_v: Vec<Option<f32>> = metrics.iter().map(|m| m.hurst).collect();
+        let re_v: Vec<Option<f32>> = metrics.iter().map(|m| m.roughness_elev).collect();
+        let mf_v: Vec<Option<f32>> = metrics.iter().map(|m| m.mf_width).collect();
+        let anis_v: Vec<Option<f32>> = metrics.iter().map(|m| m.anisotropy).collect();
+        let hi_v: Vec<Option<f32>> = metrics.iter().map(|m| m.hi).collect();
+        let sl_v: Vec<Option<f32>> = metrics.iter().map(|m| m.slope_mode).collect();
+        let geom_v: Vec<Option<[f32; 10]>> = metrics.iter().map(|m| m.geom_hist).collect();
+        let dd_v: Vec<Option<f32>> = metrics.iter().map(|m| m.drain_density).collect();
+        let mi_v: Vec<Option<f32>> = metrics.iter().map(|m| m.morans_i).collect();
+        let tpi_v: Vec<Option<f32>> = metrics.iter().map(|m| m.tpi_ratio).collect();
 
         let hurst_s = scalar_stats(&hurst_v);
-        let re_s    = scalar_stats(&re_v);
-        let mf_s    = scalar_stats(&mf_v);
-        let anis_s  = scalar_stats(&anis_v);
-        let hi_s    = scalar_stats(&hi_v);
-        let sl_s    = scalar_stats(&sl_v);
-        let geom_s  = hist_stats(&geom_v);
-        let dd_s    = scalar_stats(&dd_v);
-        let mi_s    = scalar_stats(&mi_v);
-        let tpi_s   = scalar_stats(&tpi_v);
+        let re_s = scalar_stats(&re_v);
+        let mf_s = scalar_stats(&mf_v);
+        let anis_s = scalar_stats(&anis_v);
+        let hi_s = scalar_stats(&hi_v);
+        let sl_s = scalar_stats(&sl_v);
+        let geom_s = hist_stats(&geom_v);
+        let dd_s = scalar_stats(&dd_v);
+        let mi_s = scalar_stats(&mi_v);
+        let tpi_s = scalar_stats(&tpi_v);
 
         let missing: Vec<&str> = [
             hurst_s.is_none().then_some("hurst_exponent"),
@@ -679,22 +798,26 @@ fn main() -> Result<()> {
         .collect();
 
         if !missing.is_empty() {
-            bail!("Class {}: metrics uncomputable: {}", cls, missing.join(", "));
+            bail!(
+                "Class {}: metrics uncomputable: {}",
+                cls,
+                missing.join(", ")
+            );
         }
 
         let targets = ClassTargets {
             terrain_class: cls.clone(),
             n_windows: metrics.len(),
-            hurst_exponent:      hurst_s.unwrap(),
+            hurst_exponent: hurst_s.unwrap(),
             roughness_elev_corr: re_s.unwrap(),
-            multifractal_width:  mf_s.unwrap(),
-            grain_anisotropy:    anis_s.unwrap(),
+            multifractal_width: mf_s.unwrap(),
+            grain_anisotropy: anis_s.unwrap(),
             hypsometric_integral: hi_s.unwrap(),
-            slope_mode_deg:      sl_s.unwrap(),
+            slope_mode_deg: sl_s.unwrap(),
             geomorphon_histogram: geom_s.unwrap(),
-            drainage_density:    dd_s.unwrap(),
-            morans_i:            mi_s.unwrap(),
-            tpi_scale_ratio:     tpi_s.unwrap(),
+            drainage_density: dd_s.unwrap(),
+            morans_i: mi_s.unwrap(),
+            tpi_scale_ratio: tpi_s.unwrap(),
         };
 
         let out_path = out_dir.join(format!("{}.json", cls));
@@ -715,7 +838,11 @@ fn main() -> Result<()> {
         eprintln!("  -> {}", out_path.display());
     }
 
-    eprintln!("\nDone. {} class files in {}.", by_class.len().saturating_sub(1), args.output);
+    eprintln!(
+        "\nDone. {} class files in {}.",
+        by_class.len().saturating_sub(1),
+        args.output
+    );
     Ok(())
 }
 
@@ -739,7 +866,8 @@ mod tests {
                 (0..width).map(move |c| {
                     let x = c as f32 / width as f32;
                     let y = r as f32 / height as f32;
-                    amp * (6.28 * x).sin() * (6.28 * y).cos() + (r + c) as f32 * 0.5
+                    amp * (std::f32::consts::TAU * x).sin() * (std::f32::consts::TAU * y).cos()
+                        + (r + c) as f32 * 0.5
                 })
             })
             .collect()
@@ -799,7 +927,7 @@ mod tests {
         let v = grain_anisotropy(&data, 64);
         assert!(v.is_some());
         let v = v.unwrap();
-        assert!(v >= 0.0 && v <= 1.0, "anisotropy={}", v);
+        assert!((0.0..=1.0).contains(&v), "anisotropy={}", v);
     }
 
     #[test]

@@ -37,6 +37,7 @@ struct ClassTargets {
 #[derive(Deserialize, Clone, Copy)]
 struct Stats1 {
     mean: f32,
+    // Deserialized for schema completeness; not all fields are used in current validation output.
     #[allow(dead_code)]
     std: f32,
     #[allow(dead_code)]
@@ -147,6 +148,7 @@ struct LitResult {
     value: f32,
     lo: f32,
     hi: f32,
+    // Deserialized for schema completeness; not all fields are used in current validation output.
     #[allow(dead_code)]
     source: &'static str,
     status: Status,
@@ -165,7 +167,7 @@ fn extract_metric(t: &ClassTargets, label: &str) -> Option<f32> {
         }
         "geomorphon flat+slope fraction" => {
             // geomorphon class 1 (flat) = index 0; class 6 (slope) = index 5
-            let flat = t.geomorphon_histogram.mean.get(0).copied()?;
+            let flat = t.geomorphon_histogram.mean.first().copied()?;
             let slope = t.geomorphon_histogram.mean.get(5).copied()?;
             Some(flat + slope)
         }
@@ -228,7 +230,11 @@ fn run_sanity_checks(targets: &[ClassTargets]) -> Vec<SanityResult> {
         .collect();
     results.push(SanityResult {
         description: "n_windows ≥ 50 for all classes".to_string(),
-        status: if under.is_empty() { Status::Pass } else { Status::Fail },
+        status: if under.is_empty() {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         detail: if under.is_empty() {
             targets
                 .iter()
@@ -254,7 +260,11 @@ fn run_sanity_checks(targets: &[ClassTargets]) -> Vec<SanityResult> {
         .collect();
     results.push(SanityResult {
         description: "geomorphon_histogram sums to 1.0 ± 0.001".to_string(),
-        status: if bad_hist.is_empty() { Status::Pass } else { Status::Fail },
+        status: if bad_hist.is_empty() {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         detail: if bad_hist.is_empty() {
             "All histograms normalised correctly".to_string()
         } else {
@@ -274,7 +284,11 @@ fn run_sanity_checks(targets: &[ClassTargets]) -> Vec<SanityResult> {
         .collect();
     results.push(SanityResult {
         description: "drainage_density.mean in (0, 20] km/km²".to_string(),
-        status: if bad_dd.is_empty() { Status::Pass } else { Status::Fail },
+        status: if bad_dd.is_empty() {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         detail: if bad_dd.is_empty() {
             targets
                 .iter()
@@ -298,7 +312,11 @@ fn run_sanity_checks(targets: &[ClassTargets]) -> Vec<SanityResult> {
         .collect();
     results.push(SanityResult {
         description: "hypsometric_integral.mean in (0, 1)".to_string(),
-        status: if bad_hi.is_empty() { Status::Pass } else { Status::Fail },
+        status: if bad_hi.is_empty() {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         detail: if bad_hi.is_empty() {
             "All classes within physical bounds".to_string()
         } else {
@@ -318,7 +336,11 @@ fn run_sanity_checks(targets: &[ClassTargets]) -> Vec<SanityResult> {
         .collect();
     results.push(SanityResult {
         description: "hurst_exponent.mean in (0, 1]".to_string(),
-        status: if bad_h.is_empty() { Status::Pass } else { Status::Fail },
+        status: if bad_h.is_empty() {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         detail: if bad_h.is_empty() {
             "All classes within physical bounds".to_string()
         } else {
@@ -346,8 +368,8 @@ fn main() -> Result<()> {
             continue;
         }
         let s = fs::read_to_string(&path)?;
-        let t: ClassTargets = serde_json::from_str(&s)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let t: ClassTargets =
+            serde_json::from_str(&s).with_context(|| format!("parsing {}", path.display()))?;
         targets.push(t);
     }
     targets.sort_by(|a, b| a.terrain_class.cmp(&b.terrain_class));
@@ -357,7 +379,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("Loaded {} class files from {}.", targets.len(), args.targets_dir);
+    eprintln!(
+        "Loaded {} class files from {}.",
+        targets.len(),
+        args.targets_dir
+    );
     eprintln!();
 
     // Summary table of loaded distributions
@@ -369,7 +395,7 @@ fn main() -> Result<()> {
     for t in &targets {
         let vh = t.geomorphon_histogram.mean.get(6).copied().unwrap_or(0.0)
             + t.geomorphon_histogram.mean.get(8).copied().unwrap_or(0.0);
-        let fs = t.geomorphon_histogram.mean.get(0).copied().unwrap_or(0.0)
+        let fs = t.geomorphon_histogram.mean.first().copied().unwrap_or(0.0)
             + t.geomorphon_histogram.mean.get(5).copied().unwrap_or(0.0);
         eprintln!(
             "  {:<16} {:>8}  {:>7.3}  {:>7.3}  {:>9.3}  {:>7.1}%  {:>7.1}%",
@@ -387,10 +413,13 @@ fn main() -> Result<()> {
     // ── Literature checks ──────────────────────────────────────────────────────
 
     let lit = run_lit_checks(&targets);
-    eprintln!("  ─── Literature checks ({}) ─────────────────────────────────", lit.len());
     eprintln!(
-        "  {:<16} {:<38} {:>7}  {:>13}  {}",
-        "Class", "Metric", "Value", "[lo   ..  hi]", "Status"
+        "  ─── Literature checks ({}) ─────────────────────────────────",
+        lit.len()
+    );
+    eprintln!(
+        "  {:<16} {:<38} {:>7}  {:>13}  Status",
+        "Class", "Metric", "Value", "[lo   ..  hi]"
     );
     eprintln!("  {}", "─".repeat(90));
 
@@ -404,14 +433,18 @@ fn main() -> Result<()> {
             (Status::Fail, None) => ("FAIL".to_string(), String::new()),
             (Status::Fail, Some(note)) => {
                 footnote_n += 1;
-                footnotes.push((footnote_n, format!("[{} {}]", r.class, r.metric_label), note));
+                footnotes.push((
+                    footnote_n,
+                    format!("[{} {}]", r.class, r.metric_label),
+                    note,
+                ));
                 (format!("FAIL*{footnote_n}"), String::new())
             }
         };
         let _ = fn_ref;
         eprintln!(
-            "  {:<16} {:<38} {:>7.3}  [{:>5.2} .. {:<5.2}]  {}",
-            r.class, r.metric_label, r.value, r.lo, r.hi, status_tag
+            "  {:<16} {:<38} {:>7.3}  [{:>5.2} .. {:<5.2}]  {status_tag}",
+            r.class, r.metric_label, r.value, r.lo, r.hi
         );
     }
 
@@ -426,7 +459,10 @@ fn main() -> Result<()> {
     // ── Sanity checks ──────────────────────────────────────────────────────────
 
     let sanity = run_sanity_checks(&targets);
-    eprintln!("  ─── Sanity checks ({}) ─────────────────────────────────────", sanity.len());
+    eprintln!(
+        "  ─── Sanity checks ({}) ─────────────────────────────────────",
+        sanity.len()
+    );
     for r in &sanity {
         let tag = match r.status {
             Status::Pass => "PASS",
@@ -488,10 +524,25 @@ mod tests {
         ClassTargets {
             terrain_class: class.to_string(),
             n_windows: 100,
-            hurst_exponent: Stats1 { mean: hurst, std: 0.1, p10: hurst - 0.1, p90: hurst + 0.1 },
-            hypsometric_integral: Stats1 { mean: hi, std: 0.1, p10: hi - 0.1, p90: hi + 0.1 },
+            hurst_exponent: Stats1 {
+                mean: hurst,
+                std: 0.1,
+                p10: hurst - 0.1,
+                p90: hurst + 0.1,
+            },
+            hypsometric_integral: Stats1 {
+                mean: hi,
+                std: 0.1,
+                p10: hi - 0.1,
+                p90: hi + 0.1,
+            },
             geomorphon_histogram: HistStats { mean: hist },
-            drainage_density: Stats1 { mean: dd, std: 0.5, p10: dd - 0.5, p90: dd + 0.5 },
+            drainage_density: Stats1 {
+                mean: dd,
+                std: 0.5,
+                p10: dd - 0.5,
+                p90: dd + 0.5,
+            },
         }
     }
 
@@ -505,7 +556,10 @@ mod tests {
     fn test_alpine_hurst_pass() {
         let t = vec![make_target("Alpine", 0.80, 0.55, 2.0, uniform_hist())];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Alpine" && c.metric_label.contains("hurst")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Alpine" && c.metric_label.contains("hurst"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -514,7 +568,10 @@ mod tests {
         // Exact lower boundary 0.75 should PASS (inclusive)
         let t = vec![make_target("Alpine", 0.75, 0.55, 2.0, uniform_hist())];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Alpine" && c.metric_label.contains("hurst")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Alpine" && c.metric_label.contains("hurst"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -523,7 +580,10 @@ mod tests {
         // 0.745 = 0.75 - 0.005 = within 10% of [0.75..0.90] span (0.15 × 0.10 = 0.015) → WARN
         let t = vec![make_target("Alpine", 0.745, 0.55, 2.0, uniform_hist())];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Alpine" && c.metric_label.contains("hurst")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Alpine" && c.metric_label.contains("hurst"))
+            .unwrap();
         assert_eq!(check.status, Status::Warn);
     }
 
@@ -531,18 +591,36 @@ mod tests {
     fn test_alpine_hurst_fail() {
         let t = vec![make_target("Alpine", 0.50, 0.55, 2.0, uniform_hist())];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Alpine" && c.metric_label.contains("hurst")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Alpine" && c.metric_label.contains("hurst"))
+            .unwrap();
         assert_eq!(check.status, Status::Fail);
-        assert!(check.known_deviation.is_none(), "Alpine hurst fail should be unexpected");
+        assert!(
+            check.known_deviation.is_none(),
+            "Alpine hurst fail should be unexpected"
+        );
     }
 
     #[test]
     fn test_fluvialhumid_hurst_fail_is_known() {
-        let t = vec![make_target("FluvialHumid", 0.494, 0.45, 1.2, uniform_hist())];
+        let t = vec![make_target(
+            "FluvialHumid",
+            0.494,
+            0.45,
+            1.2,
+            uniform_hist(),
+        )];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "FluvialHumid" && c.metric_label.contains("hurst")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "FluvialHumid" && c.metric_label.contains("hurst"))
+            .unwrap();
         assert_eq!(check.status, Status::Fail);
-        assert!(check.known_deviation.is_some(), "FluvialHumid hurst fail should be documented");
+        assert!(
+            check.known_deviation.is_some(),
+            "FluvialHumid hurst fail should be documented"
+        );
     }
 
     #[test]
@@ -555,7 +633,10 @@ mod tests {
         hist[8] = 0.1; // valley
         let t = vec![make_target("Alpine", 0.80, 0.55, 2.0, hist)];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Alpine" && c.metric_label.contains("valley")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Alpine" && c.metric_label.contains("valley"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
         assert!((check.value - 0.30).abs() < 0.001, "value={}", check.value);
     }
@@ -573,7 +654,10 @@ mod tests {
         }
         let t = vec![make_target("Cratonic", 0.55, 0.28, 0.45, hist)];
         let r = run_lit_checks(&t);
-        let check = r.iter().find(|c| c.class == "Cratonic" && c.metric_label.contains("flat")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.class == "Cratonic" && c.metric_label.contains("flat"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
         assert!((check.value - 0.790).abs() < 0.001, "value={}", check.value);
     }
@@ -584,7 +668,10 @@ mod tests {
     fn test_sanity_n_windows_pass() {
         let targets = vec![make_target("Alpine", 0.80, 0.55, 2.0, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("n_windows")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("n_windows"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -593,7 +680,10 @@ mod tests {
         let mut t = make_target("Alpine", 0.80, 0.55, 2.0, uniform_hist());
         t.n_windows = 30;
         let r = run_sanity_checks(&[t]);
-        let check = r.iter().find(|c| c.description.contains("n_windows")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("n_windows"))
+            .unwrap();
         assert_eq!(check.status, Status::Fail);
     }
 
@@ -601,7 +691,10 @@ mod tests {
     fn test_sanity_histogram_sum_pass() {
         let targets = vec![make_target("Alpine", 0.80, 0.55, 2.0, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("histogram")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("histogram"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -611,7 +704,10 @@ mod tests {
         hist[0] = 0.5; // sum = 1.4 → FAIL
         let targets = vec![make_target("Alpine", 0.80, 0.55, 2.0, hist)];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("histogram")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("histogram"))
+            .unwrap();
         assert_eq!(check.status, Status::Fail);
     }
 
@@ -619,7 +715,10 @@ mod tests {
     fn test_sanity_drainage_density_pass() {
         let targets = vec![make_target("Alpine", 0.80, 0.55, 2.275, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("drainage_density")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("drainage_density"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -627,7 +726,10 @@ mod tests {
     fn test_sanity_drainage_density_implausible() {
         let targets = vec![make_target("Alpine", 0.80, 0.55, 25.0, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("drainage_density")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("drainage_density"))
+            .unwrap();
         assert_eq!(check.status, Status::Fail);
     }
 
@@ -635,7 +737,10 @@ mod tests {
     fn test_sanity_hi_bounds_pass() {
         let targets = vec![make_target("Alpine", 0.80, 0.50, 2.0, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("hypsometric")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("hypsometric"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 
@@ -643,7 +748,10 @@ mod tests {
     fn test_sanity_hurst_bounds_pass() {
         let targets = vec![make_target("Alpine", 0.80, 0.55, 2.0, uniform_hist())];
         let r = run_sanity_checks(&targets);
-        let check = r.iter().find(|c| c.description.contains("hurst_exponent")).unwrap();
+        let check = r
+            .iter()
+            .find(|c| c.description.contains("hurst_exponent"))
+            .unwrap();
         assert_eq!(check.status, Status::Pass);
     }
 }

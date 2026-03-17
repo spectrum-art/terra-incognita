@@ -3,20 +3,15 @@
 //! Measures the characteristic width of valley and hollow features perpendicular
 //! to the grain direction by analyzing runs of valley/hollow pixels along transects.
 
-use crate::transects::{Transect, sample_geom};
+use crate::transects::{sample_geom, Transect};
 
 const VALLEY_CLASS: f32 = 9.0;
 const HOLLOW_CLASS: f32 = 7.0;
 const PIXEL_TO_KM: f64 = 0.09;
 
-#[allow(dead_code)]
 pub struct ValleyWidthResult {
     /// Mean valley run width in pixels.
     pub mean_px: f64,
-    /// Standard deviation in pixels.
-    pub std_px: f64,
-    /// Maximum valley run width in pixels.
-    pub max_px: f64,
 }
 
 fn is_valley_or_hollow(v: f32) -> bool {
@@ -34,11 +29,14 @@ pub fn compute_valley_width(
     for transect in transects {
         // Scan transect for valley/hollow runs with gap tolerance of 1 pixel.
         let n = transect.len();
-        if n == 0 { continue; }
+        if n == 0 {
+            continue;
+        }
 
-        let classes: Vec<bool> = transect.iter().map(|&(r, c)| {
-            is_valley_or_hollow(sample_geom(geom, width, height, r, c))
-        }).collect();
+        let classes: Vec<bool> = transect
+            .iter()
+            .map(|&(r, c)| is_valley_or_hollow(sample_geom(geom, width, height, r, c)))
+            .collect();
 
         // Bridge single-pixel gaps: if classes[i] is false but classes[i-1] and
         // classes[i+1] are true, treat it as true.
@@ -65,18 +63,18 @@ pub fn compute_valley_width(
     }
 
     if widths.is_empty() {
-        return ValleyWidthResult { mean_px: f64::NAN, std_px: f64::NAN, max_px: f64::NAN };
+        return ValleyWidthResult { mean_px: f64::NAN };
     }
 
     let n = widths.len() as f64;
     let mean = widths.iter().sum::<f64>() / n;
-    let var = widths.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n;
-    let max = widths.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
-    ValleyWidthResult { mean_px: mean, std_px: var.sqrt(), max_px: max }
+    ValleyWidthResult { mean_px: mean }
 }
 
-pub fn to_km_mean(result: &ValleyWidthResult) -> f64 { result.mean_px * PIXEL_TO_KM }
+pub fn to_km_mean(result: &ValleyWidthResult) -> f64 {
+    result.mean_px * PIXEL_TO_KM
+}
 
 #[cfg(test)]
 mod tests {
@@ -84,7 +82,11 @@ mod tests {
     use crate::transects::build_transects;
     use std::f64::consts::FRAC_PI_2;
 
-    fn make_geom_with_valley(width: usize, height: usize, valley_cols: std::ops::Range<usize>) -> Vec<f32> {
+    fn make_geom_with_valley(
+        width: usize,
+        height: usize,
+        valley_cols: std::ops::Range<usize>,
+    ) -> Vec<f32> {
         let mut geom = vec![6.0f32; width * height]; // all slope
         for r in 0..height {
             for c in valley_cols.clone() {
@@ -104,8 +106,11 @@ mod tests {
         let transects = build_transects(w, h, FRAC_PI_2, 20);
         let result = compute_valley_width(&geom, w, h, &transects);
         assert!(!result.mean_px.is_nan());
-        assert!(result.mean_px > 15.0 && result.mean_px < 25.0,
-            "expected ~20px valley width, got {}", result.mean_px);
+        assert!(
+            result.mean_px > 15.0 && result.mean_px < 25.0,
+            "expected ~20px valley width, got {}",
+            result.mean_px
+        );
     }
 
     #[test]
@@ -123,14 +128,22 @@ mod tests {
         // Valley: cols 10-19, gap at 20 (slope), valley 21-30.
         let mut geom = vec![6.0f32; w * h];
         for r in 0..h {
-            for c in 10..20 { geom[r * w + c] = 9.0; }
+            for c in 10..20 {
+                geom[r * w + c] = 9.0;
+            }
             // col 20 remains slope
-            for c in 21..31 { geom[r * w + c] = 9.0; }
+            for c in 21..31 {
+                geom[r * w + c] = 9.0;
+            }
         }
         let transects = build_transects(w, h, FRAC_PI_2, 20);
         let result = compute_valley_width(&geom, w, h, &transects);
         assert!(!result.mean_px.is_nan());
         // With bridging, the two runs merge → width ≈ 21.
-        assert!(result.mean_px > 18.0, "expected bridged run > 18px, got {}", result.mean_px);
+        assert!(
+            result.mean_px > 18.0,
+            "expected bridged run > 18px, got {}",
+            result.mean_px
+        );
     }
 }

@@ -6,6 +6,8 @@
 //! ridge pixels for ridge-dependent analysis (≥ 50).
 
 /// Result of grain direction analysis for a single window.
+// `ridge_count` is retained for diagnostics and test assertions after the
+// watershed rewrite reduced the production use of raw ridge-pixel counts.
 #[allow(dead_code)]
 pub struct GrainResult {
     /// Principal axis angle in radians, measured from the column axis.
@@ -38,7 +40,11 @@ pub fn compute_grain(geom: &[f32], width: usize, height: usize) -> GrainResult {
 
     let ridge_count = pts.len();
     if ridge_count < MIN_RIDGE {
-        return GrainResult { angle_rad: 0.0, has_ridges: false, ridge_count };
+        return GrainResult {
+            angle_rad: 0.0,
+            has_ridges: false,
+            ridge_count,
+        };
     }
 
     // PCA: compute covariance of (row, col).
@@ -73,17 +79,29 @@ pub fn compute_grain(geom: &[f32], width: usize, height: usize) -> GrainResult {
         (cov_rc, lambda1 - cov_rr)
     } else {
         // Already axis-aligned; eigenvector along row or col axis.
-        if cov_rr >= cov_cc { (1.0, 0.0) } else { (0.0, 1.0) }
+        if cov_rr >= cov_cc {
+            (1.0, 0.0)
+        } else {
+            (0.0, 1.0)
+        }
     };
 
     // Angle of principal axis (row axis = 0, increasing counter-clockwise).
     // atan2(ev_r, ev_c) gives angle from the column axis.
     let mut angle = ev_r.atan2(ev_c);
     // Normalise to [0, π) — grain direction has no orientation.
-    if angle < 0.0 { angle += std::f64::consts::PI; }
-    if angle >= std::f64::consts::PI { angle -= std::f64::consts::PI; }
+    if angle < 0.0 {
+        angle += std::f64::consts::PI;
+    }
+    if angle >= std::f64::consts::PI {
+        angle -= std::f64::consts::PI;
+    }
 
-    GrainResult { angle_rad: angle, has_ridges: true, ridge_count }
+    GrainResult {
+        angle_rad: angle,
+        has_ridges: true,
+        ridge_count,
+    }
 }
 
 #[cfg(test)]
@@ -110,10 +128,16 @@ mod tests {
         let h = 30usize;
         let mut geom = make_geom(w, h);
         for row in [5, 15, 25] {
-            for c in 0..w { geom[row * w + c] = 3.0; }
+            for c in 0..w {
+                geom[row * w + c] = 3.0;
+            }
         }
         let result = compute_grain(&geom, w, h);
-        assert!(result.has_ridges, "should detect ridges (got {} ridge pixels)", result.ridge_count);
+        assert!(
+            result.has_ridges,
+            "should detect ridges (got {} ridge pixels)",
+            result.ridge_count
+        );
         // Principal axis should be nearly horizontal (angle ≈ 0 or near π).
         assert!(
             result.angle_rad < 0.15 || result.angle_rad > PI - 0.15,
@@ -131,14 +155,20 @@ mod tests {
         // Two offset diagonals to get 80×2 > 50 ridge pixels at ≈45°.
         for i in 0..w.min(h) {
             geom[i * w + i] = 3.0;
-            if i + 1 < w { geom[i * w + i + 1] = 3.0; }
+            if i + 1 < w {
+                geom[i * w + i + 1] = 3.0;
+            }
         }
         let result = compute_grain(&geom, w, h);
         assert!(result.has_ridges, "should detect ridges");
         // Principal axis along row==col diagonal → angle ≈ π/4
         let expected = PI / 4.0;
         let diff = (result.angle_rad - expected).abs();
-        assert!(diff < 0.25, "expected diagonal grain ≈ π/4, got {}", result.angle_rad);
+        assert!(
+            diff < 0.25,
+            "expected diagonal grain ≈ π/4, got {}",
+            result.angle_rad
+        );
     }
 
     #[test]
@@ -148,12 +178,22 @@ mod tests {
         let h = 30usize;
         let mut geom = make_geom(w, h);
         for col in [5, 15, 25] {
-            for r in 0..h { geom[r * w + col] = 3.0; }
+            for r in 0..h {
+                geom[r * w + col] = 3.0;
+            }
         }
         let result = compute_grain(&geom, w, h);
-        assert!(result.has_ridges, "should detect ridges (got {} ridge pixels)", result.ridge_count);
+        assert!(
+            result.has_ridges,
+            "should detect ridges (got {} ridge pixels)",
+            result.ridge_count
+        );
         // Principal axis along rows → angle ≈ π/2
         let diff = (result.angle_rad - PI / 2.0).abs();
-        assert!(diff < 0.15, "expected vertical grain ≈ π/2, got {}", result.angle_rad);
+        assert!(
+            diff < 0.15,
+            "expected vertical grain ≈ π/2, got {}",
+            result.angle_rad
+        );
     }
 }

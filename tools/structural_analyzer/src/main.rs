@@ -4,19 +4,18 @@
 //! families of structural metrics, and writes per-terrain-class JSON output
 //! to data/targets/structural/.
 
+mod branching;
+mod components;
+mod flat_patches;
 mod grain;
 mod morphology;
-mod watershed;
+mod profiles;
+mod ridge_continuity;
+mod ridge_spacing;
 mod ridge_systems;
 mod transects;
-mod components;
-mod ridge_spacing;
-mod ridge_continuity;
 mod valley_width;
-mod asymmetry;
-mod branching;
-mod flat_patches;
-mod profiles;
+mod watershed;
 
 use std::collections::HashMap;
 use std::fs;
@@ -27,7 +26,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use terra_core::heightfield::HeightField;
 
-use profiles::{ReliefBin, ProfileBin, Traversal};
+use profiles::{ProfileBin, ReliefBin, Traversal};
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -111,7 +110,12 @@ fn aggregate_scalar(values: &[f64]) -> Stats {
     // Filter NaN.
     let mut vals: Vec<f64> = values.iter().copied().filter(|v| !v.is_nan()).collect();
     if vals.is_empty() {
-        return Stats { mean: f64::NAN, std: f64::NAN, p10: f64::NAN, p90: f64::NAN };
+        return Stats {
+            mean: f64::NAN,
+            std: f64::NAN,
+            p10: f64::NAN,
+            p90: f64::NAN,
+        };
     }
     vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = vals.len() as f64;
@@ -119,11 +123,18 @@ fn aggregate_scalar(values: &[f64]) -> Stats {
     let var = vals.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n;
     let p10 = percentile(&vals, 10.0);
     let p90 = percentile(&vals, 90.0);
-    Stats { mean, std: var.sqrt(), p10, p90 }
+    Stats {
+        mean,
+        std: var.sqrt(),
+        p10,
+        p90,
+    }
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() { return f64::NAN; }
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
     let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
 }
@@ -140,7 +151,12 @@ struct StatsJson {
 
 impl From<Stats> for StatsJson {
     fn from(s: Stats) -> Self {
-        StatsJson { mean: s.mean, std: s.std, p10: s.p10, p90: s.p90 }
+        StatsJson {
+            mean: s.mean,
+            std: s.std,
+            p10: s.p10,
+            p90: s.p90,
+        }
     }
 }
 
@@ -284,10 +300,9 @@ struct CalibrationJson {
 // ── File loading ──────────────────────────────────────────────────────────────
 
 fn load_heightfield(path: &Path) -> Result<HeightField> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("Cannot read {}", path.display()))?;
-    serde_json::from_str(&text)
-        .with_context(|| format!("Cannot parse {}", path.display()))
+    let text =
+        fs::read_to_string(path).with_context(|| format!("Cannot read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("Cannot parse {}", path.display()))
 }
 
 /// Load all paired (dem, geom) HeightFields from a region directory.
@@ -317,17 +332,27 @@ fn load_window_pairs(region_dir: &Path) -> Result<Vec<(HeightField, HeightField)
         let geom_path = geom_dir.join(&geom_name);
 
         if !geom_path.exists() {
-            eprintln!("[warn] No matching geom for DEM {}: {} not found", dem_path.display(), geom_name);
+            eprintln!(
+                "[warn] No matching geom for DEM {}: {} not found",
+                dem_path.display(),
+                geom_name
+            );
             continue;
         }
 
         let dem = match load_heightfield(&dem_path) {
             Ok(hf) => hf,
-            Err(e) => { eprintln!("[warn] Skip {}: {}", dem_path.display(), e); continue; }
+            Err(e) => {
+                eprintln!("[warn] Skip {}: {}", dem_path.display(), e);
+                continue;
+            }
         };
         let geom = match load_heightfield(&geom_path) {
             Ok(hf) => hf,
-            Err(e) => { eprintln!("[warn] Skip {}: {}", geom_path.display(), e); continue; }
+            Err(e) => {
+                eprintln!("[warn] Skip {}: {}", geom_path.display(), e);
+                continue;
+            }
         };
 
         pairs.push((dem, geom));
@@ -356,16 +381,17 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
     };
 
     // ── Watershed-based ridge system detection (families 1–4 primary) ─────────
-    let wsr = ridge_systems::detect_ridge_systems(
-        &dem.data, w, h, POUR_THRESHOLD,
-    );
+    let wsr = ridge_systems::detect_ridge_systems(&dem.data, w, h, POUR_THRESHOLD);
     let has_systems = !wsr.systems.is_empty();
 
     // Family 1: ridge spacing from watershed-derived systems.
     let rs = if has_systems {
         ridge_systems::measure_ridge_spacing(&wsr.systems, &dem.data, w, h, &transects)
     } else {
-        ridge_spacing::RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN }
+        ridge_spacing::RidgeSpacingResult {
+            mean_px: f64::NAN,
+            std_px: f64::NAN,
+        }
     };
 
     // Family 2: ridge continuity from watershed-derived systems.
@@ -405,14 +431,21 @@ fn analyze_window(dem: &HeightField, geom: &HeightField) -> WindowResult {
         let tp = ridge_systems::measure_ridge_spacing_filtered(
             &wsr.systems,
             PRIMARY_THRESHOLD_KM / ridge_systems::PIXEL_TO_KM,
-            w, h, &transects,
+            w,
+            h,
+            &transects,
         );
         let ts = ridge_systems::measure_ridge_spacing_filtered(
             &wsr.systems,
             SECONDARY_THRESHOLD_KM / ridge_systems::PIXEL_TO_KM,
-            w, h, &transects,
+            w,
+            h,
+            &transects,
         );
-        ((tp.spacing.mean_px, tp.n_systems), (ts.spacing.mean_px, ts.n_systems))
+        (
+            (tp.spacing.mean_px, tp.n_systems),
+            (ts.spacing.mean_px, ts.n_systems),
+        )
     } else {
         ((f64::NAN, 0), (f64::NAN, 0))
     };
@@ -458,16 +491,21 @@ fn aggregate_and_write(
     let n_ridge = windows.iter().filter(|w| w.has_ridges).count();
 
     // Mean asymmetry consistency for deciding steep/gentle split.
-    let asym_consistencies: Vec<f64> = windows.iter()
+    let asym_consistencies: Vec<f64> = windows
+        .iter()
         .filter(|w| w.has_ridges)
         .map(|w| w.asym_consistency)
         .filter(|v| !v.is_nan())
         .collect();
-    let mean_asym_consistency = if asym_consistencies.is_empty() { 0.0 }
-        else { asym_consistencies.iter().sum::<f64>() / asym_consistencies.len() as f64 };
+    let mean_asym_consistency = if asym_consistencies.is_empty() {
+        0.0
+    } else {
+        asym_consistencies.iter().sum::<f64>() / asym_consistencies.len() as f64
+    };
 
     // Ridge spacing.
-    let rs_means_km: Vec<f64> = windows.iter()
+    let rs_means_km: Vec<f64> = windows
+        .iter()
         .filter(|w| w.has_ridges)
         .map(|w| {
             let (m, _) = ridge_spacing::to_km(&w.ridge_spacing);
@@ -478,75 +516,81 @@ fn aggregate_and_write(
     let rs_stats = aggregate_scalar(&rs_means_km);
 
     // Ridge continuity.
-    let rc_mean_km: Vec<f64> = windows.iter()
+    let rc_mean_km: Vec<f64> = windows
+        .iter()
         .filter(|w| w.has_ridges)
         .map(|w| ridge_continuity::to_km_mean(&w.ridge_continuity))
         .collect();
-    let rc_max_km: Vec<f64> = windows.iter()
+    let rc_max_km: Vec<f64> = windows
+        .iter()
         .filter(|w| w.has_ridges)
         .map(|w| ridge_continuity::to_km_max(&w.ridge_continuity))
         .collect();
-    let rc_seg_count: Vec<f64> = windows.iter()
+    let rc_seg_count: Vec<f64> = windows
+        .iter()
         .filter(|w| w.has_ridges)
         .map(|w| w.ridge_continuity.segment_count as f64)
         .collect();
 
     // Valley width.
-    let vw_means_km: Vec<f64> = windows.iter()
+    let vw_means_km: Vec<f64> = windows
+        .iter()
         .map(|w| valley_width::to_km_mean(&w.valley_width))
         .filter(|v| !v.is_nan())
         .collect();
     let vw_stats = aggregate_scalar(&vw_means_km);
 
     // Asymmetry (watershed-derived).
-    let asym_ratios: Vec<f64> = windows.iter()
+    let asym_ratios: Vec<f64> = windows
+        .iter()
         .map(|w| w.asym_ratio)
         .filter(|v| !v.is_nan())
         .collect();
-    let asym_consist: Vec<f64> = windows.iter()
+    let asym_consist: Vec<f64> = windows
+        .iter()
         .map(|w| w.asym_consistency)
         .filter(|v| !v.is_nan())
         .collect();
 
     // Inter-system valley width (new sub-metric).
-    let isvw_means_km: Vec<f64> = windows.iter()
+    let isvw_means_km: Vec<f64> = windows
+        .iter()
         .map(|w| w.inter_system_valley_width_px.0 * ridge_systems::PIXEL_TO_KM)
         .filter(|v| !v.is_nan())
         .collect();
     let isvw_stats = aggregate_scalar(&isvw_means_km);
 
     // Branching.
-    let branch_angles: Vec<f64> = windows.iter()
+    let branch_angles: Vec<f64> = windows
+        .iter()
         .map(|w| w.branching.mean_deg)
         .filter(|v| !v.is_nan())
         .collect();
-    let branch_30px_angles: Vec<f64> = windows.iter()
+    let branch_30px_angles: Vec<f64> = windows
+        .iter()
         .map(|w| w.branching_30px.mean_deg)
         .filter(|v| !v.is_nan())
         .collect();
 
     // Tier-based spacing (Refinement 1).
-    let primary_spacing_km: Vec<f64> = windows.iter()
+    let primary_spacing_km: Vec<f64> = windows
+        .iter()
         .map(|w| w.tier_primary.0 * ridge_systems::PIXEL_TO_KM)
         .filter(|v| !v.is_nan())
         .collect();
-    let primary_n_sys: Vec<f64> = windows.iter()
-        .map(|w| w.tier_primary.1 as f64)
-        .collect();
-    let secondary_spacing_km: Vec<f64> = windows.iter()
+    let primary_n_sys: Vec<f64> = windows.iter().map(|w| w.tier_primary.1 as f64).collect();
+    let secondary_spacing_km: Vec<f64> = windows
+        .iter()
         .map(|w| w.tier_secondary.0 * ridge_systems::PIXEL_TO_KM)
         .filter(|v| !v.is_nan())
         .collect();
-    let secondary_n_sys: Vec<f64> = windows.iter()
-        .map(|w| w.tier_secondary.1 as f64)
-        .collect();
+    let secondary_n_sys: Vec<f64> = windows.iter().map(|w| w.tier_secondary.1 as f64).collect();
     // Tertiary = all systems; spacing already in rs_means_km, count in n_ridge_systems.
-    let tertiary_n_sys: Vec<f64> = windows.iter()
-        .map(|w| w.n_ridge_systems as f64)
-        .collect();
+    let tertiary_n_sys: Vec<f64> = windows.iter().map(|w| w.n_ridge_systems as f64).collect();
 
     // Junction angles (Refinement 2) — aggregate per-junction observations across all windows.
-    let junction_means: Vec<f64> = windows.iter()
+    let junction_means: Vec<f64> = windows
+        .iter()
         .map(|w| w.junction_angle.mean_deg)
         .filter(|v| !v.is_nan())
         .collect();
@@ -555,32 +599,55 @@ fn aggregate_and_write(
     let junction_global_mean = if junction_means.is_empty() {
         f64::NAN
     } else {
-        let weighted_sum: f64 = windows.iter()
+        let weighted_sum: f64 = windows
+            .iter()
             .filter(|w| !w.junction_angle.mean_deg.is_nan())
             .map(|w| w.junction_angle.mean_deg * w.junction_angle.n_junctions as f64)
             .sum();
-        if total_junctions > 0 { weighted_sum / total_junctions as f64 } else { f64::NAN }
+        if total_junctions > 0 {
+            weighted_sum / total_junctions as f64
+        } else {
+            f64::NAN
+        }
     };
     let junction_p10 = aggregate_scalar(
-        &windows.iter().map(|w| w.junction_angle.p10).filter(|v| !v.is_nan()).collect::<Vec<_>>()
-    ).p10;
+        &windows
+            .iter()
+            .map(|w| w.junction_angle.p10)
+            .filter(|v| !v.is_nan())
+            .collect::<Vec<_>>(),
+    )
+    .p10;
     let junction_p90 = aggregate_scalar(
-        &windows.iter().map(|w| w.junction_angle.p90).filter(|v| !v.is_nan()).collect::<Vec<_>>()
-    ).p90;
+        &windows
+            .iter()
+            .map(|w| w.junction_angle.p90)
+            .filter(|v| !v.is_nan())
+            .collect::<Vec<_>>(),
+    )
+    .p90;
     let junction_std = aggregate_scalar(
-        &windows.iter().map(|w| w.junction_angle.std_deg).filter(|v| !v.is_nan()).collect::<Vec<_>>()
-    ).mean;
+        &windows
+            .iter()
+            .map(|w| w.junction_angle.std_deg)
+            .filter(|v| !v.is_nan())
+            .collect::<Vec<_>>(),
+    )
+    .mean;
 
     // Ceiling metrics (Refinement 3).
     let all_n_systems: Vec<f64> = windows.iter().map(|w| w.n_ridge_systems as f64).collect();
-    let all_max_len_km: Vec<f64> = windows.iter()
+    let all_max_len_km: Vec<f64> = windows
+        .iter()
         .filter(|w| w.n_ridge_systems > 0)
         .map(|w| ridge_continuity::to_km_max(&w.ridge_continuity))
         .filter(|v| !v.is_nan() && *v > 0.0)
         .collect();
     let n_zero_frac = if n_total > 0 {
         windows.iter().filter(|w| w.n_ridge_systems == 0).count() as f64 / n_total as f64
-    } else { f64::NAN };
+    } else {
+        f64::NAN
+    };
     let mut sorted_n_systems = all_n_systems.clone();
     sorted_n_systems.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let ceiling_max_systems = percentile(&sorted_n_systems, 90.0);
@@ -591,15 +658,18 @@ fn aggregate_and_write(
     };
 
     // Flat patches.
-    let flat_median_km2: Vec<f64> = windows.iter()
+    let flat_median_km2: Vec<f64> = windows
+        .iter()
         .map(|w| flat_patches::median_area_km2(&w.flat_patches))
         .filter(|v| !v.is_nan())
         .collect();
-    let flat_max_km2: Vec<f64> = windows.iter()
+    let flat_max_km2: Vec<f64> = windows
+        .iter()
         .map(|w| flat_patches::max_area_km2(&w.flat_patches))
         .filter(|v| !v.is_nan())
         .collect();
-    let flat_dom: Vec<f64> = windows.iter()
+    let flat_dom: Vec<f64> = windows
+        .iter()
         .map(|w| w.flat_patches.dominance_index)
         .filter(|v| !v.is_nan())
         .collect();
@@ -618,14 +688,29 @@ fn aggregate_and_write(
         let mut has_hi = false;
         for t in &w.traversals {
             match profiles::classify_relief(t.relief_m) {
-                ReliefBin::Low => { low_travs.push(t); has_low = true; }
-                ReliefBin::Moderate => { mod_travs.push(t); has_mod = true; }
-                ReliefBin::High => { hi_travs.push(t); has_hi = true; }
+                ReliefBin::Low => {
+                    low_travs.push(t);
+                    has_low = true;
+                }
+                ReliefBin::Moderate => {
+                    mod_travs.push(t);
+                    has_mod = true;
+                }
+                ReliefBin::High => {
+                    hi_travs.push(t);
+                    has_hi = true;
+                }
             }
         }
-        if has_low { low_win += 1; }
-        if has_mod { mod_win += 1; }
-        if has_hi { hi_win += 1; }
+        if has_low {
+            low_win += 1;
+        }
+        if has_mod {
+            mod_win += 1;
+        }
+        if has_hi {
+            hi_win += 1;
+        }
     }
 
     let low_bin = profiles::aggregate_traversals(&low_travs, low_win, mean_asym_consistency);
@@ -648,8 +733,14 @@ fn aggregate_and_write(
     };
 
     let mean_systems_per_window = if n_total > 0 {
-        windows.iter().map(|w| w.n_ridge_systems as f64).sum::<f64>() / n_total as f64
-    } else { 0.0 };
+        windows
+            .iter()
+            .map(|w| w.n_ridge_systems as f64)
+            .sum::<f64>()
+            / n_total as f64
+    } else {
+        0.0
+    };
     let n_zero_systems = windows.iter().filter(|w| w.n_ridge_systems == 0).count();
 
     let out = OutputJson {
@@ -717,8 +808,7 @@ fn aggregate_and_write(
     fs::create_dir_all(output_dir)?;
     let out_path = output_dir.join(format!("{}.json", terrain_class));
     let json = serde_json::to_string_pretty(&out)?;
-    fs::write(&out_path, json)
-        .with_context(|| format!("Write failed: {}", out_path.display()))?;
+    fs::write(&out_path, json).with_context(|| format!("Write failed: {}", out_path.display()))?;
     eprintln!("[structural_analyzer] Wrote {}", out_path.display());
 
     Ok(summary)
@@ -727,7 +817,8 @@ fn aggregate_and_write(
 fn profile_bin_to_json(bin: ProfileBin) -> ProfileBinJson {
     let mean_profile = bin.mean_profile.to_vec();
     let std_profile = bin.std_profile.to_vec();
-    let geomorphon_fractions: Vec<Vec<f64>> = bin.geomorphon_fractions
+    let geomorphon_fractions: Vec<Vec<f64>> = bin
+        .geomorphon_fractions
         .iter()
         .map(|row| row.to_vec())
         .collect();
@@ -738,7 +829,11 @@ fn profile_bin_to_json(bin: ProfileBin) -> ProfileBinJson {
         mean_profile,
         std_profile,
         geomorphon_fractions,
-        low_sample_warning: if bin.low_sample_warning { Some(true) } else { None },
+        low_sample_warning: if bin.low_sample_warning {
+            Some(true)
+        } else {
+            None
+        },
         steep_side_profile: bin.steep_side_profile.map(|p| p.to_vec()),
         gentle_side_profile: bin.gentle_side_profile.map(|p| p.to_vec()),
     }
@@ -762,20 +857,50 @@ struct ClassSummary {
 
 fn print_summary(summaries: &[ClassSummary]) {
     eprintln!("\n[structural_analyzer] Results summary:\n");
-    eprintln!("{:<16} {:>6} {:>7}  {:>11}  {:>11}  {:>10}  {:>8}  profiles(lo/md/hi)",
-        "Class", "n_tot", "n_ridge", "ridge_sp_km", "valley_w_km", "asym_ratio", "flat_dom");
+    eprintln!(
+        "{:<16} {:>6} {:>7}  {:>11}  {:>11}  {:>10}  {:>8}  profiles(lo/md/hi)",
+        "Class", "n_tot", "n_ridge", "ridge_sp_km", "valley_w_km", "asym_ratio", "flat_dom"
+    );
     for s in summaries {
         let flag = if s.low_sample { "*" } else { "" };
-        let rs = if s.ridge_sp_km.is_nan() { format!("NaN{}", flag) } else { format!("{:.1}{}", s.ridge_sp_km, flag) };
-        let vw = if s.valley_w_km.is_nan() { "NaN".to_string() } else { format!("{:.2}", s.valley_w_km) };
-        let ar = if s.asym_ratio.is_nan() { "NaN".to_string() } else { format!("{:.2}", s.asym_ratio) };
-        let fd = if s.flat_dom.is_nan() { "NaN".to_string() } else { format!("{:.2}", s.flat_dom) };
-        eprintln!("{:<16} {:>6} {:>7}  {:>11}  {:>11}  {:>10}  {:>8}  {}/{}/{}",
-            s.class, s.n_total, s.n_ridge, rs, vw, ar, fd,
-            s.profiles_lo, s.profiles_md, s.profiles_hi);
+        let rs = if s.ridge_sp_km.is_nan() {
+            format!("NaN{}", flag)
+        } else {
+            format!("{:.1}{}", s.ridge_sp_km, flag)
+        };
+        let vw = if s.valley_w_km.is_nan() {
+            "NaN".to_string()
+        } else {
+            format!("{:.2}", s.valley_w_km)
+        };
+        let ar = if s.asym_ratio.is_nan() {
+            "NaN".to_string()
+        } else {
+            format!("{:.2}", s.asym_ratio)
+        };
+        let fd = if s.flat_dom.is_nan() {
+            "NaN".to_string()
+        } else {
+            format!("{:.2}", s.flat_dom)
+        };
+        eprintln!(
+            "{:<16} {:>6} {:>7}  {:>11}  {:>11}  {:>10}  {:>8}  {}/{}/{}",
+            s.class,
+            s.n_total,
+            s.n_ridge,
+            rs,
+            vw,
+            ar,
+            fd,
+            s.profiles_lo,
+            s.profiles_md,
+            s.profiles_hi
+        );
     }
     if summaries.iter().any(|s| s.low_sample) {
-        eprintln!("\n* Fewer than 30 windows with ridges — use ridge-dependent metrics with caution");
+        eprintln!(
+            "\n* Fewer than 30 windows with ridges — use ridge-dependent metrics with caution"
+        );
     }
 }
 
@@ -850,8 +975,12 @@ fn component_grain_extents(
         let c = (i % width) as f64;
         let proj = r * grain_r + c * grain_c;
         let li = (label - 1) as usize;
-        if proj < min_proj[li] { min_proj[li] = proj; }
-        if proj > max_proj[li] { max_proj[li] = proj; }
+        if proj < min_proj[li] {
+            min_proj[li] = proj;
+        }
+        if proj > max_proj[li] {
+            max_proj[li] = proj;
+        }
     }
 
     (0..n_labels)
@@ -885,8 +1014,12 @@ fn component_perp_extents(
         let c = (i % width) as f64;
         let proj = r * perp_r + c * perp_c;
         let li = (label - 1) as usize;
-        if proj < min_proj[li] { min_proj[li] = proj; }
-        if proj > max_proj[li] { max_proj[li] = proj; }
+        if proj < min_proj[li] {
+            min_proj[li] = proj;
+        }
+        if proj > max_proj[li] {
+            max_proj[li] = proj;
+        }
     }
 
     (0..n_labels)
@@ -903,18 +1036,13 @@ fn component_perp_extents(
 /// Per-window calibration result at a given closing radius.
 struct CalibrationWindow {
     n_systems: f64,
-    spacing_px: f64,     // NaN if no pairs found
-    max_length_px: f64,  // grain-axis extent of longest skeleton component
-    mean_width_px: f64,  // perp-axis extent of closed-mask components
+    spacing_px: f64,    // NaN if no pairs found
+    max_length_px: f64, // grain-axis extent of longest skeleton component
+    mean_width_px: f64, // perp-axis extent of closed-mask components
     system_area_frac: f64,
 }
 
-fn calibrate_window(
-    geom: &[f32],
-    width: usize,
-    height: usize,
-    radius: i32,
-) -> CalibrationWindow {
+fn calibrate_window(geom: &[f32], width: usize, height: usize, radius: i32) -> CalibrationWindow {
     // Extract ridge mask.
     let n = width * height;
     let ridge_mask: Vec<bool> = (0..n)
@@ -946,7 +1074,8 @@ fn calibrate_window(
     let closed = morphology::close(&ridge_mask, width, height, radius);
 
     // Connected components of closed mask → n_systems.
-    let closed_comps = components::label_components(&closed, width, height, components::Connectivity::Eight);
+    let closed_comps =
+        components::label_components(&closed, width, height, components::Connectivity::Eight);
     let n_systems = closed_comps.sizes.len();
 
     // System area fraction.
@@ -956,7 +1085,8 @@ fn calibrate_window(
     let skeleton = morphology::skeletonize(&closed, width, height);
 
     // Label skeleton components for grain-axis extent (max system length).
-    let skel_comps = components::label_components(&skeleton, width, height, components::Connectivity::Eight);
+    let skel_comps =
+        components::label_components(&skeleton, width, height, components::Connectivity::Eight);
     let n_skel = skel_comps.sizes.len();
     let grain_extents = if n_skel > 0 {
         component_grain_extents(&skel_comps.labels, n_skel, width, grain_r, grain_c)
@@ -994,17 +1124,22 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
     // Load regions.json and find himalaya.
     let regions_text = fs::read_to_string(regions)
         .with_context(|| format!("Cannot read {}", regions.display()))?;
-    let regions_file: RegionsFile = serde_json::from_str(&regions_text)
-        .context("Failed to parse regions.json")?;
+    let regions_file: RegionsFile =
+        serde_json::from_str(&regions_text).context("Failed to parse regions.json")?;
 
-    let himalaya = regions_file.regions.iter()
+    let himalaya = regions_file
+        .regions
+        .iter()
         .find(|r| r.id == "himalaya")
         .ok_or_else(|| anyhow::anyhow!("himalaya region not found in regions.json"))?;
 
     let region_dir = samples_dir.join(&himalaya.id);
-    let pairs = load_window_pairs(&region_dir)
-        .with_context(|| "Loading pairs for himalaya".to_string())?;
-    eprintln!("[calibration] Loaded {} window pairs from himalaya", pairs.len());
+    let pairs =
+        load_window_pairs(&region_dir).with_context(|| "Loading pairs for himalaya".to_string())?;
+    eprintln!(
+        "[calibration] Loaded {} window pairs from himalaya",
+        pairs.len()
+    );
 
     let mut entries: Vec<CalibrationRadiusEntry> = Vec::new();
 
@@ -1026,16 +1161,31 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
             area_frac_vals.push(cw.system_area_frac);
         }
 
-        let mean_n = if n_sys_vals.is_empty() { 0.0 }
-            else { n_sys_vals.iter().sum::<f64>() / n_sys_vals.len() as f64 };
-        let mean_spacing_km = if spacing_vals.is_empty() { f64::NAN }
-            else { spacing_vals.iter().sum::<f64>() / spacing_vals.len() as f64 * PIXEL_TO_KM };
-        let mean_max_len_km = if max_len_vals.is_empty() { 0.0 }
-            else { max_len_vals.iter().sum::<f64>() / max_len_vals.len() as f64 * PIXEL_TO_KM };
-        let mean_width_km = if mean_w_vals.is_empty() { 0.0 }
-            else { mean_w_vals.iter().sum::<f64>() / mean_w_vals.len() as f64 * PIXEL_TO_KM };
-        let mean_area_frac = if area_frac_vals.is_empty() { 0.0 }
-            else { area_frac_vals.iter().sum::<f64>() / area_frac_vals.len() as f64 };
+        let mean_n = if n_sys_vals.is_empty() {
+            0.0
+        } else {
+            n_sys_vals.iter().sum::<f64>() / n_sys_vals.len() as f64
+        };
+        let mean_spacing_km = if spacing_vals.is_empty() {
+            f64::NAN
+        } else {
+            spacing_vals.iter().sum::<f64>() / spacing_vals.len() as f64 * PIXEL_TO_KM
+        };
+        let mean_max_len_km = if max_len_vals.is_empty() {
+            0.0
+        } else {
+            max_len_vals.iter().sum::<f64>() / max_len_vals.len() as f64 * PIXEL_TO_KM
+        };
+        let mean_width_km = if mean_w_vals.is_empty() {
+            0.0
+        } else {
+            mean_w_vals.iter().sum::<f64>() / mean_w_vals.len() as f64 * PIXEL_TO_KM
+        };
+        let mean_area_frac = if area_frac_vals.is_empty() {
+            0.0
+        } else {
+            area_frac_vals.iter().sum::<f64>() / area_frac_vals.len() as f64
+        };
 
         entries.push(CalibrationRadiusEntry {
             radius_px: radius,
@@ -1050,18 +1200,42 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
 
     // Print table to stderr.
     eprintln!("\n[calibration] Alpine ridge system metrics vs closing radius:\n");
-    eprintln!("{:>6}  {:>6}  {:>10}  {:>11}  {:>14}  {:>14}  {:>16}",
-        "R(px)", "R(km)", "n_systems", "spacing_km", "max_length_km", "mean_width_km", "system_area_frac");
+    eprintln!(
+        "{:>6}  {:>6}  {:>10}  {:>11}  {:>14}  {:>14}  {:>16}",
+        "R(px)",
+        "R(km)",
+        "n_systems",
+        "spacing_km",
+        "max_length_km",
+        "mean_width_km",
+        "system_area_frac"
+    );
     for e in &entries {
-        let sp = if e.spacing_km.is_nan() { "NaN".to_string() } else { format!("{:.2}", e.spacing_km) };
-        eprintln!("{:>6}  {:>6.2}  {:>10.1}  {:>11}  {:>14.2}  {:>14.2}  {:>16.4}",
-            e.radius_px, e.radius_km, e.n_systems, sp, e.max_length_km, e.mean_width_km, e.system_area_frac);
+        let sp = if e.spacing_km.is_nan() {
+            "NaN".to_string()
+        } else {
+            format!("{:.2}", e.spacing_km)
+        };
+        eprintln!(
+            "{:>6}  {:>6.2}  {:>10.1}  {:>11}  {:>14.2}  {:>14.2}  {:>16.4}",
+            e.radius_px,
+            e.radius_km,
+            e.n_systems,
+            sp,
+            e.max_length_km,
+            e.mean_width_km,
+            e.system_area_frac
+        );
     }
 
     // Detect plateau: consecutive spacing_km changes < 15%.
     // Require the plateau spacing to be > 3 km to exclude the pixel-scale floor
     // (where small R values produce spacings similar to the raw geomorphon pixel spacing).
-    let spacing_vals: Vec<f64> = entries.iter().map(|e| e.spacing_km).filter(|v| !v.is_nan()).collect();
+    let spacing_vals: Vec<f64> = entries
+        .iter()
+        .map(|e| e.spacing_km)
+        .filter(|v| !v.is_nan())
+        .collect();
     let n_sp = spacing_vals.len();
     let mut plateau_start_idx: Option<usize> = None;
     let mut plateau_end_idx: Option<usize> = None;
@@ -1089,9 +1263,8 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
     let plateau_found = plateau_start_idx.is_some();
     // Map spacing index back to radius index (spacing_vals comes from entries in order, NaN filtered).
     // Rebuild mapping of non-NaN entries by index.
-    let non_nan_entries: Vec<&CalibrationRadiusEntry> = entries.iter()
-        .filter(|e| !e.spacing_km.is_nan())
-        .collect();
+    let non_nan_entries: Vec<&CalibrationRadiusEntry> =
+        entries.iter().filter(|e| !e.spacing_km.is_nan()).collect();
 
     let (recommended_radius_px, plateau_range) = if plateau_found {
         let ps = plateau_start_idx.unwrap();
@@ -1107,8 +1280,15 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
 
     eprintln!("\n[calibration] Plateau found: {}", plateau_found);
     if plateau_found {
-        eprintln!("[calibration] Plateau range: R = {} to {} px", plateau_range[0], plateau_range[1]);
-        eprintln!("[calibration] Recommended R: {} px ({:.2} km)", recommended_radius_px, recommended_radius_px as f64 * PIXEL_TO_KM);
+        eprintln!(
+            "[calibration] Plateau range: R = {} to {} px",
+            plateau_range[0], plateau_range[1]
+        );
+        eprintln!(
+            "[calibration] Recommended R: {} px ({:.2} km)",
+            recommended_radius_px,
+            recommended_radius_px as f64 * PIXEL_TO_KM
+        );
     } else {
         eprintln!("[calibration] No clear plateau found. Spacing keeps changing > 15% per step.");
     }
@@ -1153,8 +1333,7 @@ fn run_calibration(samples_dir: &Path, regions: &Path, output_dir: &Path) -> Res
 
     let cal_path = output_dir.join("calibration.json");
     let json = serde_json::to_string_pretty(&cal)?;
-    fs::write(&cal_path, json)
-        .with_context(|| format!("Write failed: {}", cal_path.display()))?;
+    fs::write(&cal_path, json).with_context(|| format!("Write failed: {}", cal_path.display()))?;
     eprintln!("[calibration] Wrote {}", cal_path.display());
 
     Ok(())
@@ -1172,21 +1351,25 @@ fn main() -> Result<()> {
 
     let regions_text = fs::read_to_string(&args.regions)
         .with_context(|| format!("Cannot read {}", args.regions.display()))?;
-    let regions_file: RegionsFile = serde_json::from_str(&regions_text)
-        .context("Failed to parse regions.json")?;
+    let regions_file: RegionsFile =
+        serde_json::from_str(&regions_text).context("Failed to parse regions.json")?;
 
     // Map terrain_class → list of WindowResult.
     let mut class_windows: HashMap<String, Vec<WindowResult>> = HashMap::new();
 
     for region in &regions_file.regions {
-        eprintln!("[structural_analyzer] Region: {} ({})", region.id, region.terrain_class);
+        eprintln!(
+            "[structural_analyzer] Region: {} ({})",
+            region.id, region.terrain_class
+        );
         let region_dir = args.samples_dir.join(&region.id);
 
         let pairs = load_window_pairs(&region_dir)
             .with_context(|| format!("Loading pairs for region {}", region.id))?;
         eprintln!("  {} window pairs found", pairs.len());
 
-        let results: Vec<WindowResult> = pairs.iter()
+        let results: Vec<WindowResult> = pairs
+            .iter()
             .map(|(dem, geom)| analyze_window(dem, geom))
             .collect();
 
@@ -1200,17 +1383,30 @@ fn main() -> Result<()> {
     }
 
     let mut summaries = Vec::new();
-    let ordered_classes = ["Alpine", "Cratonic", "Coastal", "FluvialArid", "FluvialHumid"];
+    let ordered_classes = [
+        "Alpine",
+        "Cratonic",
+        "Coastal",
+        "FluvialArid",
+        "FluvialHumid",
+    ];
 
     for class in &ordered_classes {
         let windows = match class_windows.get(*class) {
             Some(w) if !w.is_empty() => w,
             _ => {
-                eprintln!("[structural_analyzer] No windows for class {}, skipping", class);
+                eprintln!(
+                    "[structural_analyzer] No windows for class {}, skipping",
+                    class
+                );
                 continue;
             }
         };
-        eprintln!("[structural_analyzer] Aggregating {} ({} windows)...", class, windows.len());
+        eprintln!(
+            "[structural_analyzer] Aggregating {} ({} windows)...",
+            class,
+            windows.len()
+        );
         let summary = aggregate_and_write(class, windows, &args.output)?;
         summaries.push(summary);
     }

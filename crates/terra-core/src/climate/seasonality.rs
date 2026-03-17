@@ -82,7 +82,7 @@ mod tests {
         let s = generate_seasonality(&map, w, h, 0.70);
 
         // Row 0 ≈ +90° (polar), row h/2 ≈ 0° (equatorial).
-        let polar_s = s[0 * w]; // row 0
+        let polar_s = s[0]; // row 0
         let equatorial_s = s[(h / 2) * w]; // row h/2
         assert!(
             polar_s > equatorial_s,

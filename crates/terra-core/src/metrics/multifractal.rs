@@ -26,7 +26,11 @@ const LAGS: [usize; 7] = [2, 3, 4, 5, 6, 7, 8];
 /// Returns `valid=false` with `width=0.0` when the field is flat or when
 /// negative-q moments cannot be estimated (too many near-zero increments).
 pub fn compute_multifractal(hf: &HeightField) -> MultifractalResult {
-    let invalid = MultifractalResult { width: 0.0, h_of_q: [0.0; 5], valid: false };
+    let invalid = MultifractalResult {
+        width: 0.0,
+        h_of_q: [0.0; 5],
+        valid: false,
+    };
 
     let mut h_of_q = [0.0f32; 5];
 
@@ -94,7 +98,11 @@ pub fn compute_multifractal(hf: &HeightField) -> MultifractalResult {
         let sx: f64 = log_h_vec.iter().sum();
         let sy: f64 = log_sq_vec.iter().sum();
         let sxx: f64 = log_h_vec.iter().map(|x| x * x).sum();
-        let sxy: f64 = log_h_vec.iter().zip(log_sq_vec.iter()).map(|(x, y)| x * y).sum();
+        let sxy: f64 = log_h_vec
+            .iter()
+            .zip(log_sq_vec.iter())
+            .map(|(x, y)| x * y)
+            .sum();
 
         let denom = n * sxx - sx * sx;
         if denom.abs() < 1e-12 {
@@ -106,7 +114,11 @@ pub fn compute_multifractal(hf: &HeightField) -> MultifractalResult {
 
     // width = H(-2) - H(2) (indices 0 and 4)
     let width = h_of_q[0] - h_of_q[4];
-    MultifractalResult { width, h_of_q, valid: true }
+    MultifractalResult {
+        width,
+        h_of_q,
+        valid: true,
+    }
 }
 
 #[cfg(test)]
@@ -122,7 +134,9 @@ mod tests {
 
         let mut lcg: u64 = seed;
         let lcg_next = |s: &mut u64| -> f64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((*s >> 33) as f64) / (u32::MAX as f64) * (2.0 * std::f64::consts::PI)
         };
 
@@ -139,11 +153,13 @@ mod tests {
         }
 
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
-        for r in 0..n {
-            for c in 0..n {
-                hf.set(r, c, (z_row[r] + z_col[c]) as f32);
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
+        for (r, &row_val) in z_row.iter().enumerate() {
+            for (c, &col_val) in z_col.iter().enumerate() {
+                hf.set(r, c, (row_val + col_val) as f32);
             }
         }
         hf
@@ -156,7 +172,7 @@ mod tests {
     /// rough half → H(2) ≈ 0.2; width ≈ 0.7.
     fn make_mixed_field(n: usize) -> HeightField {
         let smooth = make_fbm_field(n, 0.9, 0xdeadbeef_00000001);
-        let rough  = make_fbm_field(n, 0.2, 0xdeadbeef_00000002);
+        let rough = make_fbm_field(n, 0.2, 0xdeadbeef_00000002);
 
         // Normalise each sub-field to unit variance so amplitudes are comparable.
         let norm_field = |hf: &HeightField| -> Vec<f32> {
@@ -165,8 +181,7 @@ mod tests {
                 .map(|(r, c)| hf.get(r, c) as f64)
                 .collect();
             let mean = vals.iter().sum::<f64>() / vals.len() as f64;
-            let std = (vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
-                / vals.len() as f64)
+            let std = (vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / vals.len() as f64)
                 .sqrt()
                 .max(1e-12);
             vals.iter().map(|v| ((v - mean) / std) as f32).collect()
@@ -176,8 +191,10 @@ mod tests {
         let r_vals = norm_field(&rough);
 
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
         let mid = n / 2;
         for row in 0..n {
             for col in 0..n {
@@ -202,10 +219,12 @@ mod tests {
     /// (≫ 1e-6) ensures no pairs are excluded by the near-zero threshold.
     fn make_linear_field(n: usize) -> HeightField {
         let alpha = 1_414.213_6_f32; // √2 × 1000 m
-        let beta  = 1_732.050_8_f32; // √3 × 1000 m
+        let beta = 1_732.050_8_f32; // √3 × 1000 m
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
         for r in 0..n {
             for c in 0..n {
                 hf.set(r, c, c as f32 * alpha + r as f32 * beta);

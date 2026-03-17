@@ -1,13 +1,19 @@
 //! Pipeline orchestrator: runs all generation stages in order.
 //! Phase 7, Task P7.1.
 
-use serde::{Deserialize, Serialize};
-use crate::climate::{simulate_climate, latitude_bands::map_base_mm};
+use crate::climate::{latitude_bands::map_base_mm, simulate_climate};
 use crate::heightfield::HeightField;
 use crate::hydraulic::apply_hydraulic_shaping;
 use crate::metrics::score::{compute_realism_score, RealismScore};
-use crate::noise::{generate_tile, params::{GlacialClass, NoiseParams, TerrainClass}};
-use crate::plates::{simulate_plates, continents::CrustType, regime_field::TectonicRegime, ridges::n_ridges_from_fragmentation};
+use crate::noise::{
+    generate_tile,
+    params::{GlacialClass, NoiseParams, TerrainClass},
+};
+use crate::plates::{
+    continents::CrustType, regime_field::TectonicRegime, ridges::n_ridges_from_fragmentation,
+    simulate_plates,
+};
+use serde::{Deserialize, Serialize};
 
 // ── Grid size ─────────────────────────────────────────────────────────────────
 
@@ -70,19 +76,19 @@ pub struct PlanetResult {
 /// Computed analytically without running the full generation pipeline.
 #[derive(Debug, Clone, Serialize)]
 pub struct DebugParams {
-    pub terrain_class:        String,
-    pub glacial_class:        String,
-    pub h_base:               f32,
-    pub h_variance:           f32,
-    pub erosion_iterations:   u32,
-    pub n_ridges:             usize,
+    pub terrain_class: String,
+    pub glacial_class: String,
+    pub h_base: f32,
+    pub h_variance: f32,
+    pub erosion_iterations: u32,
+    pub n_ridges: usize,
     pub tectonic_uplift_scale: f32,
     pub mountain_height_scale: f32,
-    pub map_base_mm_equator:  f32,
-    pub erosion_factor:       f32,
+    pub map_base_mm_equator: f32,
+    pub erosion_factor: f32,
     pub grain_intensity_scale: f32,
-    pub warp_macro:           f32,
-    pub warp_micro:           f32,
+    pub warp_macro: f32,
+    pub warp_micro: f32,
 }
 
 /// Resolve GlobalParams → DebugParams without running the full pipeline.
@@ -91,17 +97,16 @@ pub fn derive_debug_params(p: &GlobalParams) -> DebugParams {
     let glacial_class = direct_glacial_class(p.glaciation);
 
     // Hurst and variance.
-    let h_base = (0.65 + p.mountain_prevalence * 0.20 - p.surface_age * 0.10)
-        .clamp(0.55, 0.90);
+    let h_base = (0.65 + p.mountain_prevalence * 0.20 - p.surface_age * 0.10).clamp(0.55, 0.90);
     let h_variance = (0.10 + p.climate_diversity * 0.15).clamp(0.10, 0.25);
 
     // Per-class erosion iteration counts (mirror hydraulic::params_for_class).
     let erosion_iterations = match terrain_class {
-        TerrainClass::Alpine       => 30,
+        TerrainClass::Alpine => 30,
         TerrainClass::FluvialHumid => 50,
-        TerrainClass::FluvialArid  => 20,
-        TerrainClass::Cratonic     => 10,
-        TerrainClass::Coastal      => 25,
+        TerrainClass::FluvialArid => 20,
+        TerrainClass::Cratonic => 10,
+        TerrainClass::Coastal => 25,
     };
 
     // Plate parameters (analytical — no simulation).
@@ -116,17 +121,17 @@ pub fn derive_debug_params(p: &GlobalParams) -> DebugParams {
 
     // Erosion factor applied to erodibility field.
     let water_scale = 0.3 + p.water_abundance * 1.4;
-    let age_scale   = 0.3 + p.surface_age   * 1.4;
+    let age_scale = 0.3 + p.surface_age * 1.4;
     let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
 
     // Grain intensity multipliers from tectonic and age.
     let tectonic_grain = 0.3 + p.tectonic_activity * 1.4;
-    let age_grain      = 1.0 - p.surface_age * 0.40;
+    let age_grain = 1.0 - p.surface_age * 0.40;
     let grain_intensity_scale = (tectonic_grain * age_grain).clamp(0.0, 2.0);
 
     DebugParams {
-        terrain_class:        format!("{terrain_class:?}"),
-        glacial_class:        format!("{glacial_class:?}"),
+        terrain_class: format!("{terrain_class:?}"),
+        glacial_class: format!("{glacial_class:?}"),
         h_base,
         h_variance,
         erosion_iterations,
@@ -158,7 +163,9 @@ fn direct_glacial_class(glaciation: f32) -> GlacialClass {
 pub struct PlanetGenerator;
 
 impl PlanetGenerator {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Run the full generation pipeline for the given parameters.
     ///
@@ -169,7 +176,6 @@ impl PlanetGenerator {
     ///   4. Hydraulic shaping
     ///   5. Realism scoring
     pub fn generate(&self, params: &GlobalParams) -> PlanetResult {
-
         // ── 1. Plate simulation ─────────────────────────────────────────────
         let plates = simulate_plates(
             params.seed,
@@ -198,25 +204,31 @@ impl PlanetGenerator {
             seed32,
             GRID_WIDTH,
             GRID_HEIGHT,
-            -180.0, 180.0,
-            -90.0,  90.0,
+            -180.0,
+            180.0,
+            -90.0,
+            90.0,
         );
 
         // ── Tectonic uplift + mountain height scaling ───────────────────────
         // tectonic_activity: more active tectonics → higher relief (0.5× to 2.0×).
         // mountain_prevalence: additional direct height scale (0.7× to 1.3×).
         let tectonic_uplift = 0.5 + params.tectonic_activity * 1.5;
-        let mountain_scale  = 0.7 + params.mountain_prevalence * 0.6;
-        let total_uplift    = tectonic_uplift * mountain_scale;
-        for v in &mut hf.data { *v *= total_uplift; }
+        let mountain_scale = 0.7 + params.mountain_prevalence * 0.6;
+        let total_uplift = tectonic_uplift * mountain_scale;
+        for v in &mut hf.data {
+            *v *= total_uplift;
+        }
 
         // ── 4. Hydraulic shaping ────────────────────────────────────────────
         // Erosion intensity scales with water_abundance (more water → more erosion)
         // and surface_age (older terrain → more cumulative erosion).
-        let water_scale    = 0.3 + params.water_abundance * 1.4;
-        let age_scale      = 0.3 + params.surface_age    * 1.4;
+        let water_scale = 0.3 + params.water_abundance * 1.4;
+        let age_scale = 0.3 + params.surface_age * 1.4;
         let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
-        let scaled_erodibility: Vec<f32> = plates.erodibility_field.iter()
+        let scaled_erodibility: Vec<f32> = plates
+            .erodibility_field
+            .iter()
             .map(|&k| (k * erosion_factor).clamp(0.0, 1.0))
             .collect();
 
@@ -247,7 +259,9 @@ impl PlanetGenerator {
 }
 
 impl Default for PlanetGenerator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Helper: derive NoiseParams from pipeline fields ───────────────────────────
@@ -285,7 +299,7 @@ fn derive_noise_params(
         sum / plates.grain_field.intensities.len() as f32
     };
     let tectonic_grain_scale = 0.3 + params.tectonic_activity * 1.4;
-    let age_grain_scale      = 1.0 - params.surface_age * 0.40;
+    let age_grain_scale = 1.0 - params.surface_age * 0.40;
     let grain_intensity = (raw_grain * tectonic_grain_scale * age_grain_scale).clamp(0.0, 1.0);
 
     // Mean MAP for NoiseParams record (not consumed by generate_tile, but kept
@@ -299,8 +313,8 @@ fn derive_noise_params(
 
     // Hurst exponent: higher mountain_prevalence → sharper ridges (higher H);
     // higher surface_age → smoother, more degraded terrain (lower H).
-    let h_base = (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10)
-        .clamp(0.55, 0.90);
+    let h_base =
+        (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10).clamp(0.55, 0.90);
 
     // Multifractal variance: more climate_diversity → more spatial H variation.
     let h_variance = (0.10 + params.climate_diversity * 0.15).clamp(0.10, 0.25);
@@ -343,7 +357,6 @@ fn classify_terrain(params: &GlobalParams) -> TerrainClass {
         TerrainClass::FluvialHumid
     }
 }
-
 
 // ── Location-aware tile result ────────────────────────────────────────────────
 
@@ -408,7 +421,7 @@ fn classify_terrain_local(regime: TectonicRegime, map_mm: f32) -> TerrainClass {
 /// spatial fields (regime, MAP, erodibility, grain) at the clicked cell,
 /// then runs the tile pipeline at `GRID_WIDTH × GRID_HEIGHT`.
 pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> LocationTileResult {
-    use crate::planet::{OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
+    use crate::planet::{OVERVIEW_HEIGHT, OVERVIEW_WIDTH};
 
     // ── 1. Planet simulation at overview resolution ─────────────────────
     let plates = simulate_plates(
@@ -435,34 +448,31 @@ pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> Locati
     let idx = row * OVERVIEW_WIDTH + col;
 
     // ── 3. Sample local fields ───────────────────────────────────────────
-    let local_regime       = plates.regime_field.data[idx];
-    let local_map_mm       = climate.map_field[idx];
-    let local_erodibility  = plates.erodibility_field[idx];
-    let local_grain_angle  = plates.grain_field.angles[idx];
+    let local_regime = plates.regime_field.data[idx];
+    let local_map_mm = climate.map_field[idx];
+    let local_erodibility = plates.erodibility_field[idx];
+    let local_grain_angle = plates.grain_field.angles[idx];
     let local_grain_intensity = plates.grain_field.intensities[idx];
-    let local_crust        = plates.crust_field[idx];
-    let local_glaciation   = climate.glaciation_mask[idx];
+    let local_crust = plates.crust_field[idx];
+    let local_glaciation = climate.glaciation_mask[idx];
 
     let terrain_class = classify_terrain_local(local_regime, local_map_mm);
 
     // ── 4. Build NoiseParams from local values + global slider params ────
-    let h_base = (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10)
-        .clamp(0.55, 0.90);
+    let h_base =
+        (0.65 + params.mountain_prevalence * 0.20 - params.surface_age * 0.10).clamp(0.55, 0.90);
     let h_variance = (0.10 + params.climate_diversity * 0.15).clamp(0.10, 0.25);
     let tectonic_grain_scale = 0.3 + params.tectonic_activity * 1.4;
-    let age_grain_scale      = 1.0 - params.surface_age * 0.40;
+    let age_grain_scale = 1.0 - params.surface_age * 0.40;
     let grain_intensity = {
-        let raw = (local_grain_intensity * tectonic_grain_scale * age_grain_scale)
-            .clamp(0.0, 1.0);
+        let raw = (local_grain_intensity * tectonic_grain_scale * age_grain_scale).clamp(0.0, 1.0);
         // Oceanic ActiveExtensional cells (island arcs, thin oceanic rifts) receive
         // the same grain_intensity as continental AE (major rift valleys) but their
         // near-arc geometry can produce coherence values approaching 1.0.  At that
         // level the noise kernel becomes so elongated that uniform diagonal striping
         // appears across the full tile.  Cap at 0.55 for oceanic AE so that grain
         // is a visible directional tendency rather than parallel wall-to-wall lines.
-        if local_regime == TectonicRegime::ActiveExtensional
-            && local_crust == CrustType::Oceanic
-        {
+        if local_regime == TectonicRegime::ActiveExtensional && local_crust == CrustType::Oceanic {
             raw.min(0.55)
         } else {
             raw
@@ -488,33 +498,40 @@ pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> Locati
         seed32,
         GRID_WIDTH,
         GRID_HEIGHT,
-        -180.0, 180.0,
-        -90.0,  90.0,
+        -180.0,
+        180.0,
+        -90.0,
+        90.0,
     );
 
     let tectonic_uplift = 0.5 + params.tectonic_activity * 1.5;
-    let mountain_scale  = 0.7 + params.mountain_prevalence * 0.6;
-    for v in &mut hf.data { *v *= tectonic_uplift * mountain_scale; }
+    let mountain_scale = 0.7 + params.mountain_prevalence * 0.6;
+    for v in &mut hf.data {
+        *v *= tectonic_uplift * mountain_scale;
+    }
 
     // ── 6. Hydraulic shaping ─────────────────────────────────────────────
-    let water_scale    = 0.3 + params.water_abundance * 1.4;
-    let age_scale      = 0.3 + params.surface_age    * 1.4;
+    let water_scale = 0.3 + params.water_abundance * 1.4;
+    let age_scale = 0.3 + params.surface_age * 1.4;
     let erosion_factor = (water_scale * age_scale).clamp(0.05, 2.0);
 
     // Use a uniform erodibility field scaled by the local value.
-    let scaled_erodibility = vec![
-        (local_erodibility * erosion_factor).clamp(0.0, 1.0);
-        GRID_WIDTH * GRID_HEIGHT
-    ];
+    let scaled_erodibility =
+        vec![(local_erodibility * erosion_factor).clamp(0.0, 1.0); GRID_WIDTH * GRID_HEIGHT];
 
-    apply_hydraulic_shaping(&mut hf, terrain_class, &scaled_erodibility, local_glaciation);
+    apply_hydraulic_shaping(
+        &mut hf,
+        terrain_class,
+        &scaled_erodibility,
+        local_glaciation,
+    );
 
     // ── 7. Realism scoring ───────────────────────────────────────────────
     let score = compute_realism_score(&hf, terrain_class);
 
     // Regime and map fields for the tile (uniform, from location sample).
     let regime_field = vec![local_regime; GRID_WIDTH * GRID_HEIGHT];
-    let map_field    = vec![local_map_mm; GRID_WIDTH * GRID_HEIGHT];
+    let map_field = vec![local_map_mm; GRID_WIDTH * GRID_HEIGHT];
 
     LocationTileResult {
         heightfield: hf,
@@ -540,6 +557,8 @@ pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> Locati
 mod tests {
     use super::*;
 
+    type ClassSetup = Box<dyn Fn(&mut GlobalParams)>;
+
     /// Diagnostic: 5-seed Hurst and full score check after h_base calibration.
     #[test]
     #[ignore]
@@ -550,17 +569,32 @@ mod tests {
         let mut h_vals = Vec::new();
         println!("\n--- Hurst 5-seed diagnostic (FluvialHumid, default params) ---");
         for seed in seeds {
-            let mut p = GlobalParams::default();
-            p.seed = seed;
+            let p = GlobalParams {
+                seed,
+                ..GlobalParams::default()
+            };
             let result = gen.generate(&p);
             let tc = classify_terrain(&p);
             let h = compute_hurst(&result.heightfield).h;
             let score = compute_realism_score(&result.heightfield, tc);
-            let h_s = score.metrics.iter().find(|m| m.name == "hurst").map(|m| m.score_0_1).unwrap_or(0.0);
-            println!("seed={seed:6}  class={tc:?}  H={h:.3}  hurst_score={:.1}%  total={:.1}",
-                h_s * 100.0, score.total);
+            let h_s = score
+                .metrics
+                .iter()
+                .find(|m| m.name == "hurst")
+                .map(|m| m.score_0_1)
+                .unwrap_or(0.0);
+            println!(
+                "seed={seed:6}  class={tc:?}  H={h:.3}  hurst_score={:.1}%  total={:.1}",
+                h_s * 100.0,
+                score.total
+            );
             for m in &score.metrics {
-                print!("  {}: {:.3}({:.0}%)", m.name, m.raw_value, m.score_0_1 * 100.0);
+                print!(
+                    "  {}: {:.3}({:.0}%)",
+                    m.name,
+                    m.raw_value,
+                    m.score_0_1 * 100.0
+                );
             }
             println!();
             h_vals.push(h);
@@ -579,11 +613,33 @@ mod tests {
         let seeds = [42u64, 1337, 99999, 271828, 314159];
 
         // Param overrides that produce each terrain class.
-        let classes: &[(&str, Box<dyn Fn(&mut GlobalParams)>)] = &[
-            ("Alpine",       Box::new(|p: &mut GlobalParams| { p.mountain_prevalence = 0.75; })),
-            ("Cratonic",     Box::new(|p: &mut GlobalParams| { p.mountain_prevalence = 0.15; p.tectonic_activity = 0.20; })),
-            ("FluvialArid",  Box::new(|p: &mut GlobalParams| { p.water_abundance = 0.20; })),
-            ("Coastal",      Box::new(|p: &mut GlobalParams| { p.water_abundance = 0.80; p.mountain_prevalence = 0.22; })),
+        let classes: &[(&str, ClassSetup)] = &[
+            (
+                "Alpine",
+                Box::new(|p: &mut GlobalParams| {
+                    p.mountain_prevalence = 0.75;
+                }),
+            ),
+            (
+                "Cratonic",
+                Box::new(|p: &mut GlobalParams| {
+                    p.mountain_prevalence = 0.15;
+                    p.tectonic_activity = 0.20;
+                }),
+            ),
+            (
+                "FluvialArid",
+                Box::new(|p: &mut GlobalParams| {
+                    p.water_abundance = 0.20;
+                }),
+            ),
+            (
+                "Coastal",
+                Box::new(|p: &mut GlobalParams| {
+                    p.water_abundance = 0.80;
+                    p.mountain_prevalence = 0.22;
+                }),
+            ),
             ("FluvialHumid", Box::new(|_: &mut GlobalParams| {})),
         ];
 
@@ -591,8 +647,10 @@ mod tests {
         for (name, setup) in classes {
             let mut totals = Vec::new();
             for &seed in &seeds {
-                let mut p = GlobalParams::default();
-                p.seed = seed;
+                let mut p = GlobalParams {
+                    seed,
+                    ..GlobalParams::default()
+                };
                 setup(&mut p);
                 let result = gen.generate(&p);
                 let tc = classify_terrain(&p);
@@ -601,9 +659,16 @@ mod tests {
             }
             let mean = totals.iter().sum::<f32>() / totals.len() as f32;
             let scores_str: Vec<String> = totals.iter().map(|s| format!("{:.1}", s)).collect();
-            let status = if mean >= 75.0 { "✓" } else { "✗ BELOW TARGET" };
-            println!("  {name:<14} seeds=[{}]  mean={:.1}  {status}",
-                scores_str.join(", "), mean);
+            let status = if mean >= 75.0 {
+                "✓"
+            } else {
+                "✗ BELOW TARGET"
+            };
+            println!(
+                "  {name:<14} seeds=[{}]  mean={:.1}  {status}",
+                scores_str.join(", "),
+                mean
+            );
         }
     }
 
@@ -619,7 +684,8 @@ mod tests {
         let data = &result.heightfield.data;
         assert!(!data.is_empty(), "heightfield must be non-empty");
         let mean = data.iter().sum::<f32>() / data.len() as f32;
-        let std = (data.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / data.len() as f32).sqrt();
+        let std =
+            (data.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / data.len() as f32).sqrt();
         assert!(std > 50.0, "elevation std ({std:.1}m) must exceed 50m");
 
         // Coordinates echoed back correctly.
@@ -637,15 +703,20 @@ mod tests {
         // Far-south open ocean latitude
         let result = generate_at_location(&params, -70.0, 0.0);
         assert!(!result.heightfield.data.is_empty());
+        assert_ne!(
+            result.terrain_class,
+            TerrainClass::Alpine,
+            "ocean location should not generate Alpine terrain",
+        );
     }
 
     /// PC.2: at least 3 different terrain classes must appear when sampling
     /// one land cell from each distinct regime type present on the planet.
     #[test]
     fn terrain_class_variety_across_planet() {
-        use std::collections::HashSet;
-        use crate::planet::{generate_planet_overview, OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
+        use crate::planet::{generate_planet_overview, OVERVIEW_HEIGHT, OVERVIEW_WIDTH};
         use crate::plates::regime_field::TectonicRegime;
+        use std::collections::HashSet;
 
         let params = GlobalParams::default();
         let overview = generate_planet_overview(&params);
@@ -663,9 +734,7 @@ mod tests {
 
         for target in &target_regimes {
             // Find first land cell matching this regime.
-            let cell = (0..n).find(|&i| {
-                !overview.ocean_mask[i] && overview.regimes[i] == *target
-            });
+            let cell = (0..n).find(|&i| !overview.ocean_mask[i] && overview.regimes[i] == *target);
             if let Some(idx) = cell {
                 let r = idx / OVERVIEW_WIDTH;
                 let c = idx % OVERVIEW_WIDTH;
@@ -679,9 +748,12 @@ mod tests {
         }
 
         println!("Terrain classes found: {classes:?}");
-        assert!(classes.len() >= 3,
+        assert!(
+            classes.len() >= 3,
             "expected ≥ 3 terrain classes from regime-targeted samples, got {}: {:?}",
-            classes.len(), classes);
+            classes.len(),
+            classes
+        );
     }
 
     /// Generate with default params, confirm non-flat output and no panic.
@@ -695,13 +767,16 @@ mod tests {
 
         let mean = data.iter().sum::<f32>() / data.len() as f32;
         let std = {
-            let var = data.iter().map(|&v| (v - mean).powi(2)).sum::<f32>()
-                / data.len() as f32;
+            let var = data.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / data.len() as f32;
             var.sqrt()
         };
 
-        assert!(std > 100.0, "elevation std ({std:.1}m) must exceed 100m for non-flat terrain");
-        assert!(result.generation_time_ms < 60_000, "generation should complete in under 60s");
+        assert!(
+            std > 100.0,
+            "elevation std ({std:.1}m) must exceed 100m for non-flat terrain"
+        );
+        // Note: generation_time_ms is set by the WASM layer, not by core generate().
+        // Timing assertions belong in integration/WASM tests, not here.
     }
 
     /// Oceanic ActiveExtensional grain intensity must be ≤ 0.55 after the cap.
@@ -712,7 +787,7 @@ mod tests {
     /// on the default planet.
     #[test]
     fn grain_intensity_oceanic_ae_below_threshold() {
-        use crate::planet::{OVERVIEW_WIDTH, OVERVIEW_HEIGHT};
+        use crate::planet::{OVERVIEW_HEIGHT, OVERVIEW_WIDTH};
 
         let params = GlobalParams::default();
         let plates = simulate_plates(
@@ -723,7 +798,7 @@ mod tests {
         );
 
         let tectonic_grain_scale = 0.3 + params.tectonic_activity * 1.4;
-        let age_grain_scale      = 1.0 - params.surface_age * 0.40;
+        let age_grain_scale = 1.0 - params.surface_age * 0.40;
 
         let mut oceanic_ae_count = 0usize;
         let mut uncapped_exceeds = 0usize;
@@ -733,12 +808,13 @@ mod tests {
                 && plates.crust_field[i] == CrustType::Oceanic
             {
                 oceanic_ae_count += 1;
-                let raw = (plates.grain_field.intensities[i]
-                    * tectonic_grain_scale
-                    * age_grain_scale)
-                    .clamp(0.0, 1.0);
+                let raw =
+                    (plates.grain_field.intensities[i] * tectonic_grain_scale * age_grain_scale)
+                        .clamp(0.0, 1.0);
                 // Track how many cells would exceed without the cap (proves fix is needed).
-                if raw > 0.55 { uncapped_exceeds += 1; }
+                if raw > 0.55 {
+                    uncapped_exceeds += 1;
+                }
                 // After the oceanic AE cap applied in generate_at_location:
                 let capped = raw.min(0.55);
                 assert!(

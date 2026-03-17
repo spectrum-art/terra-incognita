@@ -21,6 +21,8 @@ pub const PIXEL_TO_KM: f64 = 0.09;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// A single identified ridge system.
+// Some fields are retained for watershed diagnostics even though not every
+// downstream aggregation currently reads them.
 #[allow(dead_code)]
 pub struct RidgeSystem {
     /// Pixel indices of all ridge pixels belonging to this system.
@@ -41,6 +43,8 @@ pub struct RidgeSystem {
 }
 
 /// Summary of saddle detection / ridge system identification for one window.
+// Some fields are retained for watershed diagnostics even though not every
+// downstream aggregation currently reads them.
 #[allow(dead_code)]
 pub struct RidgeSystemResult {
     /// Identified ridge systems.
@@ -133,18 +137,29 @@ fn label_ridge_components(ridge_mask: &[bool], width: usize, height: usize) -> V
     let mut queue = std::collections::VecDeque::new();
 
     for start in 0..n {
-        if !ridge_mask[start] || labels[start] != 0 { continue; }
+        if !ridge_mask[start] || labels[start] != 0 {
+            continue;
+        }
         labels[start] = current;
         queue.push_back(start);
         while let Some(i) = queue.pop_front() {
             let r = (i / width) as isize;
             let c = (i % width) as isize;
             for &(dr, dc) in &[
-                (-1isize,-1isize),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1),
+                (-1isize, -1isize),
+                (-1, 0),
+                (-1, 1),
+                (0, -1),
+                (0, 1),
+                (1, -1),
+                (1, 0),
+                (1, 1),
             ] {
                 let nr = r + dr;
                 let nc = c + dc;
-                if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize { continue; }
+                if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize {
+                    continue;
+                }
                 let j = nr as usize * width + nc as usize;
                 if ridge_mask[j] && labels[j] == 0 {
                     labels[j] = current;
@@ -164,7 +179,9 @@ fn compute_watershed_areas(labels: &[u32], n: usize) -> Vec<usize> {
     let max_label = *labels.iter().max().unwrap_or(&0) as usize;
     let mut areas = vec![0usize; max_label + 1];
     for &l in &labels[..n] {
-        if l != 0 { areas[l as usize] += 1; }
+        if l != 0 {
+            areas[l as usize] += 1;
+        }
     }
     areas
 }
@@ -181,9 +198,15 @@ fn compute_watershed_mean_elevations(labels: &[u32], dem: &[f32], n: usize) -> V
             counts[l] += 1;
         }
     }
-    (0..=max_label).map(|l| {
-        if counts[l] > 0 { sums[l] / counts[l] as f64 } else { 0.0 }
-    }).collect()
+    (0..=max_label)
+        .map(|l| {
+            if counts[l] > 0 {
+                sums[l] / counts[l] as f64
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 fn compute_total_relief(dem: &[f32], n: usize) -> f64 {
@@ -192,11 +215,19 @@ fn compute_total_relief(dem: &[f32], n: usize) -> f64 {
     for &v in &dem[..n] {
         if !v.is_nan() {
             let e = v as f64;
-            if e < min_e { min_e = e; }
-            if e > max_e { max_e = e; }
+            if e < min_e {
+                min_e = e;
+            }
+            if e > max_e {
+                max_e = e;
+            }
         }
     }
-    if max_e > min_e { max_e - min_e } else { 0.0 }
+    if max_e > min_e {
+        max_e - min_e
+    } else {
+        0.0
+    }
 }
 
 // ── Build ridge systems via saddle prominence ─────────────────────────────────
@@ -220,7 +251,9 @@ fn build_ridge_systems(
     // watershed pair on either side.
     let mut comp_pixels: Vec<Vec<usize>> = vec![Vec::new(); n_components];
     for (i, &l) in ridge_labels[..n].iter().enumerate() {
-        if l == 0 { continue; }
+        if l == 0 {
+            continue;
+        }
         comp_pixels[(l - 1) as usize].push(i);
     }
 
@@ -229,14 +262,19 @@ fn build_ridge_systems(
     let mut systems: Vec<RidgeSystem> = Vec::new();
 
     for (comp_idx, pixels) in comp_pixels.iter().enumerate() {
-        if pixels.is_empty() { continue; }
+        if pixels.is_empty() {
+            continue;
+        }
 
         // Mean crest elevation.
-        let crest_elevs: Vec<f64> = pixels.iter()
+        let crest_elevs: Vec<f64> = pixels
+            .iter()
             .map(|&i| dem[i] as f64)
             .filter(|e| !e.is_nan())
             .collect();
-        if crest_elevs.is_empty() { continue; }
+        if crest_elevs.is_empty() {
+            continue;
+        }
         let mean_crest_elev = crest_elevs.iter().sum::<f64>() / crest_elevs.len() as f64;
         let saddle_elev = crest_elevs.iter().cloned().fold(f64::INFINITY, f64::min);
 
@@ -248,11 +286,21 @@ fn build_ridge_systems(
 
         // Find dominant watershed pair bordering this ridge component.
         let (wa, wb) = find_dominant_watershed_pair(
-            pixels, width, height, watershed_labels, ridge_mask, comp_idx as u32 + 1, ridge_labels,
+            pixels,
+            width,
+            height,
+            watershed_labels,
+            ridge_mask,
+            comp_idx as u32 + 1,
+            ridge_labels,
         );
 
-        if wa == 0 || wb == 0 { continue; }
-        if wa >= watershed_areas.len() || wb >= watershed_areas.len() { continue; }
+        if wa == 0 || wb == 0 {
+            continue;
+        }
+        if wa >= watershed_areas.len() || wb >= watershed_areas.len() {
+            continue;
+        }
 
         // Prominence: saddle depth relative to local ridge relief.
         // local_ridge_relief = mean crest elevation above the mean of the two valley floors.
@@ -260,7 +308,9 @@ fn build_ridge_systems(
         let local_relief = mean_crest_elev - valley_floor_elev;
 
         // Only count as a ridge system if local_relief is meaningful.
-        if local_relief <= 0.0 { continue; }
+        if local_relief <= 0.0 {
+            continue;
+        }
 
         // For the purpose of building systems: each ridge component that has
         // local_relief > 0 and total window relief >= 30m is a candidate system.
@@ -281,7 +331,9 @@ fn build_ridge_systems(
         // adjacent systems across shallow saddles.
         // Minimum local relief: 5% of total window relief, at least 5m.
         let min_local_relief = (total_relief * 0.05).max(5.0);
-        if local_relief < min_local_relief { continue; }
+        if local_relief < min_local_relief {
+            continue;
+        }
         let _ = saddle_elev; // used above for filter context, not needed here
 
         systems.push(RidgeSystem {
@@ -320,43 +372,71 @@ fn find_dominant_watershed_pair(
         let r = (i / width) as isize;
         let c = (i % width) as isize;
         // Check 4-connected non-ridge neighbours.
-        for &(dr, dc) in &[(-1isize,0isize),(1,0),(0,-1),(0,1)] {
+        for &(dr, dc) in &[(-1isize, 0isize), (1, 0), (0, -1), (0, 1)] {
             let nr = r + dr;
             let nc = c + dc;
-            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize { continue; }
+            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize {
+                continue;
+            }
             let j = nr as usize * width + nc as usize;
             if !ridge_mask[j] {
                 let l = watershed_labels[j];
-                if l != 0 { *label_counts.entry(l).or_insert(0) += 1; }
+                if l != 0 {
+                    *label_counts.entry(l).or_insert(0) += 1;
+                }
             }
         }
     }
 
-    if label_counts.is_empty() { return (0, 0); }
+    if label_counts.is_empty() {
+        return (0, 0);
+    }
 
     // Sort by frequency descending; the two most common labels form the pair.
     let mut sorted: Vec<(u32, usize)> = label_counts.into_iter().collect();
     sorted.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
     let wa = sorted[0].0 as usize;
-    let wb = if sorted.len() >= 2 { sorted[1].0 as usize } else { 0 };
+    let wb = if sorted.len() >= 2 {
+        sorted[1].0 as usize
+    } else {
+        0
+    };
     (wa, wb)
 }
 
 /// Compute bounding-box extents in pixels: (row_extent, col_extent).
 fn compute_pixel_extents(pixels: &[usize], width: usize) -> (f64, f64) {
-    let mut min_r = usize::MAX; let mut max_r = 0usize;
-    let mut min_c = usize::MAX; let mut max_c = 0usize;
+    let mut min_r = usize::MAX;
+    let mut max_r = 0usize;
+    let mut min_c = usize::MAX;
+    let mut max_c = 0usize;
     for &i in pixels {
         let r = i / width;
         let c = i % width;
-        if r < min_r { min_r = r; }
-        if r > max_r { max_r = r; }
-        if c < min_c { min_c = c; }
-        if c > max_c { max_c = c; }
+        if r < min_r {
+            min_r = r;
+        }
+        if r > max_r {
+            max_r = r;
+        }
+        if c < min_c {
+            min_c = c;
+        }
+        if c > max_c {
+            max_c = c;
+        }
     }
-    let row_ext = if max_r >= min_r { (max_r - min_r) as f64 } else { 0.0 };
-    let col_ext = if max_c >= min_c { (max_c - min_c) as f64 } else { 0.0 };
+    let row_ext = if max_r >= min_r {
+        (max_r - min_r) as f64
+    } else {
+        0.0
+    };
+    let col_ext = if max_c >= min_c {
+        (max_c - min_c) as f64
+    } else {
+        0.0
+    };
     (row_ext, col_ext)
 }
 
@@ -374,7 +454,9 @@ fn merge_shallow_systems(
     // Find adjacency between systems: two systems are adjacent if their ridge
     // pixels are 8-connected to each other.
     let n_sys = systems.len();
-    if n_sys <= 1 { return systems; }
+    if n_sys <= 1 {
+        return systems;
+    }
 
     // Build pixel → system index map.
     let n = dem.len();
@@ -398,18 +480,35 @@ fn merge_shallow_systems(
     }
 
     for i in 0..n {
-        if !ridge_mask[i] || px_to_sys[i] == usize::MAX { continue; }
+        if !ridge_mask[i] || px_to_sys[i] == usize::MAX {
+            continue;
+        }
         let si = px_to_sys[i];
         let r = (i / width) as isize;
         let c = (i % width) as isize;
-        for &(dr, dc) in &[(-1isize,-1isize),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)] {
+        for &(dr, dc) in &[
+            (-1isize, -1isize),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ] {
             let nr = r + dr;
             let nc = c + dc;
-            if nr < 0 || nc < 0 || nr >= (n / width) as isize || nc >= width as isize { continue; }
+            if nr < 0 || nc < 0 || nr >= (n / width) as isize || nc >= width as isize {
+                continue;
+            }
             let j = nr as usize * width + nc as usize;
-            if !ridge_mask[j] || px_to_sys[j] == usize::MAX { continue; }
+            if !ridge_mask[j] || px_to_sys[j] == usize::MAX {
+                continue;
+            }
             let sj = px_to_sys[j];
-            if si == sj { continue; }
+            if si == sj {
+                continue;
+            }
 
             // Saddle elevation = minimum elevation of the two connecting ridge pixels.
             let saddle_elev = (dem[i] as f64).min(dem[j] as f64);
@@ -421,18 +520,26 @@ fn merge_shallow_systems(
             let delta_h = lower_crest - saddle_elev;
 
             // Valley floor = mean of the two systems' watershed mean elevations.
-            let vf_i = (systems[si].watershed_mean_elevs.0 + systems[si].watershed_mean_elevs.1) / 2.0;
-            let vf_j = (systems[sj].watershed_mean_elevs.0 + systems[sj].watershed_mean_elevs.1) / 2.0;
+            let vf_i =
+                (systems[si].watershed_mean_elevs.0 + systems[si].watershed_mean_elevs.1) / 2.0;
+            let vf_j =
+                (systems[sj].watershed_mean_elevs.0 + systems[sj].watershed_mean_elevs.1) / 2.0;
             let valley_floor = (vf_i + vf_j) / 2.0;
             let local_relief = lower_crest - valley_floor;
 
-            let prominence_ratio = if local_relief > 0.0 { delta_h / local_relief } else { 0.0 };
+            let prominence_ratio = if local_relief > 0.0 {
+                delta_h / local_relief
+            } else {
+                0.0
+            };
 
             // Merge if saddle is too shallow to be a real separation.
             if prominence_ratio < PROMINENCE_RATIO_THRESHOLD || delta_h < PROMINENCE_ABS_THRESHOLD {
                 let ri = find(&mut parent, si);
                 let rj = find(&mut parent, sj);
-                if ri != rj { parent[rj] = ri; }
+                if ri != rj {
+                    parent[rj] = ri;
+                }
             }
         }
     }
@@ -449,15 +556,18 @@ fn merge_shallow_systems(
     for (_root, group) in groups {
         if group.len() == 1 {
             let si = group[0];
-            merged.push(std::mem::replace(&mut systems[si], RidgeSystem {
-                pixels: Vec::new(),
-                watershed_pair: (0, 0),
-                mean_crest_elev: 0.0,
-                watershed_areas: (0, 0),
-                watershed_mean_elevs: (0.0, 0.0),
-                grain_extent_px: 0.0,
-                perp_extent_px: 0.0,
-            }));
+            merged.push(std::mem::replace(
+                &mut systems[si],
+                RidgeSystem {
+                    pixels: Vec::new(),
+                    watershed_pair: (0, 0),
+                    mean_crest_elev: 0.0,
+                    watershed_areas: (0, 0),
+                    watershed_mean_elevs: (0.0, 0.0),
+                    grain_extent_px: 0.0,
+                    perp_extent_px: 0.0,
+                },
+            ));
         } else {
             // Merge: combine pixels, take first watershed pair, re-compute extents.
             let mut all_pixels: Vec<usize> = Vec::new();
@@ -480,7 +590,11 @@ fn merge_shallow_systems(
                     me_b = sys.watershed_mean_elevs.1;
                 }
             }
-            let mean_crest = if n_crest > 0 { total_crest / n_crest as f64 } else { 0.0 };
+            let mean_crest = if n_crest > 0 {
+                total_crest / n_crest as f64
+            } else {
+                0.0
+            };
             let (ge, pe) = compute_pixel_extents(&all_pixels, width);
             merged.push(RidgeSystem {
                 pixels: all_pixels,
@@ -515,7 +629,9 @@ pub fn measure_ridge_spacing(
     let mut system_mask = vec![false; n];
     for sys in systems {
         for &p in &sys.pixels {
-            if p < n { system_mask[p] = true; }
+            if p < n {
+                system_mask[p] = true;
+            }
         }
     }
 
@@ -525,11 +641,15 @@ pub fn measure_ridge_spacing(
         let mut centers: Vec<f64> = Vec::new();
         let mut run_start: Option<usize> = None;
         for (ti, &(r, c)) in transect.iter().enumerate() {
-            let in_sys = r >= 0 && c >= 0
-                && (r as usize) < height && (c as usize) < width
+            let in_sys = r >= 0
+                && c >= 0
+                && (r as usize) < height
+                && (c as usize) < width
                 && system_mask[r as usize * width + c as usize];
             if in_sys {
-                if run_start.is_none() { run_start = Some(ti); }
+                if run_start.is_none() {
+                    run_start = Some(ti);
+                }
             } else if let Some(start) = run_start {
                 centers.push((start + ti - 1) as f64 / 2.0);
                 run_start = None;
@@ -544,13 +664,19 @@ pub fn measure_ridge_spacing(
     }
 
     if spacings.is_empty() {
-        return RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN };
+        return RidgeSpacingResult {
+            mean_px: f64::NAN,
+            std_px: f64::NAN,
+        };
     }
     let n_sp = spacings.len() as f64;
     let mean = spacings.iter().sum::<f64>() / n_sp;
     let var = spacings.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n_sp;
     let _ = dem; // dem not needed here but kept for API clarity
-    RidgeSpacingResult { mean_px: mean, std_px: var.sqrt() }
+    RidgeSpacingResult {
+        mean_px: mean,
+        std_px: var.sqrt(),
+    }
 }
 
 /// Compute mean and max system length (grain-axis extent) from ridge systems.
@@ -572,18 +698,29 @@ pub fn measure_ridge_continuity(
     let grain_r = grain_angle_rad.sin();
     let grain_c = grain_angle_rad.cos();
 
-    let extents: Vec<f64> = systems.iter().map(|sys| {
-        let mut min_proj = f64::INFINITY;
-        let mut max_proj = f64::NEG_INFINITY;
-        for &p in &sys.pixels {
-            let r = (p / width) as f64;
-            let c = (p % width) as f64;
-            let proj = r * grain_r + c * grain_c;
-            if proj < min_proj { min_proj = proj; }
-            if proj > max_proj { max_proj = proj; }
-        }
-        if max_proj > min_proj { max_proj - min_proj } else { 0.0 }
-    }).collect();
+    let extents: Vec<f64> = systems
+        .iter()
+        .map(|sys| {
+            let mut min_proj = f64::INFINITY;
+            let mut max_proj = f64::NEG_INFINITY;
+            for &p in &sys.pixels {
+                let r = (p / width) as f64;
+                let c = (p % width) as f64;
+                let proj = r * grain_r + c * grain_c;
+                if proj < min_proj {
+                    min_proj = proj;
+                }
+                if proj > max_proj {
+                    max_proj = proj;
+                }
+            }
+            if max_proj > min_proj {
+                max_proj - min_proj
+            } else {
+                0.0
+            }
+        })
+        .collect();
 
     let mean = extents.iter().sum::<f64>() / extents.len() as f64;
     let max = extents.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -599,23 +736,31 @@ pub fn measure_ridge_continuity(
 /// Area asymmetry: ratio of larger to smaller watershed area.
 /// Returns (mean_ratio, consistency).
 pub fn measure_asymmetry_from_systems(systems: &[RidgeSystem]) -> (f64, f64) {
-    let ratios: Vec<f64> = systems.iter()
+    let ratios: Vec<f64> = systems
+        .iter()
         .filter(|s| s.watershed_areas.0 > 0 && s.watershed_areas.1 > 0)
         .map(|s| {
             let a = s.watershed_areas.0 as f64;
             let b = s.watershed_areas.1 as f64;
-            if a >= b { a / b } else { b / a }
+            if a >= b {
+                a / b
+            } else {
+                b / a
+            }
         })
         .collect();
 
-    if ratios.is_empty() { return (f64::NAN, f64::NAN); }
+    if ratios.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
 
     let n = ratios.len() as f64;
     let mean_ratio = ratios.iter().sum::<f64>() / n;
 
     // Consistency: fraction of systems where side A (watershed A) is larger.
     // Consistency near 0.5 = random; near 1.0 = structural control.
-    let n_a_larger = systems.iter()
+    let n_a_larger = systems
+        .iter()
         .filter(|s| s.watershed_areas.0 > 0 && s.watershed_areas.1 > 0)
         .filter(|s| s.watershed_areas.0 > s.watershed_areas.1)
         .count();
@@ -638,7 +783,9 @@ pub fn measure_inter_system_valley_width(
     let mut system_mask = vec![false; n];
     for sys in systems {
         for &p in &sys.pixels {
-            if p < n { system_mask[p] = true; }
+            if p < n {
+                system_mask[p] = true;
+            }
         }
     }
 
@@ -647,8 +794,10 @@ pub fn measure_inter_system_valley_width(
         let mut in_system = false;
         let mut gap_start: Option<usize> = None;
         for (ti, &(r, c)) in transect.iter().enumerate() {
-            let on = r >= 0 && c >= 0
-                && (r as usize) < height && (c as usize) < width
+            let on = r >= 0
+                && c >= 0
+                && (r as usize) < height
+                && (c as usize) < width
                 && system_mask[r as usize * width + c as usize];
             if on && !in_system {
                 // Entered a ridge system from a gap.
@@ -665,7 +814,9 @@ pub fn measure_inter_system_valley_width(
         }
     }
 
-    if gaps.is_empty() { return (f64::NAN, f64::NAN); }
+    if gaps.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
     let ng = gaps.len() as f64;
     let mean = gaps.iter().sum::<f64>() / ng;
     let var = gaps.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / ng;
@@ -698,14 +849,18 @@ pub fn measure_ridge_spacing_filtered(
 ) -> TierSpacingResult {
     use crate::ridge_spacing::RidgeSpacingResult;
 
-    let filtered: Vec<&RidgeSystem> = systems.iter()
+    let filtered: Vec<&RidgeSystem> = systems
+        .iter()
         .filter(|s| system_length_px(s) >= min_length_px)
         .collect();
     let n_systems = filtered.len();
 
     if filtered.is_empty() {
         return TierSpacingResult {
-            spacing: RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN },
+            spacing: RidgeSpacingResult {
+                mean_px: f64::NAN,
+                std_px: f64::NAN,
+            },
             n_systems,
         };
     }
@@ -714,7 +869,9 @@ pub fn measure_ridge_spacing_filtered(
     let mut system_mask = vec![false; n];
     for sys in &filtered {
         for &p in &sys.pixels {
-            if p < n { system_mask[p] = true; }
+            if p < n {
+                system_mask[p] = true;
+            }
         }
     }
 
@@ -723,11 +880,15 @@ pub fn measure_ridge_spacing_filtered(
         let mut centers: Vec<f64> = Vec::new();
         let mut run_start: Option<usize> = None;
         for (ti, &(r, c)) in transect.iter().enumerate() {
-            let in_sys = r >= 0 && c >= 0
-                && (r as usize) < height && (c as usize) < width
+            let in_sys = r >= 0
+                && c >= 0
+                && (r as usize) < height
+                && (c as usize) < width
                 && system_mask[r as usize * width + c as usize];
             if in_sys {
-                if run_start.is_none() { run_start = Some(ti); }
+                if run_start.is_none() {
+                    run_start = Some(ti);
+                }
             } else if let Some(start) = run_start {
                 centers.push((start + ti - 1) as f64 / 2.0);
                 run_start = None;
@@ -742,12 +903,18 @@ pub fn measure_ridge_spacing_filtered(
     }
 
     let spacing = if spacings.is_empty() {
-        RidgeSpacingResult { mean_px: f64::NAN, std_px: f64::NAN }
+        RidgeSpacingResult {
+            mean_px: f64::NAN,
+            std_px: f64::NAN,
+        }
     } else {
         let n_sp = spacings.len() as f64;
         let mean = spacings.iter().sum::<f64>() / n_sp;
         let var = spacings.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n_sp;
-        RidgeSpacingResult { mean_px: mean, std_px: var.sqrt() }
+        RidgeSpacingResult {
+            mean_px: mean,
+            std_px: var.sqrt(),
+        }
     };
 
     TierSpacingResult { spacing, n_systems }
@@ -792,7 +959,9 @@ fn pca_direction_of_system(
             pts.push((r as f64, c as f64));
         }
     }
-    if pts.len() < 5 { return None; }
+    if pts.len() < 5 {
+        return None;
+    }
     let n = pts.len() as f64;
     let mean_r = pts.iter().map(|p| p.0).sum::<f64>() / n;
     let mean_c = pts.iter().map(|p| p.1).sum::<f64>() / n;
@@ -806,7 +975,9 @@ fn pca_direction_of_system(
         cov_rc += dr * dc;
         cov_cc += dc * dc;
     }
-    cov_rr /= n; cov_rc /= n; cov_cc /= n;
+    cov_rr /= n;
+    cov_rc /= n;
+    cov_cc /= n;
     let trace = cov_rr + cov_cc;
     let det = cov_rr * cov_cc - cov_rc * cov_rc;
     let disc = (trace * trace / 4.0 - det).max(0.0).sqrt();
@@ -839,7 +1010,9 @@ pub fn measure_ridge_junction_angles(
     let mut px_to_sys = vec![usize::MAX; n];
     for (si, sys) in systems.iter().enumerate() {
         for &p in &sys.pixels {
-            if p < n { px_to_sys[p] = si; }
+            if p < n {
+                px_to_sys[p] = si;
+            }
         }
     }
 
@@ -855,15 +1028,23 @@ pub fn measure_ridge_junction_angles(
             let c = (p % width) as i32;
             for dr in -TOLERANCE..=TOLERANCE {
                 for dc in -TOLERANCE..=TOLERANCE {
-                    if dr == 0 && dc == 0 { continue; }
+                    if dr == 0 && dc == 0 {
+                        continue;
+                    }
                     let nr = r + dr;
                     let nc = c + dc;
-                    if nr < 0 || nc < 0 || nr >= height as i32 || nc >= width as i32 { continue; }
+                    if nr < 0 || nc < 0 || nr >= height as i32 || nc >= width as i32 {
+                        continue;
+                    }
                     let j = nr as usize * width + nc as usize;
                     let sj = px_to_sys[j];
-                    if sj == usize::MAX || sj == si { continue; }
+                    if sj == usize::MAX || sj == si {
+                        continue;
+                    }
                     let key = (si.min(sj), si.max(sj));
-                    junction_map.entry(key).or_insert(((r + nr) / 2, (c + nc) / 2));
+                    junction_map
+                        .entry(key)
+                        .or_insert(((r + nr) / 2, (c + nc) / 2));
                 }
             }
         }
@@ -873,7 +1054,9 @@ pub fn measure_ridge_junction_angles(
     for (&(si, sj), &(junc_r, junc_c)) in &junction_map {
         let dir_i = pca_direction_of_system(&systems[si], junc_r, junc_c, PCA_RADIUS, width);
         let dir_j = pca_direction_of_system(&systems[sj], junc_r, junc_c, PCA_RADIUS, width);
-        let (Some(di), Some(dj)) = (dir_i, dir_j) else { continue };
+        let (Some(di), Some(dj)) = (dir_i, dir_j) else {
+            continue;
+        };
         let mut diff = (di - dj).abs();
         while diff > std::f64::consts::FRAC_PI_2 {
             diff = (std::f64::consts::PI - diff).abs();
@@ -893,7 +1076,13 @@ pub fn measure_ridge_junction_angles(
     let p10 = sorted[((0.10 * (len - 1) as f64).round() as usize).min(len - 1)];
     let p90 = sorted[((0.90 * (len - 1) as f64).round() as usize).min(len - 1)];
 
-    JunctionAngleResult { mean_deg: mean, std_deg: var.sqrt(), p10, p90, n_junctions: len }
+    JunctionAngleResult {
+        mean_deg: mean,
+        std_deg: var.sqrt(),
+        p10,
+        p90,
+        n_junctions: len,
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -903,7 +1092,9 @@ mod tests {
     use super::*;
 
     fn make_dem(rows: usize, cols: usize, f: impl Fn(usize, usize) -> f32 + Copy) -> Vec<f32> {
-        (0..rows).flat_map(|r| (0..cols).map(move |c| f(r, c))).collect()
+        (0..rows)
+            .flat_map(|r| (0..cols).map(move |c| f(r, c)))
+            .collect()
     }
 
     #[test]
@@ -911,7 +1102,11 @@ mod tests {
         // Total relief = 0, so no ridge systems should be detected.
         let dem = vec![100.0f32; 400];
         let result = detect_ridge_systems(&dem, 20, 20, 50);
-        assert_eq!(result.systems.len(), 0, "flat terrain: no ridge systems expected");
+        assert_eq!(
+            result.systems.len(),
+            0,
+            "flat terrain: no ridge systems expected"
+        );
     }
 
     #[test]
@@ -919,7 +1114,11 @@ mod tests {
         // Total relief = 20m < 30m threshold → no systems.
         let dem = make_dem(20, 20, |_, c| 100.0 + c as f32 * 1.0);
         let result = detect_ridge_systems(&dem, 20, 20, 10);
-        assert_eq!(result.systems.len(), 0, "low-relief terrain: no systems expected");
+        assert_eq!(
+            result.systems.len(),
+            0,
+            "low-relief terrain: no systems expected"
+        );
     }
 
     #[test]
@@ -932,9 +1131,11 @@ mod tests {
         });
         let result = detect_ridge_systems(&dem, 25, 20, 5);
         // Should detect at least one ridge system.
-        assert!(result.systems.len() >= 1,
+        assert!(
+            !result.systems.is_empty(),
             "should detect ridge system in ridge-valley terrain, got {}",
-            result.systems.len());
+            result.systems.len()
+        );
     }
 
     #[test]
@@ -950,9 +1151,11 @@ mod tests {
         };
         let dem = make_dem(20, 27, |_, c| profile(c));
         let result = detect_ridge_systems(&dem, 27, 20, 5);
-        // Should detect at least 1 system (2 ideal, but merging may reduce to 1 or 2).
-        assert!(result.systems.len() >= 1,
-            "two ridges: expected >= 1 system, got {}", result.systems.len());
+        assert!(
+            result.systems.len() >= 2,
+            "two ridges: expected >= 2 systems, got {}",
+            result.systems.len()
+        );
         // Total ridge pixels should be non-zero.
         assert!(result.total_ridge_pixels > 0);
     }
@@ -966,7 +1169,9 @@ mod tests {
         let h = 30usize;
         let dem = make_dem(h, w, |_, c| 100.0 + c as f32 * 10.0);
         let result = detect_ridge_systems(&dem, w, h, 5);
-        if result.systems.is_empty() { return; }
+        if result.systems.is_empty() {
+            return;
+        }
 
         // All-systems spacing (tertiary tier).
         let tsects = crate::transects::build_transects(w, h, 0.0, 5);
@@ -1001,11 +1206,17 @@ mod tests {
             200.0 - dist * 15.0
         });
         let result = detect_ridge_systems(&dem, 25, 20, 5);
-        if result.systems.is_empty() { return; } // no systems = no measurement
+        if result.systems.is_empty() {
+            return;
+        } // no systems = no measurement
         let (ratio, _consistency) = measure_asymmetry_from_systems(&result.systems);
         if !ratio.is_nan() {
             // Symmetric ridge → ratio should be moderate (watershed areas may differ due to boundary effects).
-            assert!(ratio < 5.0, "symmetric ridge asymmetry ratio should be < 5, got {}", ratio);
+            assert!(
+                ratio < 5.0,
+                "symmetric ridge asymmetry ratio should be < 5, got {}",
+                ratio
+            );
         }
     }
 }
