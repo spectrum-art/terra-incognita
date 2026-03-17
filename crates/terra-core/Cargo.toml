@@ -19,3 +19,4 @@ rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx = "0.5"
+png = "0.17"
