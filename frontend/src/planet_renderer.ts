@@ -66,6 +66,7 @@ function computeHillshade(elevs: number[], w: number, h: number): Float32Array {
 // ── Colour helpers ────────────────────────────────────────────────────────────
 
 type Rgb = [number, number, number];
+type ColorStop = readonly [number, Rgb];
 
 function lerpRgb([r0, g0, b0]: Rgb, [r1, g1, b1]: Rgb, t: number): Rgb {
   const s = Math.max(0, Math.min(1, t));
@@ -76,66 +77,66 @@ function lerpRgb([r0, g0, b0]: Rgb, [r1, g1, b1]: Rgb, t: number): Rgb {
   ];
 }
 
-// Biome colour stops.
-const C_DESERT:   Rgb = [205, 160, 75];
-const C_TEMPERATE:Rgb = [90,  125, 65];
-const C_TROPICAL: Rgb = [25,  85,  38];
-const C_MOUNTAIN: Rgb = [185, 170, 140];
-const C_SNOW:     Rgb = [230, 235, 248];
-const C_GLACIER:  Rgb = [210, 228, 252];
-const C_CRATON:   Rgb = [100, 122, 82];
+function sampleRamp(stops: readonly ColorStop[], value: number): Rgb {
+  if (value <= stops[0][0]) return stops[0][1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [v0, c0] = stops[i];
+    const [v1, c1] = stops[i + 1];
+    if (value <= v1) {
+      return lerpRgb(c0, c1, (value - v0) / Math.max(v1 - v0, 1e-6));
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+const C_GLACIER: Rgb = [214, 230, 246];
+const C_CRATON:  Rgb = [102, 118, 84];
+
+const LAND_WET_STOPS: readonly ColorStop[] = [
+  [0.00, [44, 92, 54]],
+  [0.12, [72, 122, 68]],
+  [0.25, [118, 148, 84]],
+  [0.42, [168, 156, 104]],
+  [0.62, [160, 146, 132]],
+  [1.00, [238, 240, 244]],
+];
+
+const LAND_DRY_STOPS: readonly ColorStop[] = [
+  [0.00, [116, 110, 72]],
+  [0.12, [146, 134, 84]],
+  [0.25, [174, 154, 96]],
+  [0.42, [192, 164, 116]],
+  [0.62, [170, 148, 132]],
+  [1.00, [238, 240, 244]],
+];
 
 // ── Land colour derivation ────────────────────────────────────────────────────
 
 function landRgb(
   regime: number, mapMm: number, glaciation: number, elev: number, seaLevel: number,
 ): Rgb {
-  // Step 1: MAP-based biome colour, continuous lerp through three stops.
-  let base: Rgb;
-  if (mapMm <= 400) {
-    base = lerpRgb([220, 175, 85], C_DESERT, mapMm / 400);
-  } else if (mapMm <= 1000) {
-    base = lerpRgb(C_DESERT, C_TEMPERATE, (mapMm - 400) / 600);
-  } else if (mapMm <= 2000) {
-    base = lerpRgb(C_TEMPERATE, C_TROPICAL, (mapMm - 1000) / 1000);
-  } else {
-    base = C_TROPICAL;
-  }
+  const landRelief = Math.max(0, elev - seaLevel);
+  const reliefNorm = Math.min(1, landRelief / Math.max(1 - seaLevel, 1e-6));
+  const wetness = Math.max(0, Math.min(1, (mapMm - 400) / 1100));
 
-  // Step 2: Elevation blend toward mountain/snow colour.
-  // seaLevel = 0.5 in normalised scheme; full mountain tone at +0.30 above SL.
-  const elevAbove = Math.max(0, elev - seaLevel);
-  const mtnFrac   = Math.min(1, elevAbove / 0.30);
-  // Above 0.85 normalised (high peaks) → blend toward snow.
-  const snowFrac  = Math.min(1, Math.max(0, (elev - 0.85) / 0.10));
-  base = lerpRgb(base, C_MOUNTAIN, mtnFrac * 0.85);
-  base = lerpRgb(base, C_SNOW,     snowFrac);
+  let base = lerpRgb(
+    sampleRamp(LAND_DRY_STOPS, reliefNorm),
+    sampleRamp(LAND_WET_STOPS, reliefNorm),
+    wetness,
+  );
 
-  // Step 3: Cratonic shield — muted green on flat terrain, fades with elevation.
+  const coastalGlow = Math.max(0, 1 - reliefNorm / 0.12);
+  base = lerpRgb(base, [70, 118, 72], coastalGlow * wetness * 0.18);
+
+  // Cratonic shield — muted green on lower-relief interiors.
   if (regime === CRATONIC_SHIELD) {
-    base = lerpRgb(base, C_CRATON, (1.0 - mtnFrac) * 0.45);
+    base = lerpRgb(base, C_CRATON, (1.0 - reliefNorm) * 0.45);
   }
 
-  // Step 4: Glaciation — Former (50 %) and Active (100 %) blend to glacier blue-white.
+  // Glaciation — Former (50 %) and Active (100 %) blend to glacier blue-white.
   if (glaciation >= 1) {
     const glacFrac = glaciation >= 2 ? 1.0 : 0.55;
     base = lerpRgb(base, C_GLACIER, glacFrac);
-  }
-
-  // Step 5: Elevation overrides — rock and snow at altitude, applied after
-  // the climate lerp so high terrain becomes grey/white regardless of biome.
-  const ss = (t: number) => t * t * (3 - 2 * t); // smoothstep
-  if (elev > 0.72) {
-    const t = ss(Math.min(1, (elev - 0.72) / 0.10));
-    base = lerpRgb(base, [160, 155, 150], t * 0.30);
-  }
-  if (elev > 0.82) {
-    const t = ss(Math.min(1, (elev - 0.82) / 0.08));
-    base = lerpRgb(base, [190, 185, 180], t * 0.50);
-  }
-  if (elev > 0.90) {
-    const t = ss(Math.min(1, (elev - 0.90) / 0.10));
-    base = lerpRgb(base, [235, 238, 242], t * 0.70);
   }
 
   return base;
@@ -144,14 +145,16 @@ function landRgb(
 // ── Ocean colour derivation ───────────────────────────────────────────────────
 
 function oceanRgb(elev: number, seaLevel: number): Rgb {
-  // depth: 0 (at sea level) → 1 (deepest, elev = 0).
-  // seaLevel = 0.5 normalised → full depth range is 0 to 0.5.
-  const depth = seaLevel > 0 ? Math.min(1, (seaLevel - elev) / seaLevel) : 0;
-  return [
-    Math.round(10  + (1 - depth) * 32),
-    Math.round(28  + (1 - depth) * 72),
-    Math.round(78  + (1 - depth) * 94),
-  ];
+  const shelf = Math.max(0, seaLevel - 0.05);
+  const mid = Math.max(0, seaLevel - 0.20);
+  const deep = Math.max(0, seaLevel - 0.35);
+  return sampleRamp([
+    [0.00, [4, 16, 52]],
+    [deep, [10, 38, 88]],
+    [mid, [26, 84, 148]],
+    [shelf, [72, 152, 192]],
+    [seaLevel, [126, 214, 220]],
+  ], elev);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
