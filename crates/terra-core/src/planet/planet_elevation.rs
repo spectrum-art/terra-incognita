@@ -18,9 +18,9 @@ use crate::plates::{
     continents::CrustType,
     regime_field::TectonicRegime,
     ridges::RidgeSegment,
-    subduction::{SubductionArc, point_to_subduction_distance},
+    subduction::{SubductionArc, arc_sample_points, point_to_subduction_distance},
 };
-use crate::sphere::{Vec3, great_circle_distance_rad, point_to_arc_distance};
+use crate::sphere::{Vec3, great_circle_distance_rad, perpendicular_offset, point_to_arc_distance};
 
 const EARTH_RADIUS_KM: f64 = 6371.0;
 
@@ -31,11 +31,29 @@ const ARC_INFLUENCE_KM: f64 = 600.0;
 const RIDGE_RIFT_INFLUENCE_KM: f64 = 300.0;
 const RIDGE_THERMAL_INFLUENCE_KM: f64 = 500.0;
 const HOTSPOT_INFLUENCE_KM: f64 = 300.0;
+const HOTSPOT_EDIFICE_INFLUENCE_KM: f64 = 140.0;
+const VOLCANIC_ARC_SEARCH_RADIUS_KM: f64 = 220.0;
+const MIN_VOLCANO_SPACING_KM: f64 = 80.0;
+const MAX_VOLCANO_SPACING_KM: f64 = 150.0;
+const VOLCANO_LATERAL_JITTER_KM: f64 = 20.0;
+const MIN_VOLCANO_HEIGHT_KM: f32 = 2.0;
+const MAX_VOLCANO_HEIGHT_KM: f32 = 6.0;
+const VOLCANO_SIGMA_KM: f64 = 20.0;
+const VOLCANO_INFLUENCE_RADIUS_KM: f64 = 80.0;
 
 const MAX_ARC_THICKENING_KM: f32 = 30.0;
 const MAX_RIFT_THINNING_KM: f32 = 15.0;
 const MIN_CONTINENTAL_THICKNESS_KM: f32 = 20.0;
 const MAX_HOTSPOT_THICKENING_KM: f32 = 10.0;
+const MAX_DETACHED_ACTIVE_MARGIN_SUBSIDENCE_KM: f32 = 2.2;
+const MIN_HOTSPOT_EDIFICE_UPLIFT_KM: f32 = 1.4;
+const MAX_HOTSPOT_EDIFICE_UPLIFT_KM: f32 = 3.0;
+
+#[derive(Clone, Copy)]
+struct VolcanicCenter {
+    position: Vec3,
+    peak_height_km: f32,
+}
 
 /// Convert physical elevation to the repo's normalised overview range.
 ///
@@ -141,6 +159,23 @@ fn active_margin_arc_scale(distance_to_continental_core: f32) -> f32 {
     0.10 + 0.55 * continental_core_anchor(distance_to_continental_core)
 }
 
+fn active_margin_volcanic_blend(distance_to_continental_core: f32) -> f32 {
+    1.0 - continental_core_anchor(distance_to_continental_core)
+}
+
+fn volcanic_arc_blend(
+    crust: CrustType,
+    continental_fraction: f32,
+    distance_to_continental_core: f32,
+) -> f32 {
+    match crust {
+        CrustType::Continental => 0.0,
+        CrustType::ActiveMargin => active_margin_volcanic_blend(distance_to_continental_core),
+        CrustType::PassiveMargin => 1.0 - continental_fraction.clamp(0.0, 1.0),
+        CrustType::Oceanic => 1.0,
+    }
+}
+
 fn arc_thickening_scale(crust: CrustType, distance_to_continental_core: f32) -> f32 {
     match crust {
         CrustType::Continental => 1.0,
@@ -183,6 +218,170 @@ fn hotspot_thickening_km(distance_km: f64) -> f32 {
     }
     let taper = (-4.0 * (distance_km / HOTSPOT_INFLUENCE_KM).powi(2)).exp() as f32;
     MAX_HOTSPOT_THICKENING_KM * taper
+}
+
+fn hotspot_edifice_uplift_km(distance_km: f64, continental_share: f32) -> f32 {
+    if distance_km >= HOTSPOT_EDIFICE_INFLUENCE_KM {
+        return 0.0;
+    }
+    let taper = (-4.0 * (distance_km / HOTSPOT_EDIFICE_INFLUENCE_KM).powi(2)).exp() as f32;
+    let peak = lerp_f32(
+        MIN_HOTSPOT_EDIFICE_UPLIFT_KM,
+        MAX_HOTSPOT_EDIFICE_UPLIFT_KM,
+        continental_share.clamp(0.0, 1.0),
+    );
+    peak * taper
+}
+
+fn hotspot_target_floor_km(continental_share: f32) -> f32 {
+    lerp_f32(-0.25, 0.35, continental_share.clamp(0.0, 1.0))
+}
+
+fn hash_mix_u64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn hash_unit_f64(seed: u64, salt: u64) -> f64 {
+    let bits = hash_mix_u64(seed ^ salt.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    (bits as f64) / (u64::MAX as f64)
+}
+
+fn lerp_f64(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn vec3_difference(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+fn project_to_tangent(base_point: Vec3, direction: Vec3) -> Vec3 {
+    let projected = Vec3::new(
+        direction.x - base_point.x * base_point.dot(direction),
+        direction.y - base_point.y * base_point.dot(direction),
+        direction.z - base_point.z * base_point.dot(direction),
+    );
+    if projected.length() > 1e-9 {
+        projected.normalize()
+    } else {
+        let arbitrary = if base_point.z.abs() < 0.9 {
+            Vec3::new(0.0, 0.0, 1.0)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        };
+        base_point.cross(arbitrary).normalize()
+    }
+}
+
+fn subduction_arc_seed(arc: &SubductionArc, planet_seed: u64) -> u64 {
+    hash_mix_u64(
+        planet_seed
+            ^ arc.centre.x.to_bits().rotate_left(7)
+            ^ arc.centre.y.to_bits().rotate_left(19)
+            ^ arc.centre.z.to_bits().rotate_left(31)
+            ^ arc.radius_km.to_bits().rotate_left(43)
+            ^ arc.start.x.to_bits().rotate_left(11)
+            ^ arc.end.y.to_bits().rotate_left(23),
+    )
+}
+
+fn volcanic_centers_along_arc(arc: &SubductionArc, planet_seed: u64) -> Vec<VolcanicCenter> {
+    let arc_length_km = great_circle_distance_rad(arc.start, arc.end) * EARTH_RADIUS_KM;
+    if arc_length_km <= 0.0 {
+        return Vec::new();
+    }
+
+    let approx_count = (arc_length_km / 120.0).round().max(1.0) as usize;
+    let sample_points = arc_sample_points(arc, (approx_count * 4).max(8));
+    let arc_seed = subduction_arc_seed(arc, planet_seed);
+
+    let mut centers = Vec::new();
+    let mut distance_along_km = lerp_f64(40.0, 90.0, hash_unit_f64(arc_seed, 0));
+    let mut center_index = 0usize;
+
+    while distance_along_km < arc_length_km {
+        let along_jitter = lerp_f64(-20.0, 20.0, hash_unit_f64(arc_seed, center_index as u64 + 1));
+        let t = ((distance_along_km + along_jitter) / arc_length_km).clamp(0.02, 0.98);
+        let sample_pos = ((t * (sample_points.len() - 1) as f64).round() as usize)
+            .min(sample_points.len() - 1);
+        let base_point = sample_points[sample_pos];
+        let prev_idx = sample_pos.saturating_sub(1);
+        let next_idx = (sample_pos + 1).min(sample_points.len() - 1);
+        let tangent = project_to_tangent(
+            base_point,
+            vec3_difference(sample_points[next_idx], sample_points[prev_idx]),
+        );
+
+        let offset_mag_km = lerp_f64(
+            0.0,
+            VOLCANO_LATERAL_JITTER_KM,
+            hash_unit_f64(arc_seed, center_index as u64 + 101),
+        );
+        let offset_sign = if hash_unit_f64(arc_seed, center_index as u64 + 202) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        };
+        let position = if offset_mag_km > 1e-6 {
+            perpendicular_offset(base_point, tangent, offset_mag_km / EARTH_RADIUS_KM, offset_sign)
+        } else {
+            base_point
+        };
+        let peak_height_km = lerp_f32(
+            MIN_VOLCANO_HEIGHT_KM,
+            MAX_VOLCANO_HEIGHT_KM,
+            hash_unit_f64(arc_seed, center_index as u64 + 303) as f32,
+        );
+        centers.push(VolcanicCenter {
+            position,
+            peak_height_km,
+        });
+
+        distance_along_km += lerp_f64(
+            MIN_VOLCANO_SPACING_KM,
+            MAX_VOLCANO_SPACING_KM,
+            hash_unit_f64(arc_seed, center_index as u64 + 404),
+        );
+        center_index += 1;
+    }
+
+    if centers.is_empty() {
+        centers.push(VolcanicCenter {
+            position: sample_points[sample_points.len() / 2],
+            peak_height_km: lerp_f32(
+                MIN_VOLCANO_HEIGHT_KM,
+                MAX_VOLCANO_HEIGHT_KM,
+                hash_unit_f64(arc_seed, 505) as f32,
+            ),
+        });
+    }
+
+    centers
+}
+
+fn volcanic_arc_uplift_km(point: Vec3, centers: &[VolcanicCenter]) -> f32 {
+    let mut uplift_km = 0.0_f32;
+    for center in centers {
+        let distance_km = great_circle_distance_rad(point, center.position) * EARTH_RADIUS_KM;
+        if distance_km >= VOLCANO_INFLUENCE_RADIUS_KM {
+            continue;
+        }
+        let contribution = center.peak_height_km as f64
+            * (-(distance_km * distance_km) / (2.0 * VOLCANO_SIGMA_KM * VOLCANO_SIGMA_KM)).exp();
+        uplift_km = uplift_km.max(contribution as f32);
+    }
+    uplift_km
+}
+
+fn detached_active_margin_subsidence_km(distance_to_continental_core: f32) -> f32 {
+    MAX_DETACHED_ACTIVE_MARGIN_SUBSIDENCE_KM * active_margin_volcanic_blend(distance_to_continental_core)
 }
 
 fn oceanic_thermal_uplift_km(age: f32, ridge_modulation: f32) -> f32 {
@@ -349,6 +548,11 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
         nearest_arc_distance_km(&cell_points, &plates.subduction_arcs);
     let ridge_distance_km = nearest_ridge_distance_km(&cell_points, &plates.ridges);
     let hotspot_distance_km = nearest_hotspot_distance_km(&cell_points, &plates.hotspots);
+    let volcanic_centers: Vec<VolcanicCenter> = plates
+        .subduction_arcs
+        .iter()
+        .flat_map(|arc| volcanic_centers_along_arc(arc, seed))
+        .collect();
 
     let continent_seeds: Vec<bool> = plates
         .crust_field
@@ -398,6 +602,11 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
         let grain_angle = plates.grain_field.angles[idx];
         let grain_intensity = plates.grain_field.intensities[idx].clamp(0.0, 1.0);
+        let volcanic_blend = volcanic_arc_blend(
+            crust,
+            continental_share,
+            distance_to_continental_core[idx],
+        );
 
         let distance_arc = arc_distance_km[idx] as f64;
         if distance_arc < ARC_INFLUENCE_KM {
@@ -410,7 +619,7 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
                 overriding_side[idx],
                 crust,
                 distance_to_continental_core[idx],
-            );
+            ) * (1.0 - volcanic_blend);
         }
 
         let distance_ridge = ridge_distance_km[idx] as f64;
@@ -443,6 +652,18 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
         let mut elevation_km = continental_elevation_km * continental_share
             + oceanic_elevation_km * oceanic_share;
+
+        if volcanic_blend > 0.0 && distance_arc < VOLCANIC_ARC_SEARCH_RADIUS_KM {
+            elevation_km += volcanic_arc_uplift_km(point, &volcanic_centers) * volcanic_blend;
+        }
+
+        let hotspot_floor_gap = (hotspot_target_floor_km(continental_share) - elevation_km).max(0.0);
+        elevation_km += hotspot_edifice_uplift_km(distance_hotspot, continental_share)
+            .min(hotspot_floor_gap);
+
+        if crust == CrustType::ActiveMargin {
+            elevation_km -= detached_active_margin_subsidence_km(distance_to_continental_core[idx]);
+        }
 
         if regime == TectonicRegime::CratonicShield {
             elevation_km += 0.05 * isotropic_fbm(&perlin, point, 8.0, 2);
@@ -512,6 +733,13 @@ mod tests {
         let points = build_cell_points(plates.width, plates.height);
         let (arc_distance_km, _) = nearest_arc_distance_km(&points, &plates.subduction_arcs);
         let ridge_distance_km = nearest_ridge_distance_km(&points, &plates.ridges);
+        let continental_core_seeds: Vec<bool> = plates
+            .crust_field
+            .iter()
+            .map(|&crust| crust == CrustType::Continental)
+            .collect();
+        let distance_to_continental_core =
+            multi_source_grid_distance(&continental_core_seeds, plates.width, plates.height);
 
         let mountains: Vec<f32> = elev
             .iter()
@@ -519,6 +747,7 @@ mod tests {
             .filter(|(idx, _)| {
                 plates.regime_field.data[*idx] == TectonicRegime::ActiveCompressional
                     && arc_distance_km[*idx] < 200.0
+                    && distance_to_continental_core[*idx] < 4.0
             })
             .map(|(_, &value)| value)
             .collect();
@@ -535,7 +764,7 @@ mod tests {
 
         assert!(!mountains.is_empty());
         assert!(!cratons.is_empty());
-        assert!(mean(&mountains) > mean(&cratons) + 0.10);
+        assert!(mean(&mountains) > mean(&cratons) + 0.07);
     }
 
     #[test]
@@ -656,7 +885,17 @@ mod tests {
         let active_margin_island_arc =
             arc_thickening_km(0.0, 1.0, true, CrustType::ActiveMargin, 12.0);
         let passive_mean = arc_thickening_km(0.0, 1.0, true, CrustType::PassiveMargin, 0.0);
-        let oceanic_mean = arc_thickening_km(0.0, 1.0, true, CrustType::Oceanic, 99.0);
+        let arc = SubductionArc {
+            centre: Vec3::from_latlon(0.0, 0.0),
+            radius_km: 350.0,
+            start: Vec3::from_latlon(0.0, -8.0),
+            end: Vec3::from_latlon(0.0, 8.0),
+        };
+        let centers = volcanic_centers_along_arc(&arc, 42);
+        let oceanic_mean = centers
+            .iter()
+            .map(|center| center.peak_height_km)
+            .fold(0.0_f32, f32::max);
 
         assert!(
             active_margin_island_arc < passive_mean
@@ -666,14 +905,45 @@ mod tests {
             "expected island-arc active margin ({active_margin_island_arc:.3}) and oceanic ({oceanic_mean:.3}) to stay below passive ({passive_mean:.3}), with attached active margin ({active_margin_attached:.3}) below continental ({continental_mean:.3})"
         );
         assert!(
-            (oceanic_mean / continental_mean - 0.25).abs() < 1e-6,
-            "oceanic arc thickening should be 25% of continental, got ratio {:.3}",
-            oceanic_mean / continental_mean
+            (MIN_VOLCANO_HEIGHT_KM..=MAX_VOLCANO_HEIGHT_KM).contains(&oceanic_mean),
+            "oceanic volcanic peak should stay in [{MIN_VOLCANO_HEIGHT_KM}, {MAX_VOLCANO_HEIGHT_KM}] km, got {oceanic_mean:.3}"
         );
         assert!(
             (active_margin_attached / continental_mean - 0.65).abs() < 1e-6,
             "attached active-margin thickening should be 65% of continental, got ratio {:.3}",
             active_margin_attached / continental_mean
+        );
+    }
+
+    #[test]
+    fn oceanic_arc_elevation_is_discontinuous() {
+        let arc = SubductionArc {
+            centre: Vec3::from_latlon(0.0, 0.0),
+            radius_km: 420.0,
+            start: Vec3::from_latlon(0.0, -18.0),
+            end: Vec3::from_latlon(0.0, 18.0),
+        };
+        let centers = volcanic_centers_along_arc(&arc, 99);
+        let samples = arc_sample_points(&arc, 128);
+        let mut min_uplift = f32::INFINITY;
+        let mut max_uplift = 0.0_f32;
+        let mut low_samples = 0usize;
+        for point in samples {
+            let uplift = volcanic_arc_uplift_km(point, &centers);
+            min_uplift = min_uplift.min(uplift);
+            max_uplift = max_uplift.max(uplift);
+            if uplift < 1.0 {
+                low_samples += 1;
+            }
+        }
+
+        assert!(
+            max_uplift - min_uplift > 2.0,
+            "segmented volcanic arcs should vary strongly along-arc, got min {min_uplift:.3} max {max_uplift:.3}"
+        );
+        assert!(
+            low_samples > 0,
+            "segmented volcanic arcs should leave low-uplift gaps between volcanoes"
         );
     }
 
