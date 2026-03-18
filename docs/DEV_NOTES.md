@@ -1446,3 +1446,35 @@ For 15 plates at 1024×512 with warp = 6.0°:
 - All tested seeds produced contiguous plates after cleanup
 - Boundary curvature is visibly improved over raw Voronoi while preserving a realistic
   large/medium/small plate distribution
+
+---
+
+## Entry 27 — 2026-03-17 — Weighted Plate Geometry and Continuous Plate Dynamics
+
+The Prompt 1 prototype was retuned away from progressive Voronoi splitting. `plate_generation.rs`
+now uses weighted spherical Voronoi (power-diagram style scoring) with:
+- uniformly sampled seeds with a 15° minimum separation target
+- log-normal plate weights (`sigma = 1.5`) with bounded repair for undersized plates
+- two iterations of centroid-only Lloyd relaxation
+- lower-frequency curl warping (`base frequency = 2.7`) to reduce boundary wobble by roughly 40%
+- post-warp cleanup for disconnected fragments, thin boundary chads, and minimum-area repair
+
+Current diagnostic defaults in `plate_diagnostic.rs` are 13 plates and 4.5° warp. The resulting
+size spectrum is much more dynamic than the equalized Voronoi version while avoiding zero-area
+plates. Seed 42 currently lands at ~22.0% / 19.3% / 12.7% for the three largest plates, with the
+smallest still above the 0.5% unit-test floor on the final generated field.
+
+Prompt 2 added `crates/terra-core/src/plates/plate_dynamics.rs`, a standalone continuous boundary
+character layer that is not yet wired into `simulate_plates()`. It computes:
+- area-weighted, zero-sum plate velocities in cm/yr from plate centroids
+- 8-connected boundary detection with dominant neighboring plate selection
+- local boundary normals/tangents from same-boundary neighborhoods in tangent-plane coordinates
+- continuous convergent and transform rates from relative plate motion
+- per-boundary smoothing that stays within each connected two-plate boundary segment
+
+The diagnostic example now also outputs:
+- `plate_boundary_character_<seed>.png`
+- `plate_velocity_<seed>.png`
+
+These renders are still diagnostic-only and are intentionally written to the repo root for local
+inspection rather than committed.

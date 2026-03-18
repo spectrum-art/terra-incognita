@@ -10,12 +10,14 @@ use terra_core::plates::plate_generation::{
     generate_plate_geometry,
     generate_raw_plate_geometry,
 };
+use terra_core::plates::plate_dynamics::{BoundaryCharacter, PlateDynamics, compute_plate_dynamics};
 use terra_core::sphere::{Vec3, great_circle_distance_rad};
 
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 512;
-const N_PLATES: usize = 15;
-const WARP_AMPLITUDE_DEG: f64 = 6.0;
+const N_PLATES: usize = 13;
+const WARP_AMPLITUDE_DEG: f64 = 4.5;
+const TECTONIC_ACTIVITY: f32 = 0.5;
 
 type Rgb = [u8; 3];
 
@@ -33,6 +35,7 @@ fn main() -> Result<()> {
     for seed in seeds {
         let raw = generate_raw_plate_geometry(N_PLATES, seed, WIDTH, HEIGHT);
         let warped = generate_plate_geometry(N_PLATES, seed, WARP_AMPLITUDE_DEG, WIDTH, HEIGHT);
+        let dynamics = compute_plate_dynamics(&warped, TECTONIC_ACTIVITY, seed);
 
         write_png(
             &cwd.join(format!("plate_ids_{seed}.png")),
@@ -45,6 +48,18 @@ fn main() -> Result<()> {
             WIDTH,
             HEIGHT,
             &render_plate_map(&warped, true),
+        )?;
+        write_png(
+            &cwd.join(format!("plate_boundary_character_{seed}.png")),
+            WIDTH,
+            HEIGHT,
+            &render_boundary_character_map(&warped, &dynamics),
+        )?;
+        write_png(
+            &cwd.join(format!("plate_velocity_{seed}.png")),
+            WIDTH,
+            HEIGHT,
+            &render_velocity_map(&warped, &dynamics),
         )?;
 
         if seed == 42 {
@@ -63,9 +78,127 @@ fn main() -> Result<()> {
         }
 
         print_statistics(seed, &raw, &warped);
+        print_dynamics_statistics(seed, &warped, &dynamics);
     }
 
     Ok(())
+}
+
+fn print_dynamics_statistics(seed: u64, geometry: &PlateGeometry, dynamics: &PlateDynamics) {
+    let areas = plate_counts(&geometry.plate_ids, geometry.n_plates);
+    let total_area = areas.iter().sum::<usize>() as f64;
+    let mut net_east = 0.0_f64;
+    let mut net_north = 0.0_f64;
+    let mut convergent = 0usize;
+    let mut divergent = 0usize;
+    let mut transform = 0usize;
+    let mut oblique = 0usize;
+    let mut boundary_pixels = 0usize;
+    let mut convergent_sum = 0.0_f64;
+    let mut divergent_sum = 0.0_f64;
+    let mut transform_sum = 0.0_f64;
+    let mut convergent_count = 0usize;
+    let mut divergent_count = 0usize;
+    let mut transform_count = 0usize;
+    let mut max_convergent = f32::NEG_INFINITY;
+    let mut max_divergent = f32::INFINITY;
+
+    println!(
+        "=== Seed {seed}, {N_PLATES} plates, tectonic_activity={TECTONIC_ACTIVITY:.1} ==="
+    );
+    println!();
+    println!("Plate velocities (cm/yr):");
+    for (plate_id, (&(east, north), &area)) in dynamics
+        .plate_velocities
+        .iter()
+        .zip(areas.iter())
+        .enumerate()
+    {
+        let speed = (east * east + north * north).sqrt();
+        println!(
+            "  Plate {:>2}: v_east={:>5.2}, v_north={:>5.2}, speed={:>5.2}, area={:>6}",
+            plate_id, east, north, speed, area
+        );
+        net_east += east as f64 * area as f64;
+        net_north += north as f64 * area as f64;
+    }
+    println!();
+    println!(
+        "Net velocity after correction: ({:.3}, {:.3})",
+        net_east / total_area,
+        net_north / total_area
+    );
+    println!();
+
+    for idx in 0..geometry.plate_ids.len() {
+        if !dynamics.is_boundary[idx] {
+            continue;
+        }
+        boundary_pixels += 1;
+        let character = dynamics.boundary_field[idx];
+        let category = classify_boundary_character(character);
+        match category {
+            "convergent" => {
+                convergent += 1;
+                convergent_sum += character.convergent_rate.abs() as f64;
+                convergent_count += 1;
+            }
+            "divergent" => {
+                divergent += 1;
+                divergent_sum += character.convergent_rate.abs() as f64;
+                divergent_count += 1;
+            }
+            "transform" => {
+                transform += 1;
+                transform_sum += character.transform_rate.abs() as f64;
+                transform_count += 1;
+            }
+            _ => oblique += 1,
+        }
+        max_convergent = max_convergent.max(character.convergent_rate);
+        max_divergent = max_divergent.min(character.convergent_rate);
+    }
+
+    println!("Boundary statistics:");
+    println!("  Total boundary pixels: {boundary_pixels}");
+    println!(
+        "  Convergent boundary pixels: {} ({:.1}%)",
+        convergent,
+        100.0 * convergent as f64 / boundary_pixels.max(1) as f64
+    );
+    println!(
+        "  Divergent boundary pixels: {} ({:.1}%)",
+        divergent,
+        100.0 * divergent as f64 / boundary_pixels.max(1) as f64
+    );
+    println!(
+        "  Transform boundary pixels: {} ({:.1}%)",
+        transform,
+        100.0 * transform as f64 / boundary_pixels.max(1) as f64
+    );
+    println!(
+        "  Oblique boundary pixels: {} ({:.1}%)",
+        oblique,
+        100.0 * oblique as f64 / boundary_pixels.max(1) as f64
+    );
+    println!();
+    println!(
+        "  Mean |convergent_rate| at convergent boundaries: {:.2} cm/yr",
+        convergent_sum / convergent_count.max(1) as f64
+    );
+    println!(
+        "  Mean |convergent_rate| at divergent boundaries: -{:.2} cm/yr",
+        divergent_sum / divergent_count.max(1) as f64
+    );
+    println!(
+        "  Mean |transform_rate| at transform boundaries: {:.2} cm/yr",
+        transform_sum / transform_count.max(1) as f64
+    );
+    println!();
+    println!("  Max convergent_rate: {:.2} cm/yr", max_convergent);
+    println!("  Max divergent_rate: {:.2} cm/yr", max_divergent);
+    println!("  Triple junctions: {}", count_triple_junctions(geometry));
+    println!();
 }
 
 fn render_plate_map(geometry: &PlateGeometry, overlay_boundaries: bool) -> Vec<u8> {
@@ -86,6 +219,121 @@ fn render_plate_map(geometry: &PlateGeometry, overlay_boundaries: bool) -> Vec<u
         }
     }
     rgba
+}
+
+fn render_boundary_character_map(geometry: &PlateGeometry, dynamics: &PlateDynamics) -> Vec<u8> {
+    let mut rgba = vec![0u8; geometry.plate_ids.len() * 4];
+    for idx in 0..geometry.plate_ids.len() {
+        let base = idx * 4;
+        let plate_color = PALETTE[usize::from(geometry.plate_ids[idx]) % PALETTE.len()];
+        let color = if dynamics.is_boundary[idx] {
+            boundary_color(dynamics.boundary_field[idx])
+        } else {
+            [
+                (plate_color[0] as f32 * 0.3) as u8,
+                (plate_color[1] as f32 * 0.3) as u8,
+                (plate_color[2] as f32 * 0.3) as u8,
+            ]
+        };
+        rgba[base] = color[0];
+        rgba[base + 1] = color[1];
+        rgba[base + 2] = color[2];
+        rgba[base + 3] = 255;
+    }
+    rgba
+}
+
+fn render_velocity_map(geometry: &PlateGeometry, dynamics: &PlateDynamics) -> Vec<u8> {
+    let mut rgba = render_plate_map(geometry, false);
+    for (plate_id, &(east, north)) in dynamics.plate_velocities.iter().enumerate() {
+        let centroid = geometry.seed_points[plate_id];
+        let (lat, lon) = centroid.to_latlon();
+        let row = (((90.0 - lat) / 180.0) * geometry.height as f64)
+            .clamp(0.0, (geometry.height - 1) as f64) as usize;
+        let col = (((lon + 180.0) / 360.0) * geometry.width as f64)
+            .rem_euclid(geometry.width as f64) as usize;
+        let end_col = col as f32 + east * 3.0;
+        let end_row = row as f32 - north * 3.0;
+        draw_line(
+            &mut rgba,
+            geometry.width,
+            geometry.height,
+            (col as isize, row as isize),
+            (end_col.round() as isize, end_row.round() as isize),
+            [255, 255, 255],
+        );
+    }
+    rgba
+}
+
+fn boundary_color(character: BoundaryCharacter) -> Rgb {
+    match classify_boundary_character(character) {
+        "convergent" => [220, 50, 32],
+        "divergent" => [60, 120, 230],
+        "transform" => [30, 190, 80],
+        "oblique_convergent" => [240, 150, 40],
+        "oblique_divergent" => [80, 210, 220],
+        _ => [220, 220, 220],
+    }
+}
+
+fn classify_boundary_character(character: BoundaryCharacter) -> &'static str {
+    let abs_conv = character.convergent_rate.abs();
+    let abs_trans = character.transform_rate.abs();
+    if abs_conv > 2.0 * abs_trans {
+        if character.convergent_rate >= 0.0 {
+            "convergent"
+        } else {
+            "divergent"
+        }
+    } else if abs_trans > 2.0 * abs_conv {
+        "transform"
+    } else if character.convergent_rate >= 0.0 {
+        "oblique_convergent"
+    } else {
+        "oblique_divergent"
+    }
+}
+
+fn draw_line(
+    rgba: &mut [u8],
+    width: usize,
+    height: usize,
+    start: (isize, isize),
+    end: (isize, isize),
+    color: Rgb,
+) {
+    let (x0, y0) = start;
+    let (x1, y1) = end;
+    let mut x = x0;
+    let mut y = y0;
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+
+    loop {
+        if (0..width as isize).contains(&x) && (0..height as isize).contains(&y) {
+            let idx = (y as usize * width + x as usize) * 4;
+            rgba[idx] = color[0];
+            rgba[idx + 1] = color[1];
+            rgba[idx + 2] = color[2];
+            rgba[idx + 3] = 255;
+        }
+        if x == x1 && y == y1 {
+            break;
+        }
+        let twice_err = 2 * err;
+        if twice_err >= dy {
+            err += dy;
+            x += sx;
+        }
+        if twice_err <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
 }
 
 fn write_png(path: &Path, width: usize, height: usize, rgba: &[u8]) -> Result<()> {
@@ -120,7 +368,7 @@ fn print_statistics(seed: u64, raw: &PlateGeometry, warped: &PlateGeometry) {
         .filter(|(a, b)| a != b)
         .count();
     let min_seed_separation_deg = minimum_seed_separation_deg(&warped.seed_points);
-    let max_warp_used_deg = WARP_AMPLITUDE_DEG.min(min_seed_separation_deg / 3.0);
+    let max_warp_used_deg = WARP_AMPLITUDE_DEG.min(min_seed_separation_deg * 0.75);
 
     println!("=== Seed {seed}, {N_PLATES} plates, warp={WARP_AMPLITUDE_DEG:.1}° ===");
     println!();
@@ -247,4 +495,28 @@ fn plate_component_count(plate_ids: &[u8], target_plate: u8, width: usize, heigh
         }
     }
     components
+}
+
+fn count_triple_junctions(geometry: &PlateGeometry) -> usize {
+    let mut count = 0usize;
+    for row in 0..geometry.height {
+        for col in 0..geometry.width {
+            let idx = row * geometry.width + col;
+            let mut seen = vec![geometry.plate_ids[idx]];
+            let west = row * geometry.width + (col + geometry.width - 1) % geometry.width;
+            let east = row * geometry.width + (col + 1) % geometry.width;
+            let north = if row > 0 { idx - geometry.width } else { idx };
+            let south = if row + 1 < geometry.height { idx + geometry.width } else { idx };
+            for neighbor in [west, east, north, south] {
+                let plate = geometry.plate_ids[neighbor];
+                if !seen.contains(&plate) {
+                    seen.push(plate);
+                }
+            }
+            if seen.len() >= 3 {
+                count += 1;
+            }
+        }
+    }
+    count
 }

@@ -4,6 +4,7 @@
 
 pub mod age_field;
 pub mod continents;
+pub mod plate_dynamics;
 pub mod erodibility_field;
 pub mod grain_field;
 pub mod plate_generation;

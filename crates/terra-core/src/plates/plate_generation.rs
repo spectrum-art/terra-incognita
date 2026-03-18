@@ -1,6 +1,6 @@
 //! Standalone spherical plate-geometry generation.
 //!
-//! This module builds a raw progressive Voronoi partition and a warped variant
+//! This module builds a weighted spherical Voronoi partition and a warped variant
 //! for diagnostic evaluation. It is intentionally not wired into the main plate
 //! simulation pipeline yet.
 
@@ -11,14 +11,21 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::VecDeque;
 
-const INITIAL_SEED_MIN_SEPARATION_DEG: f64 = 60.0;
 const MIN_PLATES: usize = 7;
 const MAX_PLATES: usize = 22;
-const CURL_BASE_FREQUENCY: f64 = 5.0;
+const WEIGHT_MU: f64 = 0.0;
+const WEIGHT_SIGMA: f64 = 1.5;
+const MIN_WEIGHT: f64 = 0.35;
+const MAX_WEIGHT: f64 = 8.0;
+const POWER_DIAGRAM_SCALE_RAD: f64 = 0.165;
+const LLOYD_RELAXATION_ITERS: usize = 2;
+const MIN_SEED_SEPARATION_DEG: f64 = 15.0;
+const CURL_BASE_FREQUENCY: f64 = 2.7;
 const CURL_OCTAVES: usize = 2;
-const CURL_DIFF_STEP_DEG: f64 = 1.5;
+const CURL_DIFF_STEP_DEG: f64 = 3.0;
 const CURL_MAGNITUDE_NORMALIZER: f64 = 1.5;
 const CURL_SEED_SALT: u32 = 0xC011_AA77;
+const HANGING_CHAD_PASSES: usize = 3;
 
 /// Result of plate geometry generation.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,20 +48,7 @@ pub fn generate_raw_plate_geometry(
     width: usize,
     height: usize,
 ) -> PlateGeometry {
-    let n_plates = n_plates.clamp(MIN_PLATES, MAX_PLATES);
-    let mut rng = StdRng::seed_from_u64(seed ^ 0x50A7_E6E0_134C_0B91);
-    let points = grid_points(width, height);
-    let mut seed_points = initial_seed_points(n_plates, &mut rng);
-    let mut plate_ids = assign_points_to_seeds(&points, &seed_points);
-
-    while seed_points.len() < n_plates {
-        let largest_plate = largest_plate_id(&plate_ids, seed_points.len());
-        let anti_seed = farthest_point_in_plate(&points, &plate_ids, &seed_points, largest_plate);
-        seed_points.push(anti_seed);
-        plate_ids = assign_points_to_seeds(&points, &seed_points);
-    }
-
-    PlateGeometry { plate_ids, seed_points, n_plates, width, height }
+    generate_raw_plate_geometry_with_weights(n_plates, seed, width, height).0
 }
 
 /// Generate plate geometry for the given grid.
@@ -65,22 +59,32 @@ pub fn generate_plate_geometry(
     width: usize,
     height: usize,
 ) -> PlateGeometry {
-    let raw = generate_raw_plate_geometry(n_plates, seed, width, height);
+    let (raw, weights) = generate_raw_plate_geometry_with_weights(n_plates, seed, width, height);
     let points = grid_points(width, height);
     let capped_warp_amplitude_rad =
         capped_warp_amplitude_rad(&raw.seed_points, warp_amplitude_deg.to_radians());
     let warped_plate_ids = assign_warped_points_to_seeds(
         &points,
         &raw.seed_points,
+        &weights,
         seed,
         capped_warp_amplitude_rad,
     );
-    let cleaned_plate_ids =
-        cleanup_disconnected_components(warped_plate_ids, raw.n_plates, width, height);
+    let cleaned_plate_ids = cleanup_boundary_artifacts(
+        cleanup_disconnected_components(warped_plate_ids, raw.n_plates, width, height),
+        raw.n_plates,
+        width,
+        height,
+    );
+    let repaired_plate_ids =
+        enforce_minimum_plate_area(cleaned_plate_ids, raw.n_plates, width, height);
+    let final_plate_ids =
+        cleanup_disconnected_components(repaired_plate_ids, raw.n_plates, width, height);
+    let cleaned_seed_points = compute_plate_centroids(&points, &final_plate_ids, raw.n_plates);
 
     PlateGeometry {
-        plate_ids: cleaned_plate_ids,
-        seed_points: raw.seed_points,
+        plate_ids: final_plate_ids,
+        seed_points: cleaned_seed_points,
         n_plates: raw.n_plates,
         width,
         height,
@@ -97,87 +101,187 @@ fn grid_points(width: usize, height: usize) -> Vec<Vec3> {
     points
 }
 
-fn initial_seed_points(n_plates: usize, rng: &mut StdRng) -> Vec<Vec3> {
-    let target = (n_plates / 4).max(3);
-    let mut seeds = Vec::with_capacity(target);
-    let min_separation_rad = INITIAL_SEED_MIN_SEPARATION_DEG.to_radians();
-    let mut attempts = 0usize;
+fn generate_raw_plate_geometry_with_weights(
+    n_plates: usize,
+    seed: u64,
+    width: usize,
+    height: usize,
+) -> (PlateGeometry, Vec<f64>) {
+    let n_plates = n_plates.clamp(MIN_PLATES, MAX_PLATES);
+    let mut rng = StdRng::seed_from_u64(seed ^ 0x50A7_E6E0_134C_0B91);
+    let points = grid_points(width, height);
+    let mut seed_points = generate_uniform_seed_points(n_plates, &mut rng);
+    let mut weights = generate_seed_weights(n_plates, &mut rng);
 
-    while seeds.len() < target {
-        let candidate = random_sphere_point(rng);
-        attempts += 1;
-        let relaxed_limit = if attempts > 1024 {
-            min_separation_rad * 0.75
-        } else {
-            min_separation_rad
-        };
-        let separated = seeds
-            .iter()
-            .all(|&existing| great_circle_distance_rad(existing, candidate) >= relaxed_limit);
-        if separated {
-            seeds.push(candidate);
+    for _ in 0..LLOYD_RELAXATION_ITERS {
+        let plate_ids = ensure_nonempty_assignment(&points, &mut seed_points, &mut weights);
+        let centroids = compute_plate_centroids(&points, &plate_ids, n_plates);
+        let counts = plate_counts(&plate_ids, n_plates);
+        for plate_id in 0..n_plates {
+            if counts[plate_id] > 0 {
+                seed_points[plate_id] = centroids[plate_id];
+            }
         }
     }
 
-    seeds
+    let plate_ids = ensure_nonempty_assignment(&points, &mut seed_points, &mut weights);
+
+    let geometry = PlateGeometry {
+        seed_points,
+        plate_ids,
+        n_plates,
+        width,
+        height,
+    };
+    (geometry, weights)
 }
 
-fn assign_points_to_seeds(points: &[Vec3], seed_points: &[Vec3]) -> Vec<u8> {
+fn compute_plate_centroids(points: &[Vec3], plate_ids: &[u8], n_plates: usize) -> Vec<Vec3> {
+    let mut members = vec![Vec::new(); n_plates];
+    for (idx, &plate_id) in plate_ids.iter().enumerate() {
+        members[usize::from(plate_id)].push(idx);
+    }
+    members
+        .iter()
+        .map(|indices| {
+            plate_centroid(points, indices)
+                .unwrap_or_else(|| points[indices.first().copied().unwrap_or(0)])
+        })
+        .collect()
+}
+
+fn generate_uniform_seed_points(n_plates: usize, rng: &mut StdRng) -> Vec<Vec3> {
+    let mut seed_points = Vec::with_capacity(n_plates);
+    let min_separation_rad = MIN_SEED_SEPARATION_DEG.to_radians();
+    while seed_points.len() < n_plates {
+        let candidate = random_sphere_point(rng);
+        let separated = seed_points
+            .iter()
+            .all(|&existing| great_circle_distance_rad(existing, candidate) >= min_separation_rad);
+        if separated || seed_points.len() + 1 == n_plates {
+            seed_points.push(candidate);
+        }
+    }
+    seed_points
+}
+
+fn generate_seed_weights(n_plates: usize, rng: &mut StdRng) -> Vec<f64> {
+    let mut weights = Vec::with_capacity(n_plates);
+    for _ in 0..n_plates {
+        let z = sample_standard_normal(rng);
+        let weight = (WEIGHT_MU + WEIGHT_SIGMA * z).exp().clamp(MIN_WEIGHT, MAX_WEIGHT);
+        weights.push(weight);
+    }
+    weights
+}
+
+fn assign_points_to_weighted_seeds(
+    points: &[Vec3],
+    seed_points: &[Vec3],
+    weights: &[f64],
+) -> Vec<u8> {
     let mut plate_ids = vec![0u8; points.len()];
     for (idx, &point) in points.iter().enumerate() {
-        plate_ids[idx] = nearest_seed_id(point, seed_points);
+        plate_ids[idx] = nearest_weighted_seed_id(point, seed_points, weights);
     }
     plate_ids
 }
 
-fn largest_plate_id(plate_ids: &[u8], n_plates: usize) -> usize {
-    let mut counts = vec![0usize; n_plates];
-    for &plate_id in plate_ids {
-        counts[usize::from(plate_id)] += 1;
+fn ensure_nonempty_assignment(
+    points: &[Vec3],
+    seed_points: &mut [Vec3],
+    weights: &mut [f64],
+) -> Vec<u8> {
+    let n_plates = seed_points.len();
+    let min_cells = ((points.len() as f64) * 0.005).ceil() as usize;
+    let mut plate_ids = assign_points_to_weighted_seeds(points, seed_points, weights);
+
+    for _ in 0..n_plates {
+        let counts = plate_counts(&plate_ids, n_plates);
+        let undersized_plates: Vec<usize> = counts
+            .iter()
+            .enumerate()
+            .filter_map(|(plate_id, &count)| (count < min_cells).then_some(plate_id))
+            .collect();
+        if undersized_plates.is_empty() {
+            break;
+        }
+
+        for empty_plate in undersized_plates {
+            let donor_plate = counts
+                .iter()
+                .enumerate()
+                .filter(|&(plate_id, &count)| plate_id != empty_plate && count > min_cells * 2)
+                .max_by_key(|&(_, count)| count)
+                .map_or(0, |(plate_id, _)| plate_id);
+            seed_points[empty_plate] =
+                farthest_point_in_plate(points, &plate_ids, donor_plate as u8, seed_points);
+            weights[empty_plate] = (weights[empty_plate] * 1.35).clamp(MIN_WEIGHT, MAX_WEIGHT);
+        }
+
+        plate_ids = assign_points_to_weighted_seeds(points, seed_points, weights);
     }
 
-    counts
-        .iter()
-        .enumerate()
-        .max_by_key(|&(_, count)| count)
-        .map_or(0, |(plate_id, _)| plate_id)
+    plate_ids
+}
+
+fn nearest_weighted_seed_id(point: Vec3, seed_points: &[Vec3], weights: &[f64]) -> u8 {
+    let mut best_id = 0u8;
+    let mut best_score = f64::INFINITY;
+    for (seed_id, (&seed_point, &weight)) in seed_points.iter().zip(weights.iter()).enumerate() {
+        let score = great_circle_distance_rad(point, seed_point)
+            - POWER_DIAGRAM_SCALE_RAD * weight.ln();
+        if score < best_score {
+            best_score = score;
+            best_id = seed_id as u8;
+        }
+    }
+    best_id
 }
 
 fn farthest_point_in_plate(
     points: &[Vec3],
     plate_ids: &[u8],
+    target_plate: u8,
     seed_points: &[Vec3],
-    plate_id: usize,
 ) -> Vec3 {
-    let seed = seed_points[plate_id];
-    let mut best_point = seed;
+    let mut best_point = None;
     let mut best_distance = -1.0_f64;
 
     for (idx, &point) in points.iter().enumerate() {
-        if usize::from(plate_ids[idx]) != plate_id {
+        if plate_ids[idx] != target_plate {
             continue;
         }
-        let distance = great_circle_distance_rad(point, seed);
-        if distance > best_distance {
-            best_distance = distance;
-            best_point = point;
+        let nearest_other = seed_points
+            .iter()
+            .enumerate()
+            .filter(|(plate_id, _)| *plate_id as u8 != target_plate)
+            .map(|(_, &seed)| great_circle_distance_rad(point, seed))
+            .fold(f64::INFINITY, f64::min);
+        if nearest_other > best_distance {
+            best_distance = nearest_other;
+            best_point = Some(point);
         }
     }
 
-    best_point
+    best_point.unwrap_or_else(|| points[0])
 }
 
-fn nearest_seed_id(point: Vec3, seed_points: &[Vec3]) -> u8 {
-    let mut best_id = 0u8;
-    let mut best_distance = f64::INFINITY;
-    for (seed_id, &seed_point) in seed_points.iter().enumerate() {
-        let distance = great_circle_distance_rad(point, seed_point);
-        if distance < best_distance {
-            best_distance = distance;
-            best_id = seed_id as u8;
-        }
+fn plate_centroid(points: &[Vec3], indices: &[usize]) -> Option<Vec3> {
+    if indices.is_empty() {
+        return None;
     }
-    best_id
+    let mut sum = Vec3::new(0.0, 0.0, 0.0);
+    for &idx in indices {
+        let point = points[idx];
+        sum.x += point.x;
+        sum.y += point.y;
+        sum.z += point.z;
+    }
+    if sum.length() <= 1e-9 {
+        return None;
+    }
+    Some(sum.normalize())
 }
 
 fn random_sphere_point(rng: &mut StdRng) -> Vec3 {
@@ -185,6 +289,20 @@ fn random_sphere_point(rng: &mut StdRng) -> Vec3 {
     let theta = rng.gen_range(0.0_f64..std::f64::consts::TAU);
     let radius = (1.0_f64 - z * z).max(0.0).sqrt();
     Vec3::new(radius * theta.cos(), radius * theta.sin(), z)
+}
+
+fn sample_standard_normal(rng: &mut StdRng) -> f64 {
+    let u1 = rng.gen_range(f64::MIN_POSITIVE..1.0_f64);
+    let u2 = rng.gen_range(0.0_f64..1.0_f64);
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+}
+
+fn plate_counts(plate_ids: &[u8], n_plates: usize) -> Vec<usize> {
+    let mut counts = vec![0usize; n_plates];
+    for &plate_id in plate_ids {
+        counts[usize::from(plate_id)] += 1;
+    }
+    counts
 }
 
 fn capped_warp_amplitude_rad(seed_points: &[Vec3], requested_warp_rad: f64) -> f64 {
@@ -199,12 +317,13 @@ fn capped_warp_amplitude_rad(seed_points: &[Vec3], requested_warp_rad: f64) -> f
         }
     }
 
-    requested_warp_rad.clamp(0.0, min_separation / 3.0)
+    requested_warp_rad.clamp(0.0, min_separation * 0.75)
 }
 
 fn assign_warped_points_to_seeds(
     points: &[Vec3],
     seed_points: &[Vec3],
+    weights: &[f64],
     seed: u64,
     warp_amplitude_rad: f64,
 ) -> Vec<u8> {
@@ -213,7 +332,7 @@ fn assign_warped_points_to_seeds(
 
     for (idx, &point) in points.iter().enumerate() {
         let warped_point = warp_point(point, &perlin, warp_amplitude_rad);
-        plate_ids[idx] = nearest_seed_id(warped_point, seed_points);
+        plate_ids[idx] = nearest_weighted_seed_id(warped_point, seed_points, weights);
     }
 
     plate_ids
@@ -322,6 +441,106 @@ fn cleanup_disconnected_components(
     plate_ids
 }
 
+fn cleanup_boundary_artifacts(
+    mut plate_ids: Vec<u8>,
+    n_plates: usize,
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
+    for _ in 0..HANGING_CHAD_PASSES {
+        let current = plate_ids.clone();
+        let mut next = current.clone();
+        let mut changed = false;
+
+        for idx in 0..current.len() {
+            let neighbors = unique_neighbors(idx, width, height);
+            let current_plate = current[idx];
+            let same_neighbors = neighbors
+                .iter()
+                .filter(|&&neighbor| current[neighbor] == current_plate)
+                .count();
+            let is_boundary = neighbors
+                .iter()
+                .any(|&neighbor| current[neighbor] != current_plate);
+
+            if !is_boundary || same_neighbors >= 3 {
+                continue;
+            }
+
+            let replacement = dominant_plate_among_neighbors(&current, &neighbors, current_plate);
+            if replacement != current_plate {
+                next[idx] = replacement;
+                changed = true;
+            }
+        }
+
+        plate_ids = cleanup_disconnected_components(next, n_plates, width, height);
+        if !changed {
+            break;
+        }
+    }
+
+    plate_ids
+}
+
+fn enforce_minimum_plate_area(
+    mut plate_ids: Vec<u8>,
+    n_plates: usize,
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
+    let min_cells = ((plate_ids.len() as f64) * 0.005).ceil() as usize;
+    for _ in 0..n_plates {
+        let mut changed = false;
+        for target_plate in 0..n_plates {
+            while plate_counts(&plate_ids, n_plates)[target_plate] < min_cells {
+                let Some(cell) =
+                    best_growth_candidate(&plate_ids, target_plate as u8, width, height)
+                else {
+                    break;
+                };
+                plate_ids[cell] = target_plate as u8;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    plate_ids
+}
+
+fn best_growth_candidate(
+    plate_ids: &[u8],
+    target_plate: u8,
+    width: usize,
+    height: usize,
+) -> Option<usize> {
+    let counts = plate_counts(plate_ids, 256);
+    let mut best = None;
+    let mut best_score = (-1isize, -1isize);
+    for idx in 0..plate_ids.len() {
+        if plate_ids[idx] == target_plate {
+            continue;
+        }
+        let neighbors = unique_neighbors(idx, width, height);
+        let same_target = neighbors
+            .iter()
+            .filter(|&&neighbor| plate_ids[neighbor] == target_plate)
+            .count() as isize;
+        if same_target == 0 {
+            continue;
+        }
+        let donor_size = counts[usize::from(plate_ids[idx])] as isize;
+        let score = (same_target, donor_size);
+        if score > best_score {
+            best_score = score;
+            best = Some(idx);
+        }
+    }
+    best
+}
+
 fn plate_components(
     plate_ids: &[u8],
     target_plate: u8,
@@ -399,6 +618,23 @@ fn dominant_neighbor_plate(
         .map_or(current_plate, |(plate, _)| plate as u8)
 }
 
+fn dominant_plate_among_neighbors(
+    plate_ids: &[u8],
+    neighbors: &[usize],
+    current_plate: u8,
+) -> u8 {
+    let mut counts = vec![0usize; 256];
+    for &neighbor in neighbors {
+        counts[usize::from(plate_ids[neighbor])] += 1;
+    }
+    counts
+        .iter()
+        .enumerate()
+        .filter(|&(plate, _)| plate as u8 != current_plate)
+        .max_by_key(|&(_, count)| count)
+        .map_or(current_plate, |(plate, _)| plate as u8)
+}
+
 fn neighbors(idx: usize, width: usize, height: usize) -> [usize; 4] {
     let row = idx / width;
     let col = idx % width;
@@ -409,20 +645,23 @@ fn neighbors(idx: usize, width: usize, height: usize) -> [usize; 4] {
     [north, south, west, east]
 }
 
+fn unique_neighbors(idx: usize, width: usize, height: usize) -> Vec<usize> {
+    let mut result = Vec::with_capacity(4);
+    for neighbor in neighbors(idx, width, height) {
+        if neighbor != idx && !result.contains(&neighbor) {
+            result.push(neighbor);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TEST_WIDTH: usize = 192;
     const TEST_HEIGHT: usize = 96;
-
-    fn plate_counts(plate_ids: &[u8], n_plates: usize) -> Vec<usize> {
-        let mut counts = vec![0usize; n_plates];
-        for &plate_id in plate_ids {
-            counts[usize::from(plate_id)] += 1;
-        }
-        counts
-    }
+    const TEST_WARP_DEG: f64 = 9.0;
 
     fn is_contiguous(plate_ids: &[u8], plate_id: u8, width: usize, height: usize) -> bool {
         let components = plate_components(plate_ids, plate_id, width, height);
@@ -431,14 +670,14 @@ mod tests {
 
     #[test]
     fn correct_plate_count() {
-        let geometry = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(geometry.n_plates, 15);
         assert_eq!(geometry.seed_points.len(), 15);
     }
 
     #[test]
     fn full_coverage() {
-        let geometry = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(geometry.plate_ids.len(), TEST_WIDTH * TEST_HEIGHT);
         assert!(
             geometry
@@ -450,7 +689,7 @@ mod tests {
 
     #[test]
     fn contiguous_plates() {
-        let geometry = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         for plate_id in 0..geometry.n_plates {
             assert!(
                 is_contiguous(
@@ -466,7 +705,7 @@ mod tests {
 
     #[test]
     fn size_distribution_is_plate_like() {
-        let geometry = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         let counts = plate_counts(&geometry.plate_ids, geometry.n_plates);
         let total = (geometry.width * geometry.height) as f64;
         let largest_fraction = *counts.iter().max().unwrap_or(&0) as f64 / total;
@@ -485,22 +724,22 @@ mod tests {
 
     #[test]
     fn deterministic() {
-        let a = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
-        let b = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let a = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
+        let b = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(a, b);
     }
 
     #[test]
     fn different_seeds_differ() {
-        let a = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
-        let b = generate_plate_geometry(15, 99, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let a = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
+        let b = generate_plate_geometry(15, 99, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         assert_ne!(a.plate_ids, b.plate_ids);
     }
 
     #[test]
     fn warp_has_visible_effect() {
         let raw = generate_raw_plate_geometry(15, 42, TEST_WIDTH, TEST_HEIGHT);
-        let warped = generate_plate_geometry(15, 42, 6.0, TEST_WIDTH, TEST_HEIGHT);
+        let warped = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         let changed = raw
             .plate_ids
             .iter()
