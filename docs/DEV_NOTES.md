@@ -1478,3 +1478,34 @@ The diagnostic example now also outputs:
 
 These renders are still diagnostic-only and are intentionally written to the repo root for local
 inspection rather than committed.
+
+---
+
+## Entry 28 — 2026-03-18 — Continent Placement on Diagnostic Plate Geometry
+
+Added a new standalone module at `crates/terra-core/src/plates/continent_placement.rs`. Like the
+Prompt 1-2 plate geometry/dynamics work, this is exported from `plates/mod.rs` but is **not**
+integrated into `simulate_plates()` yet.
+
+Implementation notes:
+- Host plates are selected without replacement using true spherical plate area weighted by
+  `area^0.7`, which gives large plates an advantage without making small continental plates
+  impossible.
+- Continental area is allocated from a log-normal distribution (`sigma = 0.8`) and capped at
+  90% of each host plate so every continental plate still retains oceanic crust.
+- Each continent grows contiguously from a single center using a noise-modulated frontier
+  priority based on great-circle distance from the center plus 3D Perlin coastline variation.
+- Center placement biases are mixed across convergent-side, centered, and random-side placement
+  so some continents hug convergent margins while others sit in plate interiors.
+- Crust types are derived from the resulting land mask using BFS distance to oceanic cells and
+  same-plate BFS distance to convergent-dominant boundaries.
+- Divergent-boundary transform offsets are currently emitted as metadata only. They are not yet
+  applied back into `plate_ids`.
+
+The diagnostic example at `crates/terra-core/examples/plate_diagnostic.rs` now renders:
+- `continent_placement_<seed>.png`
+- `crust_types_<seed>.png`
+
+Current diagnostic defaults are 15 plates, 5 continents, and continental coverage 0.38. Across
+the five seed sample, total land fraction lands essentially on target (~38%), continent sizes vary
+substantially, and both convergent-attached and interior/passive-margin continents are present.

@@ -3,24 +3,25 @@
 //! Exposes all sub-modules and the top-level `PlateSimulation` orchestrator.
 
 pub mod age_field;
+pub mod continent_placement;
 pub mod continents;
-pub mod plate_dynamics;
 pub mod erodibility_field;
 pub mod grain_field;
+pub mod plate_dynamics;
 pub mod plate_generation;
 pub mod regime_field;
 pub mod ridges;
 pub mod subduction;
 
 use crate::sphere::Vec3;
-use ridges::{RidgeSegment, generate_ridges, n_ridges_from_fragmentation};
 use age_field::{compute_age_field, find_subduction_sites};
-use subduction::{SubductionArc, generate_subduction_arcs};
-use continents::{CrustType, assign_continental_crust};
-pub use regime_field::TectonicRegime;
-use regime_field::{RegimeField, generate_regime_field, generate_hotspots};
-use grain_field::{GrainField, derive_grain_field};
+use continents::{assign_continental_crust, CrustType};
 use erodibility_field::generate_erodibility_field;
+use grain_field::{derive_grain_field, GrainField};
+pub use regime_field::TectonicRegime;
+use regime_field::{generate_hotspots, generate_regime_field, RegimeField};
+use ridges::{generate_ridges, n_ridges_from_fragmentation, RidgeSegment};
+use subduction::{generate_subduction_arcs, SubductionArc};
 
 /// Number of volcanic hotspots to place per simulation.
 const N_HOTSPOTS: usize = 4;
@@ -65,8 +66,14 @@ pub fn simulate_plates(
 
     // P4.6: Hotspots + regime field.
     let hotspots = generate_hotspots(seed, N_HOTSPOTS);
-    let regime_field =
-        generate_regime_field(&ridges, &subduction_arcs, &hotspots, &crust_field, width, height);
+    let regime_field = generate_regime_field(
+        &ridges,
+        &subduction_arcs,
+        &hotspots,
+        &crust_field,
+        width,
+        height,
+    );
 
     // P4.7: Grain field.
     let grain_field = derive_grain_field(&regime_field, &ridges, &subduction_arcs, &hotspots);
@@ -168,11 +175,19 @@ mod tests {
     #[test]
     fn erodibility_compressional_below_passive_margin() {
         let sim = run(42, 0.5, 128, 64);
-        let ac: Vec<f32> = sim.regime_field.data.iter().enumerate()
+        let ac: Vec<f32> = sim
+            .regime_field
+            .data
+            .iter()
+            .enumerate()
             .filter(|(_, &r)| r == TectonicRegime::ActiveCompressional)
             .map(|(i, _)| sim.erodibility_field[i])
             .collect();
-        let pm: Vec<f32> = sim.regime_field.data.iter().enumerate()
+        let pm: Vec<f32> = sim
+            .regime_field
+            .data
+            .iter()
+            .enumerate()
             .filter(|(_, &r)| r == TectonicRegime::PassiveMargin)
             .map(|(i, _)| sim.erodibility_field[i])
             .collect();
