@@ -119,7 +119,7 @@ struct PlanetOverviewJs {
     elevations: Vec<f32>,
     /// true = ocean pixel.
     ocean_mask: Vec<bool>,
-    sea_level_m: f32,
+    sea_level_km: f32,
     regimes: Vec<u8>,
     map_field: Vec<f32>,
     erodibility_field: Vec<f32>,
@@ -156,7 +156,7 @@ pub fn generate_overview(params_js: JsValue) -> Result<JsValue, JsValue> {
     let js = PlanetOverviewJs {
         elevations: overview.elevations,
         ocean_mask: overview.ocean_mask,
-        sea_level_m: overview.sea_level_m,
+        sea_level_km: overview.sea_level_km,
         regimes: overview.regimes.into_iter().map(regime_to_u8).collect(),
         map_field: overview.map_field,
         erodibility_field: overview.erodibility_field,

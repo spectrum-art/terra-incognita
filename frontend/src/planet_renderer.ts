@@ -15,13 +15,15 @@
 export interface PlanetOverviewData {
   elevations:        number[];   // normalised [0, 1]  (0.5 = sea level)
   ocean_mask:        boolean[];  // true = ocean-connected water
-  sea_level_m:       number;     // 0.5 in normalised scheme
+  sea_level_km:      number;     // physical metadata; renderer uses 0.5 hinge
   regimes:           number[];   // 0-4 TectonicRegime ordinals
   map_field:         number[];   // mm/yr
   glaciation:        number[];   // 0=None, 1=Former, 2=Active
   width:             number;
   height:            number;
 }
+
+const SEA_LEVEL_NORMALIZED = 0.5;
 
 // ── Regime ordinals ────────────────────────────────────────────────────────────
 // 0=PassiveMargin, 2=ActiveCompressional (both handled by elevation+MAP tint)
@@ -181,13 +183,13 @@ export function renderPlanetOverview(
     const elev = data.elevations[i];
     const tectonicOcean =
       data.regimes[i] === ACTIVE_COMPRESSIONAL || data.regimes[i] === ACTIVE_EXTENSIONAL;
-    const isOcean = elev <= data.sea_level_m && (data.ocean_mask[i] || tectonicOcean);
+    const isOcean = elev <= SEA_LEVEL_NORMALIZED && (data.ocean_mask[i] || tectonicOcean);
     if (isOcean) {
-      [rv, gv, bv] = oceanRgb(elev, data.sea_level_m);
+      [rv, gv, bv] = oceanRgb(elev, SEA_LEVEL_NORMALIZED);
     } else {
       [rv, gv, bv] = landRgb(
         data.regimes[i], data.map_field[i], data.glaciation[i],
-        elev, data.sea_level_m,
+        elev, SEA_LEVEL_NORMALIZED,
       );
     }
     // Power curve brightens midtones while keeping shadows dark, then

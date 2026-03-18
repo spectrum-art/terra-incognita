@@ -357,7 +357,7 @@ document.getElementById("btn-overview-png")!.addEventListener("click", () => {
     seed: params.seed,
     width: tw,
     height: th,
-    sea_level_m: lastOverview.sea_level_m,
+    sea_level_km: lastOverview.sea_level_km,
     generation_time_ms: lastOverview.generation_time_ms,
     timestamp: new Date().toISOString(),
   };

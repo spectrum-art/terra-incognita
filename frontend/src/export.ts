@@ -135,7 +135,7 @@ export interface PlanetExportMetadata {
   seed:               number;
   width:              number;
   height:             number;
-  sea_level_m:        number;
+  sea_level_km:       number;
   generation_time_ms: number;
   timestamp:          string;
 }

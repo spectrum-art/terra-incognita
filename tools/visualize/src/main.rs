@@ -274,14 +274,14 @@ fn main() {
         let min_e  = elevs.iter().cloned().fold(f32::INFINITY,     f32::min);
         let max_e  = elevs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let mean_e = elevs.iter().sum::<f32>() / n as f32;
-        let sea_level = compute_ocean_mask(&elevs, diag_params.water_abundance).sea_level_m;
-        let near_sea  = elevs.iter().filter(|&&e| (e - sea_level).abs() < 100.0).count();
+        let sea_level = compute_ocean_mask(&elevs, diag_params.water_abundance).sea_level_km;
+        let near_sea  = elevs.iter().filter(|&&e| (e - sea_level).abs() < 0.1).count();
         println!("\nD3: Elevation statistics (seed=42, {DIAG_W}×{DIAG_H}):");
-        println!("  min:          {min_e:.0} m");
-        println!("  max:          {max_e:.0} m");
-        println!("  mean:         {mean_e:.0} m");
-        println!("  sea_level:    {sea_level:.0} m");
-        println!("  cells ±100m:  {:.1}%  ({near_sea})", near_sea as f32 / n as f32 * 100.0);
+        println!("  min:          {min_e:.2} km");
+        println!("  max:          {max_e:.2} km");
+        println!("  mean:         {mean_e:.2} km");
+        println!("  sea_level:    {sea_level:.2} km");
+        println!("  cells ±0.1km: {:.1}%  ({near_sea})", near_sea as f32 / n as f32 * 100.0);
     }
 
     // D4: Glaciation distribution.
