@@ -15,6 +15,7 @@ data/raw/*
 data/samples/
 data/debug/
 frontend/data/debug/
+docs/internal/
 
 # Agent/tool-local files
 .claude/*
