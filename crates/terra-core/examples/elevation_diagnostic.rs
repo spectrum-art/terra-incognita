@@ -7,17 +7,11 @@ use anyhow::{Context, Result};
 use png::{BitDepth, ColorType, Encoder};
 use terra_core::generator::GlobalParams;
 use terra_core::planet::{
-    OVERVIEW_HEIGHT,
+    planet_elevation::generate_planet_elevation, sea_level::compute_ocean_mask, OVERVIEW_HEIGHT,
     OVERVIEW_WIDTH,
-    planet_elevation::generate_planet_elevation,
-    sea_level::compute_ocean_mask,
 };
-use terra_core::plates::{
-    continents::CrustType,
-    regime_field::TectonicRegime,
-    simulate_plates,
-};
-use terra_core::sphere::{Vec3, great_circle_distance_rad};
+use terra_core::plates::{continents::CrustType, regime_field::TectonicRegime, simulate_plates};
+use terra_core::sphere::{great_circle_distance_rad, Vec3};
 
 const EARTH_RADIUS_KM: f64 = 6371.0;
 const HOTSPOT_INFLUENCE_KM: f64 = 300.0;
@@ -92,7 +86,12 @@ fn main() -> Result<()> {
     let seeds = [42_u64, 7, 99, 312_300, 655_773];
 
     for seed in seeds {
-        let plates = simulate_plates(seed, params.continental_fragmentation, OVERVIEW_WIDTH, OVERVIEW_HEIGHT);
+        let plates = simulate_plates(
+            seed,
+            params.continental_fragmentation,
+            OVERVIEW_WIDTH,
+            OVERVIEW_HEIGHT,
+        );
         let elevations = generate_planet_elevation(&plates, seed);
         let ocean = compute_ocean_mask(&elevations, params.water_abundance);
         let hotspot_distance_km = nearest_hotspot_distance_km(&plates.hotspots);
@@ -173,7 +172,12 @@ fn nearest_hotspot_distance_km(hotspots: &[Vec3]) -> Vec<f32> {
     for row in 0..OVERVIEW_HEIGHT {
         for col in 0..OVERVIEW_WIDTH {
             let idx = row * OVERVIEW_WIDTH + col;
-            let point = terra_core::plates::age_field::cell_to_vec3(row, col, OVERVIEW_WIDTH, OVERVIEW_HEIGHT);
+            let point = terra_core::plates::age_field::cell_to_vec3(
+                row,
+                col,
+                OVERVIEW_WIDTH,
+                OVERVIEW_HEIGHT,
+            );
             let mut nearest = f64::INFINITY;
             for &hotspot in hotspots {
                 let distance = great_circle_distance_rad(point, hotspot) * EARTH_RADIUS_KM;
@@ -209,10 +213,13 @@ fn compute_hillshade(elevations: &[f32], width: usize, height: usize) -> Vec<f32
                 / (2.0 * cellsize_m);
             let slope = (dzdx * dzdx + dzdy * dzdy).sqrt().atan();
             let aspect = if dzdx.abs() < 1e-6 {
-                if dzdy > 0.0 { std::f32::consts::PI } else { 0.0 }
+                if dzdy > 0.0 {
+                    std::f32::consts::PI
+                } else {
+                    0.0
+                }
             } else {
-                std::f32::consts::PI
-                    - (dzdy / dzdx).atan()
+                std::f32::consts::PI - (dzdy / dzdx).atan()
                     + std::f32::consts::FRAC_PI_2 * dzdx.signum()
             };
             let shade = zenith.cos() * slope.cos()
@@ -339,7 +346,8 @@ fn is_sea_level_contour(elevations: &[f32], sea_level_km: f32, row: usize, col: 
 }
 
 fn write_png(path: &PathBuf, width: usize, height: usize, rgba: &[u8]) -> Result<()> {
-    let file = File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
+    let file =
+        File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
     let writer = BufWriter::new(file);
     let mut encoder = Encoder::new(writer, width as u32, height as u32);
     encoder.set_color(ColorType::Rgba);
@@ -362,7 +370,8 @@ fn print_seed_report(
     age_field: &[f32],
     hotspot_distance_km: &[f32],
 ) -> Result<()> {
-    let global = SummaryStats::from_values(elevations).context("global elevation stats unavailable")?;
+    let global =
+        SummaryStats::from_values(elevations).context("global elevation stats unavailable")?;
     let ocean_pixels: Vec<f32> = elevations
         .iter()
         .copied()
@@ -373,10 +382,18 @@ fn print_seed_report(
         .copied()
         .filter(|&value| value >= sea_level_km)
         .collect();
-    let ocean_stats = SummaryStats::from_values(&ocean_pixels).context("ocean elevation stats unavailable")?;
-    let land_stats = SummaryStats::from_values(&land_pixels).context("land elevation stats unavailable")?;
-    let above_sea = elevations.iter().filter(|&&value| value >= sea_level_km).count();
-    println!("\n=== Seed {seed}, {}x{} ===\n", OVERVIEW_WIDTH, OVERVIEW_HEIGHT);
+    let ocean_stats =
+        SummaryStats::from_values(&ocean_pixels).context("ocean elevation stats unavailable")?;
+    let land_stats =
+        SummaryStats::from_values(&land_pixels).context("land elevation stats unavailable")?;
+    let above_sea = elevations
+        .iter()
+        .filter(|&&value| value >= sea_level_km)
+        .count();
+    println!(
+        "\n=== Seed {seed}, {}x{} ===\n",
+        OVERVIEW_WIDTH, OVERVIEW_HEIGHT
+    );
     println!("Global:");
     println!(
         "  Min: {:.3}  Max: {:.3}  Mean: {:.3}  Std: {:.3}",
@@ -387,8 +404,14 @@ fn print_seed_report(
         "  Pixels above sea level: {:.1}%",
         100.0 * above_sea as f32 / elevations.len() as f32
     );
-    println!("  Mean ocean elevation (< sea level): {:.3}", ocean_stats.mean);
-    println!("  Mean land elevation (>= sea level): {:.3}", land_stats.mean);
+    println!(
+        "  Mean ocean elevation (< sea level): {:.3}",
+        ocean_stats.mean
+    );
+    println!(
+        "  Mean land elevation (>= sea level): {:.3}",
+        land_stats.mean
+    );
     println!();
     println!(
         "Histogram (50 bins, {:.2} km to {:.2} km):",
@@ -398,7 +421,10 @@ fn print_seed_report(
     println!();
 
     println!("By crust type:");
-    print_group_stats("Oceanic", collect_by_crust(elevations, crust_field, CrustType::Oceanic));
+    print_group_stats(
+        "Oceanic",
+        collect_by_crust(elevations, crust_field, CrustType::Oceanic),
+    );
     print_group_stats(
         "Continental",
         collect_by_crust(elevations, crust_field, CrustType::Continental),
@@ -440,7 +466,8 @@ fn print_seed_report(
         .iter()
         .enumerate()
         .filter(|(idx, _)| {
-            regimes[*idx] == TectonicRegime::ActiveCompressional && crust_field[*idx] != CrustType::Oceanic
+            regimes[*idx] == TectonicRegime::ActiveCompressional
+                && crust_field[*idx] != CrustType::Oceanic
         })
         .map(|(_, &value)| value)
         .collect();
@@ -448,7 +475,8 @@ fn print_seed_report(
         .iter()
         .enumerate()
         .filter(|(idx, _)| {
-            regimes[*idx] == TectonicRegime::CratonicShield && crust_field[*idx] == CrustType::Continental
+            regimes[*idx] == TectonicRegime::CratonicShield
+                && crust_field[*idx] == CrustType::Continental
         })
         .map(|(_, &value)| value)
         .collect();
@@ -483,11 +511,21 @@ fn print_seed_report(
         .map(|(_, &value)| value)
         .collect();
 
-    let cs_mean = SummaryStats::from_values(&continental_cs).map(|stats| stats.mean).unwrap_or(f32::NAN);
-    let ac_mean = SummaryStats::from_values(&continental_ac).map(|stats| stats.mean).unwrap_or(f32::NAN);
-    let ac_max = SummaryStats::from_values(&continental_ac).map(|stats| stats.max).unwrap_or(f32::NAN);
-    let ridge_mean = SummaryStats::from_values(&oceanic_ridge).map(|stats| stats.mean).unwrap_or(f32::NAN);
-    let abyss_mean = SummaryStats::from_values(&oceanic_abyss).map(|stats| stats.mean).unwrap_or(f32::NAN);
+    let cs_mean = SummaryStats::from_values(&continental_cs)
+        .map(|stats| stats.mean)
+        .unwrap_or(f32::NAN);
+    let ac_mean = SummaryStats::from_values(&continental_ac)
+        .map(|stats| stats.mean)
+        .unwrap_or(f32::NAN);
+    let ac_max = SummaryStats::from_values(&continental_ac)
+        .map(|stats| stats.max)
+        .unwrap_or(f32::NAN);
+    let ridge_mean = SummaryStats::from_values(&oceanic_ridge)
+        .map(|stats| stats.mean)
+        .unwrap_or(f32::NAN);
+    let abyss_mean = SummaryStats::from_values(&oceanic_abyss)
+        .map(|stats| stats.mean)
+        .unwrap_or(f32::NAN);
 
     println!("Elevation dynamic range:");
     println!(
@@ -514,7 +552,8 @@ fn print_seed_report(
         .iter()
         .filter(|&&value| value < sea_level_km)
         .count();
-    let hotspot_stats = SummaryStats::from_values(&hotspot_pixels).context("hotspot stats unavailable")?;
+    let hotspot_stats =
+        SummaryStats::from_values(&hotspot_pixels).context("hotspot stats unavailable")?;
     println!("Hotspot diagnostics:");
     println!("  N hotspot pixels: {}", hotspot_stats.count);
     println!(
@@ -526,7 +565,12 @@ fn print_seed_report(
 
     let continental_like_count = crust_field
         .iter()
-        .filter(|&&crust| matches!(crust, CrustType::Continental | CrustType::ActiveMargin | CrustType::PassiveMargin))
+        .filter(|&&crust| {
+            matches!(
+                crust,
+                CrustType::Continental | CrustType::ActiveMargin | CrustType::PassiveMargin
+            )
+        })
         .count();
     println!("Below-sea-level continental pixels:");
     println!(
@@ -579,7 +623,11 @@ fn print_histogram(values: &[f32], bins: usize, min_value: f32, max_value: f32) 
         let idx = scaled.min(bins - 1);
         counts[idx] += 1;
     }
-    let max_count = counts.iter().copied().max().context("histogram counts missing")?;
+    let max_count = counts
+        .iter()
+        .copied()
+        .max()
+        .context("histogram counts missing")?;
     for (idx, &count) in counts.iter().enumerate() {
         let start = min_value + range * idx as f32 / bins as f32;
         let end = min_value + range * (idx + 1) as f32 / bins as f32;

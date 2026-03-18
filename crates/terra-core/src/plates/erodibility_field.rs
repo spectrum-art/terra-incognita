@@ -11,8 +11,8 @@
 //! Implementation: per-cell noise value mapped through a regime-dependent linear
 //! range, ensuring the smooth constraint (no hard boundaries in the output).
 
-use noise::{NoiseFn, Perlin};
 use crate::plates::regime_field::{RegimeField, TectonicRegime};
+use noise::{NoiseFn, Perlin};
 
 /// Generate a smooth erodibility field biased by tectonic regime.
 ///
@@ -79,11 +79,11 @@ fn box_blur_3x3(data: &[f32], width: usize, height: usize) -> Vec<f32> {
 /// Erodibility range [low, high] for each tectonic regime.
 fn regime_range(regime: TectonicRegime) -> (f64, f64) {
     match regime {
-        TectonicRegime::CratonicShield     => (0.05, 0.30), // hard basement rock
+        TectonicRegime::CratonicShield => (0.05, 0.30), // hard basement rock
         TectonicRegime::ActiveCompressional => (0.25, 0.55), // variable orogenic belts
-        TectonicRegime::ActiveExtensional  => (0.30, 0.60), // rift-zone volcanics + sediments
-        TectonicRegime::PassiveMargin      => (0.55, 0.90), // thick sedimentary piles
-        TectonicRegime::VolcanicHotspot    => (0.30, 0.60), // fresh→weathered basalt range
+        TectonicRegime::ActiveExtensional => (0.30, 0.60), // rift-zone volcanics + sediments
+        TectonicRegime::PassiveMargin => (0.55, 0.90),  // thick sedimentary piles
+        TectonicRegime::VolcanicHotspot => (0.30, 0.60), // fresh→weathered basalt range
     }
 }
 
@@ -120,10 +120,7 @@ mod tests {
     fn erodibility_values_in_range() {
         let (erod, _) = make_erodibility(42, 64, 32);
         for &v in &erod {
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "erodibility {v} outside [0, 1]"
-            );
+            assert!((0.0..=1.0).contains(&v), "erodibility {v} outside [0, 1]");
         }
     }
 

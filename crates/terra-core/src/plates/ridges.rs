@@ -3,9 +3,9 @@
 //! Each ridge is a great-circle arc broken into sub-arcs by transform faults.
 //! The staircase geometry ensures no straight boundary longer than ~450 km.
 
-use rand::{Rng, SeedableRng};
+use crate::sphere::{perpendicular_offset, slerp, Vec3};
 use rand::rngs::StdRng;
-use crate::sphere::{Vec3, slerp, perpendicular_offset};
+use rand::{Rng, SeedableRng};
 
 /// A mid-ocean ridge composed of great-circle sub-arcs separated by transform faults.
 /// `sub_arcs[i] = [start, end]` of the i-th sub-arc.
@@ -80,7 +80,11 @@ fn generate_one_ridge(rng: &mut StdRng) -> RidgeSegment {
         }
     }
 
-    RidgeSegment { sub_arcs, main_start: start, main_end: end }
+    RidgeSegment {
+        sub_arcs,
+        main_start: start,
+        main_end: end,
+    }
 }
 
 /// Unit tangent at point `p` along the great circle toward `dest`.
@@ -180,7 +184,10 @@ mod tests {
         let r2 = generate_ridges(2, 3);
         let (lat1, _) = r1[0].sub_arcs[0][0].to_latlon();
         let (lat2, _) = r2[0].sub_arcs[0][0].to_latlon();
-        assert!((lat1 - lat2).abs() > 0.01, "different seeds should produce different ridges");
+        assert!(
+            (lat1 - lat2).abs() > 0.01,
+            "different seeds should produce different ridges"
+        );
     }
 
     #[test]

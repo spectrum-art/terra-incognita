@@ -21,8 +21,8 @@ pub struct SmoothingParams {
 impl Default for SmoothingParams {
     fn default() -> Self {
         Self {
-            regime_sigma:      1.5,
-            climate_sigma:     36.0,
+            regime_sigma: 1.5,
+            climate_sigma: 36.0,
             erodibility_sigma: 3.0,
         }
     }
@@ -47,8 +47,8 @@ pub fn gaussian_blur(field: &[f32], width: usize, height: usize, sigma: f32) -> 
         for c in 0..width {
             let mut acc = 0.0_f32;
             for (ki, &w) in kernel.iter().enumerate() {
-                let src_c = (c as isize + ki as isize - half as isize)
-                    .clamp(0, width as isize - 1) as usize;
+                let src_c = (c as isize + ki as isize - half as isize).clamp(0, width as isize - 1)
+                    as usize;
                 acc += field[row_off + src_c] * w;
             }
             temp[row_off + c] = acc;
@@ -61,8 +61,8 @@ pub fn gaussian_blur(field: &[f32], width: usize, height: usize, sigma: f32) -> 
         for c in 0..width {
             let mut acc = 0.0_f32;
             for (ki, &w) in kernel.iter().enumerate() {
-                let src_r = (r as isize + ki as isize - half as isize)
-                    .clamp(0, height as isize - 1) as usize;
+                let src_r = (r as isize + ki as isize - half as isize).clamp(0, height as isize - 1)
+                    as usize;
                 acc += temp[src_r * width + c] * w;
             }
             out[r * width + c] = acc;
@@ -103,7 +103,10 @@ mod tests {
         let field = vec![3.0_f32; 16 * 8];
         let out = gaussian_blur(&field, 16, 8, 2.0);
         for v in &out {
-            assert!((v - 3.0).abs() < 1e-4, "constant field should be unchanged by blur");
+            assert!(
+                (v - 3.0).abs() < 1e-4,
+                "constant field should be unchanged by blur"
+            );
         }
     }
 
@@ -128,7 +131,8 @@ mod tests {
         field[cy * w + cx] = 1.0;
         let out = gaussian_blur(&field, w, h, 1.5);
         // Centre should still be the maximum.
-        let max_idx = out.iter()
+        let max_idx = out
+            .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap()
@@ -139,7 +143,10 @@ mod tests {
         assert!(out[cy * w + cx + 1] > 0.0, "right neighbour must be > 0");
         // Total energy must be conserved (kernel fully interior, no border loss).
         let total: f32 = out.iter().sum();
-        assert!((total - 1.0).abs() < 1e-3, "impulse energy must be conserved, got {total}");
+        assert!(
+            (total - 1.0).abs() < 1e-3,
+            "impulse energy must be conserved, got {total}"
+        );
     }
 
     /// build_kernel must sum to 1.0.
@@ -148,7 +155,10 @@ mod tests {
         for sigma in [0.5_f32, 1.0, 2.0, 4.0] {
             let k = build_kernel(sigma);
             let sum: f32 = k.iter().sum();
-            assert!((sum - 1.0).abs() < 1e-5, "kernel sum must be 1 for sigma={sigma}, got {sum}");
+            assert!(
+                (sum - 1.0).abs() < 1e-5,
+                "kernel sum must be 1 for sigma={sigma}, got {sum}"
+            );
         }
     }
 }

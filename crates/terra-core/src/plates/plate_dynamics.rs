@@ -2,13 +2,13 @@
 
 use crate::plates::age_field::cell_to_vec3;
 use crate::plates::plate_generation::PlateGeometry;
-use crate::sphere::Vec3;
+use crate::sphere::{great_circle_distance_rad, Vec3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const VELOCITY_SEED_SALT: u64 = 0xD1A6_5EED_41B2_9001;
 const BOUNDARY_RADIUS: isize = 2;
-const BOUNDARY_SMOOTH_RADIUS: usize = 3;
+const BOUNDARY_SMOOTH_RADIUS_DEG: f64 = 2.0;
 
 /// Continuous boundary character at a single pixel.
 /// Interior pixels have both rates = 0.
@@ -42,11 +42,15 @@ pub fn compute_plate_dynamics(
     tectonic_activity: f32,
     seed: u64,
 ) -> PlateDynamics {
-    let plate_areas = plate_areas(&geometry.plate_ids, geometry.n_plates);
+    let plate_areas = plate_areas(geometry);
     let plate_velocities =
         generate_plate_velocities(&geometry.seed_points, &plate_areas, tectonic_activity, seed);
-    let (is_boundary, neighbor_plates) =
-        detect_boundary_pixels(&geometry.plate_ids, geometry.n_plates, geometry.width, geometry.height);
+    let (is_boundary, neighbor_plates) = detect_boundary_pixels(
+        &geometry.plate_ids,
+        geometry.n_plates,
+        geometry.width,
+        geometry.height,
+    );
     let mut boundary_field = vec![BoundaryCharacter::default(); geometry.plate_ids.len()];
 
     for idx in 0..geometry.plate_ids.len() {
@@ -58,18 +62,9 @@ pub fn compute_plate_dynamics(
         };
     }
 
-    let raw_field = compute_raw_boundary_character(
-        geometry,
-        &plate_velocities,
-        &is_boundary,
-        &neighbor_plates,
-    );
-    let smoothed = smooth_boundary_character(
-        geometry,
-        &is_boundary,
-        &neighbor_plates,
-        &raw_field,
-    );
+    let raw_field =
+        compute_raw_boundary_character(geometry, &plate_velocities, &is_boundary, &neighbor_plates);
+    let smoothed = smooth_boundary_character(geometry, &is_boundary, &neighbor_plates, &raw_field);
 
     for idx in 0..boundary_field.len() {
         if is_boundary[idx] {
@@ -78,20 +73,29 @@ pub fn compute_plate_dynamics(
         }
     }
 
-    PlateDynamics { plate_velocities, boundary_field, is_boundary }
+    PlateDynamics {
+        plate_velocities,
+        boundary_field,
+        is_boundary,
+    }
 }
 
-fn plate_areas(plate_ids: &[u8], n_plates: usize) -> Vec<usize> {
-    let mut areas = vec![0usize; n_plates];
-    for &plate_id in plate_ids {
-        areas[usize::from(plate_id)] += 1;
+fn plate_areas(geometry: &PlateGeometry) -> Vec<f64> {
+    let mut areas = vec![0.0_f64; geometry.n_plates];
+    for row in 0..geometry.height {
+        let point = cell_to_vec3(row, 0, geometry.width, geometry.height);
+        let row_weight = (point.x * point.x + point.y * point.y).sqrt();
+        for col in 0..geometry.width {
+            let idx = row * geometry.width + col;
+            areas[usize::from(geometry.plate_ids[idx])] += row_weight;
+        }
     }
     areas
 }
 
 fn generate_plate_velocities(
     centroids: &[Vec3],
-    plate_areas: &[usize],
+    plate_areas: &[f64],
     tectonic_activity: f32,
     seed: u64,
 ) -> Vec<(f32, f32)> {
@@ -103,15 +107,18 @@ fn generate_plate_velocities(
         let base_speed = rng.gen_range(1.0_f64..=8.0_f64);
         let speed = base_speed * (0.3 + 0.7 * activity);
         let azimuth = rng.gen_range(0.0_f64..std::f64::consts::TAU);
-        velocities.push(((speed * azimuth.cos()) as f32, (speed * azimuth.sin()) as f32));
+        velocities.push((
+            (speed * azimuth.cos()) as f32,
+            (speed * azimuth.sin()) as f32,
+        ));
     }
 
-    let total_area = plate_areas.iter().sum::<usize>() as f64;
+    let total_area = plate_areas.iter().sum::<f64>();
     let mut net_east = 0.0_f64;
     let mut net_north = 0.0_f64;
     for ((east, north), &area) in velocities.iter().zip(plate_areas.iter()) {
-        net_east += area as f64 * *east as f64;
-        net_north += area as f64 * *north as f64;
+        net_east += area * *east as f64;
+        net_north += area * *north as f64;
     }
     net_east /= total_area.max(1.0);
     net_north /= total_area.max(1.0);
@@ -335,17 +342,15 @@ fn smooth_boundary_character(
 
     for component in components {
         for &idx in &component {
-            let row = idx / geometry.width;
-            let col = idx % geometry.width;
+            let point = point_for_idx(idx, geometry.width, geometry.height);
             let mut sum_conv = 0.0_f32;
             let mut sum_trans = 0.0_f32;
             let mut count = 0usize;
             for &other in &component {
-                let other_row = other / geometry.width;
-                let other_col = other % geometry.width;
-                let row_dist = row.abs_diff(other_row);
-                let col_dist = wrapped_col_distance(col, other_col, geometry.width);
-                if row_dist.max(col_dist) > BOUNDARY_SMOOTH_RADIUS {
+                let other_point = point_for_idx(other, geometry.width, geometry.height);
+                if great_circle_distance_rad(point, other_point)
+                    > BOUNDARY_SMOOTH_RADIUS_DEG.to_radians()
+                {
                     continue;
                 }
                 sum_conv += raw_field[other].0;
@@ -354,10 +359,15 @@ fn smooth_boundary_character(
             }
             if count > 0 {
                 let averaged = (sum_conv / count as f32, sum_trans / count as f32);
-                let raw_mag = (raw_field[idx].0 * raw_field[idx].0 + raw_field[idx].1 * raw_field[idx].1)
+                let raw_mag = (raw_field[idx].0 * raw_field[idx].0
+                    + raw_field[idx].1 * raw_field[idx].1)
                     .sqrt();
                 let avg_mag = (averaged.0 * averaged.0 + averaged.1 * averaged.1).sqrt();
-                smoothed[idx] = if avg_mag > 1e-3 { averaged } else { raw_field[idx] };
+                smoothed[idx] = if avg_mag > 1e-3 {
+                    averaged
+                } else {
+                    raw_field[idx]
+                };
                 if raw_mag > 0.0 && avg_mag < raw_mag * 0.1 {
                     smoothed[idx] = raw_field[idx];
                 }
@@ -404,12 +414,11 @@ fn boundary_components(
 }
 
 fn ordered_pair(a: u8, b: u8) -> (u8, u8) {
-    if a <= b { (a, b) } else { (b, a) }
-}
-
-fn wrapped_col_distance(a: usize, b: usize, width: usize) -> usize {
-    let direct = a.abs_diff(b);
-    direct.min(width - direct)
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 fn unique_neighbors8(idx: usize, width: usize, height: usize) -> Vec<usize> {
@@ -451,7 +460,11 @@ mod tests {
         let abs_conv = conv.abs();
         let abs_trans = trans.abs();
         if abs_conv > 2.0 * abs_trans {
-            if conv > 0.0 { "convergent" } else { "divergent" }
+            if conv > 0.0 {
+                "convergent"
+            } else {
+                "divergent"
+            }
         } else if abs_trans > 2.0 * abs_conv {
             "transform"
         } else {
@@ -463,13 +476,13 @@ mod tests {
     fn velocity_zero_sum() {
         let geometry = sample_geometry(42);
         let dynamics = compute_plate_dynamics(&geometry, 0.5, 42);
-        let areas = plate_areas(&geometry.plate_ids, geometry.n_plates);
-        let total_area = areas.iter().sum::<usize>() as f64;
+        let areas = plate_areas(&geometry);
+        let total_area = areas.iter().sum::<f64>();
         let mut net_east = 0.0_f64;
         let mut net_north = 0.0_f64;
         for ((east, north), &area) in dynamics.plate_velocities.iter().zip(areas.iter()) {
-            net_east += *east as f64 * area as f64;
-            net_north += *north as f64 * area as f64;
+            net_east += *east as f64 * area;
+            net_north += *north as f64 * area;
         }
         assert!(net_east.abs() / total_area < 1e-5);
         assert!(net_north.abs() / total_area < 1e-5);
@@ -481,7 +494,10 @@ mod tests {
         let dynamics = compute_plate_dynamics(&geometry, 0.5, 42);
         for idx in 0..geometry.plate_ids.len() {
             if dynamics.is_boundary[idx] {
-                assert_ne!(dynamics.boundary_field[idx].neighbor_plate, geometry.plate_ids[idx]);
+                assert_ne!(
+                    dynamics.boundary_field[idx].neighbor_plate,
+                    geometry.plate_ids[idx]
+                );
             }
         }
     }

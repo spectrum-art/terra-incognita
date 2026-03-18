@@ -48,7 +48,11 @@ impl Vec3 {
 
     pub fn normalize(self) -> Self {
         let len = self.length();
-        Self { x: self.x / len, y: self.y / len, z: self.z / len }
+        Self {
+            x: self.x / len,
+            y: self.y / len,
+            z: self.z / len,
+        }
     }
 }
 
@@ -83,7 +87,9 @@ pub fn slerp(a: Vec3, b: Vec3, t: f64) -> Vec3 {
 
 /// Generate N evenly-spaced points on a great circle arc from a to b.
 pub fn great_circle_arc_points(a: Vec3, b: Vec3, n: usize) -> Vec<Vec3> {
-    (0..n).map(|i| slerp(a, b, i as f64 / (n - 1).max(1) as f64)).collect()
+    (0..n)
+        .map(|i| slerp(a, b, i as f64 / (n - 1).max(1) as f64))
+        .collect()
 }
 
 /// Angular distance (radians) from point `p` to the nearest point on the
@@ -132,7 +138,11 @@ pub fn arc_intersection(a1: Vec3, a2: Vec3, b1: Vec3, b2: Vec3) -> Option<Vec3> 
         return None; // great circles are coplanar (same or antipodal)
     }
     let i = i_raw.normalize();
-    let neg_i = Vec3 { x: -i.x, y: -i.y, z: -i.z };
+    let neg_i = Vec3 {
+        x: -i.x,
+        y: -i.y,
+        z: -i.z,
+    };
 
     let arc_a_len = great_circle_distance_rad(a1, a2);
     let arc_b_len = great_circle_distance_rad(b1, b2);
@@ -190,7 +200,10 @@ mod tests {
     #[test]
     fn great_circle_distance_poles() {
         let d = great_circle_distance_deg(90.0, 0.0, -90.0, 0.0);
-        assert!((d - 180.0).abs() < 1e-9, "pole-to-pole should be 180 deg, got {d}");
+        assert!(
+            (d - 180.0).abs() < 1e-9,
+            "pole-to-pole should be 180 deg, got {d}"
+        );
     }
 
     #[test]
@@ -240,7 +253,10 @@ mod tests {
         let p = result.unwrap();
         // Intersection should be near (0°, 0°)
         let (lat, lon) = p.to_latlon();
-        assert!(lat.abs() < 0.01 && lon.abs() < 0.01, "got ({lat:.3}, {lon:.3})");
+        assert!(
+            lat.abs() < 0.01 && lon.abs() < 0.01,
+            "got ({lat:.3}, {lon:.3})"
+        );
     }
 
     #[test]
@@ -251,7 +267,10 @@ mod tests {
         let b1 = Vec3::from_latlon(0.0, 100.0);
         let b2 = Vec3::from_latlon(0.0, 170.0);
         let result = arc_intersection(a1, a2, b1, b2);
-        assert!(result.is_none(), "non-overlapping arcs on same great circle should not intersect");
+        assert!(
+            result.is_none(),
+            "non-overlapping arcs on same great circle should not intersect"
+        );
     }
 
     #[test]
@@ -259,7 +278,10 @@ mod tests {
         let p = Vec3::from_latlon(45.0, 30.0);
         let tangent = Vec3::from_latlon(45.0, 120.0).cross(p).normalize();
         let q = perpendicular_offset(p, tangent, 0.1, 1.0);
-        assert!((q.length() - 1.0).abs() < 1e-12, "offset point must be on unit sphere");
+        assert!(
+            (q.length() - 1.0).abs() < 1e-12,
+            "offset point must be on unit sphere"
+        );
     }
 
     #[test]
@@ -270,6 +292,9 @@ mod tests {
         // Should NOT be zero (tangent ⊥ p check)
         let q = perpendicular_offset(p, tangent, 0.05, 1.0);
         let d = great_circle_distance_rad(p, q);
-        assert!((d - 0.05).abs() < 1e-9, "offset distance should be 0.05 rad, got {d:.6}");
+        assert!(
+            (d - 0.05).abs() < 1e-9,
+            "offset distance should be 0.05 rad, got {d:.6}"
+        );
     }
 }

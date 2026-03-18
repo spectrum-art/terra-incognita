@@ -5,7 +5,7 @@
 //! simulation pipeline yet.
 
 use crate::plates::age_field::cell_to_vec3;
-use crate::sphere::{Vec3, great_circle_distance_rad};
+use crate::sphere::{great_circle_distance_rad, Vec3};
 use noise::{NoiseFn, Perlin};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -14,18 +14,36 @@ use std::collections::VecDeque;
 const MIN_PLATES: usize = 7;
 const MAX_PLATES: usize = 22;
 const WEIGHT_MU: f64 = 0.0;
-const WEIGHT_SIGMA: f64 = 1.5;
-const MIN_WEIGHT: f64 = 0.35;
-const MAX_WEIGHT: f64 = 8.0;
-const POWER_DIAGRAM_SCALE_RAD: f64 = 0.165;
+const WEIGHT_SIGMA: f64 = 2.1;
+const MIN_WEIGHT: f64 = 0.25;
+const MAX_WEIGHT: f64 = 10.0;
+const POWER_DIAGRAM_SCALE_RAD: f64 = 0.22;
 const LLOYD_RELAXATION_ITERS: usize = 2;
 const MIN_SEED_SEPARATION_DEG: f64 = 15.0;
-const CURL_BASE_FREQUENCY: f64 = 2.7;
-const CURL_OCTAVES: usize = 2;
+const CURL_BASE_FREQUENCY: f64 = 1.15;
+const CURL_OCTAVES: usize = 1;
+const CURL_OCTAVE_FALLOFF: f64 = 0.5;
 const CURL_DIFF_STEP_DEG: f64 = 3.0;
 const CURL_MAGNITUDE_NORMALIZER: f64 = 1.5;
 const CURL_SEED_SALT: u32 = 0xC011_AA77;
 const HANGING_CHAD_PASSES: usize = 3;
+
+/// Current weighted-Voronoi and curl-warp tuning used by diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlateGenerationParameters {
+    pub weight_mu: f64,
+    pub weight_sigma: f64,
+    pub min_weight: f64,
+    pub max_weight: f64,
+    pub power_diagram_scale_rad: f64,
+    pub lloyd_relaxation_iters: usize,
+    pub min_seed_separation_deg: f64,
+    pub curl_base_frequency: f64,
+    pub curl_octaves: usize,
+    pub curl_octave_falloff: f64,
+    pub curl_diff_step_deg: f64,
+    pub curl_magnitude_normalizer: f64,
+}
 
 /// Result of plate geometry generation.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +106,24 @@ pub fn generate_plate_geometry(
         n_plates: raw.n_plates,
         width,
         height,
+    }
+}
+
+/// Expose the active tuning so diagnostics can report exact parameters.
+pub fn plate_generation_parameters() -> PlateGenerationParameters {
+    PlateGenerationParameters {
+        weight_mu: WEIGHT_MU,
+        weight_sigma: WEIGHT_SIGMA,
+        min_weight: MIN_WEIGHT,
+        max_weight: MAX_WEIGHT,
+        power_diagram_scale_rad: POWER_DIAGRAM_SCALE_RAD,
+        lloyd_relaxation_iters: LLOYD_RELAXATION_ITERS,
+        min_seed_separation_deg: MIN_SEED_SEPARATION_DEG,
+        curl_base_frequency: CURL_BASE_FREQUENCY,
+        curl_octaves: CURL_OCTAVES,
+        curl_octave_falloff: CURL_OCTAVE_FALLOFF,
+        curl_diff_step_deg: CURL_DIFF_STEP_DEG,
+        curl_magnitude_normalizer: CURL_MAGNITUDE_NORMALIZER,
     }
 }
 
@@ -169,7 +205,9 @@ fn generate_seed_weights(n_plates: usize, rng: &mut StdRng) -> Vec<f64> {
     let mut weights = Vec::with_capacity(n_plates);
     for _ in 0..n_plates {
         let z = sample_standard_normal(rng);
-        let weight = (WEIGHT_MU + WEIGHT_SIGMA * z).exp().clamp(MIN_WEIGHT, MAX_WEIGHT);
+        let weight = (WEIGHT_MU + WEIGHT_SIGMA * z)
+            .exp()
+            .clamp(MIN_WEIGHT, MAX_WEIGHT);
         weights.push(weight);
     }
     weights
@@ -229,8 +267,8 @@ fn nearest_weighted_seed_id(point: Vec3, seed_points: &[Vec3], weights: &[f64]) 
     let mut best_id = 0u8;
     let mut best_score = f64::INFINITY;
     for (seed_id, (&seed_point, &weight)) in seed_points.iter().zip(weights.iter()).enumerate() {
-        let score = great_circle_distance_rad(point, seed_point)
-            - POWER_DIAGRAM_SCALE_RAD * weight.ln();
+        let score =
+            great_circle_distance_rad(point, seed_point) - POWER_DIAGRAM_SCALE_RAD * weight.ln();
         if score < best_score {
             best_score = score;
             best_id = seed_id as u8;
@@ -351,10 +389,10 @@ fn warp_point(point: Vec3, perlin: &Perlin, warp_amplitude_rad: f64) -> Vec3 {
     let plus_v = offset_along_tangent(point, tangent_v, step_rad);
     let minus_v = offset_along_tangent(point, tangent_v, -step_rad);
 
-    let grad_u = (scalar_potential(plus_u, perlin) - scalar_potential(minus_u, perlin))
-        / (2.0 * step_rad);
-    let grad_v = (scalar_potential(plus_v, perlin) - scalar_potential(minus_v, perlin))
-        / (2.0 * step_rad);
+    let grad_u =
+        (scalar_potential(plus_u, perlin) - scalar_potential(minus_u, perlin)) / (2.0 * step_rad);
+    let grad_v =
+        (scalar_potential(plus_v, perlin) - scalar_potential(minus_v, perlin)) / (2.0 * step_rad);
 
     let curl_direction = Vec3 {
         x: tangent_u.x * -grad_v + tangent_v.x * grad_u,
@@ -378,10 +416,15 @@ fn scalar_potential(point: Vec3, perlin: &Perlin) -> f64 {
     let mut amplitude_sum = 0.0;
 
     for _ in 0..CURL_OCTAVES {
-        sum += amplitude * perlin.get([point.x * frequency, point.y * frequency, point.z * frequency]);
+        sum += amplitude
+            * perlin.get([
+                point.x * frequency,
+                point.y * frequency,
+                point.z * frequency,
+            ]);
         amplitude_sum += amplitude;
         frequency *= 2.0;
-        amplitude *= 0.5;
+        amplitude *= CURL_OCTAVE_FALLOFF;
     }
 
     sum / amplitude_sum.max(1e-9)
@@ -554,14 +597,8 @@ fn plate_components(
         if visited[idx] || plate_ids[idx] != target_plate {
             continue;
         }
-        let component = collect_component(
-            plate_ids,
-            target_plate,
-            width,
-            height,
-            idx,
-            &mut visited,
-        );
+        let component =
+            collect_component(plate_ids, target_plate, width, height, idx, &mut visited);
         components.push(component);
     }
 
@@ -618,11 +655,7 @@ fn dominant_neighbor_plate(
         .map_or(current_plate, |(plate, _)| plate as u8)
 }
 
-fn dominant_plate_among_neighbors(
-    plate_ids: &[u8],
-    neighbors: &[usize],
-    current_plate: u8,
-) -> u8 {
+fn dominant_plate_among_neighbors(plate_ids: &[u8], neighbors: &[usize], current_plate: u8) -> u8 {
     let mut counts = vec![0usize; 256];
     for &neighbor in neighbors {
         counts[usize::from(plate_ids[neighbor])] += 1;
@@ -679,12 +712,10 @@ mod tests {
     fn full_coverage() {
         let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(geometry.plate_ids.len(), TEST_WIDTH * TEST_HEIGHT);
-        assert!(
-            geometry
-                .plate_ids
-                .iter()
-                .all(|&plate_id| usize::from(plate_id) < geometry.n_plates)
-        );
+        assert!(geometry
+            .plate_ids
+            .iter()
+            .all(|&plate_id| usize::from(plate_id) < geometry.n_plates));
     }
 
     #[test]
@@ -706,19 +737,40 @@ mod tests {
     #[test]
     fn size_distribution_is_plate_like() {
         let geometry = generate_plate_geometry(15, 42, TEST_WARP_DEG, TEST_WIDTH, TEST_HEIGHT);
-        let counts = plate_counts(&geometry.plate_ids, geometry.n_plates);
-        let total = (geometry.width * geometry.height) as f64;
-        let largest_fraction = *counts.iter().max().unwrap_or(&0) as f64 / total;
-        let smallest_fraction = *counts.iter().min().unwrap_or(&0) as f64 / total;
+        let mut areas = vec![0.0_f64; geometry.n_plates];
+        for row in 0..geometry.height {
+            let point = cell_to_vec3(row, 0, geometry.width, geometry.height);
+            let row_weight = (point.x * point.x + point.y * point.y).sqrt();
+            for col in 0..geometry.width {
+                let idx = row * geometry.width + col;
+                areas[usize::from(geometry.plate_ids[idx])] += row_weight;
+            }
+        }
+        let total = areas.iter().sum::<f64>();
+        let largest_fraction =
+            areas.iter().copied().reduce(f64::max).unwrap_or(0.0) / total.max(1e-9);
+        let smallest_fraction =
+            areas.iter().copied().reduce(f64::min).unwrap_or(0.0) / total.max(1e-9);
+        let size_ratio = largest_fraction / smallest_fraction.max(1e-9);
         assert!(
-            largest_fraction <= 0.25,
-            "largest plate fraction {:.3} exceeds limit",
+            largest_fraction >= 0.18,
+            "largest plate fraction {:.3} below plate-like spread target",
             largest_fraction
         );
         assert!(
-            smallest_fraction >= 0.005,
-            "smallest plate fraction {:.3} below limit",
+            smallest_fraction <= 0.02,
+            "smallest plate fraction {:.3} above target",
             smallest_fraction
+        );
+        assert!(
+            smallest_fraction >= 0.005,
+            "smallest plate fraction {:.3} below repair floor",
+            smallest_fraction
+        );
+        assert!(
+            size_ratio >= 8.0,
+            "largest/smallest ratio {:.2} below plate-like target",
+            size_ratio
         );
     }
 

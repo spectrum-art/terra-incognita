@@ -3,12 +3,12 @@
 //! Every grid cell is classified into one of 5 tectonic regimes based on
 //! proximity to ridges, subduction arcs, and continental crust type.
 
-use serde::{Deserialize, Serialize};
-use crate::sphere::{Vec3, point_to_arc_distance};
-use crate::plates::ridges::RidgeSegment;
-use crate::plates::subduction::{SubductionArc, point_to_subduction_distance};
-use crate::plates::continents::CrustType;
 use crate::plates::age_field::cell_to_vec3;
+use crate::plates::continents::CrustType;
+use crate::plates::ridges::RidgeSegment;
+use crate::plates::subduction::{point_to_subduction_distance, SubductionArc};
+use crate::sphere::{point_to_arc_distance, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// Tectonic regime at a point on the planet surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -123,18 +123,18 @@ pub fn generate_regime_field(
             }
 
             // 2. Subduction proximity → ActiveCompressional.
-            let near_subduction = arcs.iter().any(|arc| {
-                point_to_subduction_distance(p, arc) < SUBDUCTION_THRESHOLD_RAD
-            });
+            let near_subduction = arcs
+                .iter()
+                .any(|arc| point_to_subduction_distance(p, arc) < SUBDUCTION_THRESHOLD_RAD);
             if near_subduction {
                 field.set(r, c, TectonicRegime::ActiveCompressional);
                 continue;
             }
 
             // 3. Hotspot proximity → VolcanicHotspot.
-            let near_hotspot = hotspots.iter().any(|&h| {
-                p.dot(h).clamp(-1.0, 1.0).acos() < HOTSPOT_THRESHOLD_RAD
-            });
+            let near_hotspot = hotspots
+                .iter()
+                .any(|&h| p.dot(h).clamp(-1.0, 1.0).acos() < HOTSPOT_THRESHOLD_RAD);
             if near_hotspot {
                 field.set(r, c, TectonicRegime::VolcanicHotspot);
                 continue;
@@ -156,8 +156,8 @@ pub fn generate_regime_field(
 
 /// Generate a small set of volcanic hotspot positions using the given seed.
 pub fn generate_hotspots(seed: u64, n: usize) -> Vec<Vec3> {
-    use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     let mut rng = StdRng::seed_from_u64(seed ^ 0x1234_5678_9ABC_DEF0);
     (0..n)
@@ -216,14 +216,22 @@ mod tests {
     #[test]
     fn regime_has_extensional_zones() {
         let rf = make_regime(42, 128, 64);
-        let n = rf.data.iter().filter(|&&r| r == TectonicRegime::ActiveExtensional).count();
+        let n = rf
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::ActiveExtensional)
+            .count();
         assert!(n > 0, "expected some ActiveExtensional zones near ridges");
     }
 
     #[test]
     fn regime_has_craton_zones() {
         let rf = make_regime(42, 128, 64);
-        let n = rf.data.iter().filter(|&&r| r == TectonicRegime::CratonicShield).count();
+        let n = rf
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::CratonicShield)
+            .count();
         assert!(n > 0, "expected some CratonicShield zones");
     }
 

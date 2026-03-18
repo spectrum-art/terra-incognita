@@ -135,12 +135,7 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     let elevations: Vec<f32> = physical_elevations
         .iter()
         .map(|&elevation_km| {
-            normalize_for_rendering(
-                elevation_km,
-                ocean.sea_level_km,
-                field_min_km,
-                field_max_km,
-            )
+            normalize_for_rendering(elevation_km, ocean.sea_level_km, field_min_km, field_max_km)
         })
         .collect();
     let ocean_mask = ocean.mask;
@@ -289,13 +284,23 @@ mod tests {
     #[test]
     fn normalized_overview_uses_full_render_range() {
         let overview = generate_planet_overview(&GlobalParams::default());
-        let min = overview.elevations.iter().copied().fold(f32::INFINITY, f32::min);
+        let min = overview
+            .elevations
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
         let max = overview
             .elevations
             .iter()
             .copied()
             .fold(f32::NEG_INFINITY, f32::max);
-        assert!(min <= 1e-6, "expected minimum render elevation near 0, got {min:.6}");
-        assert!(max >= 1.0 - 1e-6, "expected maximum render elevation near 1, got {max:.6}");
+        assert!(
+            min <= 1e-6,
+            "expected minimum render elevation near 0, got {min:.6}"
+        );
+        assert!(
+            max >= 1.0 - 1e-6,
+            "expected maximum render elevation near 1, got {max:.6}"
+        );
     }
 }

@@ -5,9 +5,9 @@
 //! Passive margins are continental edges not adjacent to subduction arcs.
 //! Active margins are continental edges adjacent to subduction arcs.
 
-use crate::sphere::Vec3;
 use crate::plates::age_field::cell_to_vec3;
-use crate::plates::subduction::{SubductionArc, point_to_subduction_distance};
+use crate::plates::subduction::{point_to_subduction_distance, SubductionArc};
+use crate::sphere::Vec3;
 
 /// Normalized age below which crust is classified as continental.
 /// Complementary to `SUBDUCTION_THRESHOLD`: young crust near ridges is oceanic;
@@ -54,9 +54,9 @@ pub fn assign_continental_crust(
             }
             // Old crust: classify as continental or a margin.
             let p = cell_to_vec3(r, c, width, height);
-            let near_subduction = arcs.iter().any(|arc| {
-                point_to_subduction_distance(p, arc) < ACTIVE_MARGIN_RAD
-            });
+            let near_subduction = arcs
+                .iter()
+                .any(|arc| point_to_subduction_distance(p, arc) < ACTIVE_MARGIN_RAD);
             result[idx] = if near_subduction {
                 CrustType::ActiveMargin
             } else {
@@ -79,7 +79,10 @@ pub fn assign_continental_crust(
 
 /// Returns `true` if the grid cell is any form of continental crust.
 pub fn is_continental(crust: CrustType) -> bool {
-    matches!(crust, CrustType::Continental | CrustType::ActiveMargin | CrustType::PassiveMargin)
+    matches!(
+        crust,
+        CrustType::Continental | CrustType::ActiveMargin | CrustType::PassiveMargin
+    )
 }
 
 /// Convenience: check the `Vec<CrustType>` directly.
@@ -119,20 +122,14 @@ mod tests {
     fn some_continental_crust_exists() {
         let crust = make_crust(42, 64, 32);
         let n_continental = crust.iter().filter(|&&c| is_continental(c)).count();
-        assert!(
-            n_continental > 0,
-            "expected some continental crust, got 0"
-        );
+        assert!(n_continental > 0, "expected some continental crust, got 0");
     }
 
     #[test]
     fn some_oceanic_crust_exists() {
         let crust = make_crust(42, 64, 32);
         let n_oceanic = crust.iter().filter(|&&c| c == CrustType::Oceanic).count();
-        assert!(
-            n_oceanic > 0,
-            "expected some oceanic crust, got 0"
-        );
+        assert!(n_oceanic > 0, "expected some oceanic crust, got 0");
     }
 
     #[test]

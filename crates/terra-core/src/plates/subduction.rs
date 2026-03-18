@@ -4,10 +4,10 @@
 //! represented as a great-circle arc whose angular radius on the sphere
 //! corresponds to the physical radius divided by Earth's mean radius (6371 km).
 
-use rand::{Rng, SeedableRng};
+use crate::plates::age_field::{cell_to_vec3, GridCell};
+use crate::sphere::{slerp, Vec3};
 use rand::rngs::StdRng;
-use crate::sphere::{Vec3, slerp};
-use crate::plates::age_field::{GridCell, cell_to_vec3};
+use rand::{Rng, SeedableRng};
 
 /// Earth's mean radius in km (used only to convert km → radians).
 const EARTH_RADIUS_KM: f64 = 6371.0;
@@ -70,9 +70,9 @@ pub fn generate_subduction_arcs(
         }
 
         // Check separation from already-placed arcs.
-        let too_close = centres.iter().any(|&p| {
-            centre.dot(p).clamp(-1.0, 1.0).acos() < min_sep_rad
-        });
+        let too_close = centres
+            .iter()
+            .any(|&p| centre.dot(p).clamp(-1.0, 1.0).acos() < min_sep_rad);
         if too_close {
             continue;
         }
@@ -86,7 +86,12 @@ pub fn generate_subduction_arcs(
         let (start, end) = arc_endpoints(centre, radius_rad, arc_span_deg, &mut rng);
 
         centres.push(centre);
-        arcs.push(SubductionArc { centre, radius_km, start, end });
+        arcs.push(SubductionArc {
+            centre,
+            radius_km,
+            start,
+            end,
+        });
     }
 
     arcs
@@ -102,7 +107,12 @@ pub fn point_to_subduction_distance(p: Vec3, arc: &SubductionArc) -> f64 {
 ///
 /// `arc_span_deg` is the total angular span of the arc (how much of the circle at
 /// radius `radius_rad` the arc covers).
-fn arc_endpoints(centre: Vec3, radius_rad: f64, arc_span_deg: f64, rng: &mut StdRng) -> (Vec3, Vec3) {
+fn arc_endpoints(
+    centre: Vec3,
+    radius_rad: f64,
+    arc_span_deg: f64,
+    rng: &mut StdRng,
+) -> (Vec3, Vec3) {
     // Find a random reference direction in the tangent plane at `centre`.
     let arbitrary = if centre.z.abs() < 0.9 {
         Vec3::new(0.0, 0.0, 1.0)
@@ -130,7 +140,10 @@ fn arc_endpoints(centre: Vec3, radius_rad: f64, arc_span_deg: f64, rng: &mut Std
         .normalize()
     };
 
-    (point_at_angle(base_angle - half_span), point_at_angle(base_angle + half_span))
+    (
+        point_at_angle(base_angle - half_span),
+        point_at_angle(base_angle + half_span),
+    )
 }
 
 /// Sample points along a subduction arc (for distance-field queries).
@@ -143,7 +156,10 @@ pub fn arc_sample_points(arc: &SubductionArc, n: usize) -> Vec<Vec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plates::{age_field::{compute_age_field, find_subduction_sites}, ridges::generate_ridges};
+    use crate::plates::{
+        age_field::{compute_age_field, find_subduction_sites},
+        ridges::generate_ridges,
+    };
 
     fn make_arcs(fragmentation: f32, seed: u64, w: usize, h: usize) -> Vec<SubductionArc> {
         let n_ridges = crate::plates::ridges::n_ridges_from_fragmentation(fragmentation);

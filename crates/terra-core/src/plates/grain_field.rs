@@ -6,11 +6,11 @@
 //! - Radial from hotspots
 //! - Zero intensity in CratonicShield zones
 
-use crate::sphere::{Vec3, point_to_arc_distance};
+use crate::plates::age_field::cell_to_vec3;
+use crate::plates::regime_field::{RegimeField, TectonicRegime};
 use crate::plates::ridges::RidgeSegment;
 use crate::plates::subduction::SubductionArc;
-use crate::plates::regime_field::{RegimeField, TectonicRegime};
-use crate::plates::age_field::cell_to_vec3;
+use crate::sphere::{point_to_arc_distance, Vec3};
 
 /// Structural grain vector field: angle (radians) and intensity [0, 1] per cell.
 pub struct GrainField {
@@ -42,7 +42,7 @@ impl GrainField {
 struct ArcEntry {
     a: Vec3,
     b: Vec3,
-    normal: Vec3,      // unit normal to great-circle plane
+    normal: Vec3, // unit normal to great-circle plane
     influence_rad: f64,
     perpendicular: bool, // true = grain ⊥ arc; false = grain ∥ arc
 }
@@ -77,7 +77,13 @@ pub fn derive_grain_field(
         } else {
             Vec3::new(0.0, 0.0, 1.0)
         };
-        entries.push(ArcEntry { a, b, normal, influence_rad: ridge_influence_rad, perpendicular: false });
+        entries.push(ArcEntry {
+            a,
+            b,
+            normal,
+            influence_rad: ridge_influence_rad,
+            perpendicular: false,
+        });
     }
     for arc in arcs {
         let n_raw = arc.start.cross(arc.end);
@@ -86,7 +92,13 @@ pub fn derive_grain_field(
         } else {
             Vec3::new(0.0, 0.0, 1.0)
         };
-        entries.push(ArcEntry { a: arc.start, b: arc.end, normal, influence_rad: arc_influence_rad, perpendicular: true });
+        entries.push(ArcEntry {
+            a: arc.start,
+            b: arc.end,
+            normal,
+            influence_rad: arc_influence_rad,
+            perpendicular: true,
+        });
     }
 
     for r in 0..height {
@@ -142,8 +154,8 @@ pub fn derive_grain_field(
 
             if total_weight > 1e-9 {
                 let mean_angle = sum_angle_y.atan2(sum_angle_x);
-                let coherence = (sum_angle_x * sum_angle_x + sum_angle_y * sum_angle_y).sqrt()
-                    / total_weight;
+                let coherence =
+                    (sum_angle_x * sum_angle_x + sum_angle_y * sum_angle_y).sqrt() / total_weight;
                 field.angles[idx] = mean_angle as f32;
                 field.intensities[idx] = coherence.min(1.0) as f32;
             }
@@ -261,10 +273,7 @@ mod tests {
     fn intensity_in_range() {
         let (grain, _) = make_grain(42, 64, 32);
         for &v in &grain.intensities {
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "intensity {v} outside [0, 1]"
-            );
+            assert!((0.0..=1.0).contains(&v), "intensity {v} outside [0, 1]");
         }
     }
 

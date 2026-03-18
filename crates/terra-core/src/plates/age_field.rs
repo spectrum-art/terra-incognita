@@ -3,8 +3,8 @@
 //! Age is normalized 0 (at a ridge) → 1 (maximum distance).  Points where
 //! age exceeds `SUBDUCTION_THRESHOLD` are flagged as subduction initiation sites.
 
-use crate::sphere::{Vec3, point_to_arc_distance};
 use crate::plates::ridges::RidgeSegment;
+use crate::sphere::{point_to_arc_distance, Vec3};
 
 /// Normalized age at which old oceanic crust initiates subduction.
 pub const SUBDUCTION_THRESHOLD: f32 = 0.65;
@@ -82,11 +82,7 @@ pub fn compute_age_field(ridges: &[RidgeSegment], width: usize, height: usize) -
 }
 
 /// Return all grid cells where lithospheric age exceeds the subduction threshold.
-pub fn find_subduction_sites(
-    age_field: &[f32],
-    width: usize,
-    height: usize,
-) -> Vec<GridCell> {
+pub fn find_subduction_sites(age_field: &[f32], width: usize, height: usize) -> Vec<GridCell> {
     let mut sites = Vec::new();
     for r in 0..height {
         for c in 0..width {
@@ -130,10 +126,7 @@ mod tests {
     fn age_field_values_in_range() {
         let field = make_field(64, 32);
         for &v in &field {
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "age value {v} outside [0, 1]"
-            );
+            assert!((0.0..=1.0).contains(&v), "age value {v} outside [0, 1]");
         }
     }
 
@@ -156,7 +149,10 @@ mod tests {
     fn subduction_sites_exist() {
         let field = make_field(64, 32);
         let sites = find_subduction_sites(&field, 64, 32);
-        assert!(!sites.is_empty(), "subduction sites should exist for THRESHOLD < 1.0");
+        assert!(
+            !sites.is_empty(),
+            "subduction sites should exist for THRESHOLD < 1.0"
+        );
     }
 
     #[test]
@@ -174,4 +170,3 @@ mod tests {
         assert!(field.iter().all(|&v| v == 1.0));
     }
 }
-

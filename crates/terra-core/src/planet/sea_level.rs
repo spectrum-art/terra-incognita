@@ -44,7 +44,11 @@ pub fn compute_ocean_mask(elevations_km: &[f32], water_abundance: f32) -> OceanM
     let mask: Vec<bool> = elevations_km.iter().map(|&e| e < sea_level_km).collect();
     let ocean_fraction = mask.iter().filter(|&&o| o).count() as f32 / n as f32;
 
-    OceanMask { mask, sea_level_km, ocean_fraction }
+    OceanMask {
+        mask,
+        sea_level_km,
+        ocean_fraction,
+    }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -58,11 +62,14 @@ mod tests {
     fn wa_30_produces_30_percent_ocean() {
         // Linear elevation field −100..+100.
         let n = 1000usize;
-        let elevations: Vec<f32> = (0..n).map(|i| -100.0 + 200.0 * i as f32 / (n - 1) as f32).collect();
+        let elevations: Vec<f32> = (0..n)
+            .map(|i| -100.0 + 200.0 * i as f32 / (n - 1) as f32)
+            .collect();
         let result = compute_ocean_mask(&elevations, 0.3);
         assert!(
             (result.ocean_fraction - 0.3).abs() < 0.11,
-            "ocean fraction {:.3} should be near 0.30", result.ocean_fraction
+            "ocean fraction {:.3} should be near 0.30",
+            result.ocean_fraction
         );
     }
 
@@ -70,11 +77,14 @@ mod tests {
     #[test]
     fn wa_70_produces_70_percent_ocean() {
         let n = 1000usize;
-        let elevations: Vec<f32> = (0..n).map(|i| -100.0 + 200.0 * i as f32 / (n - 1) as f32).collect();
+        let elevations: Vec<f32> = (0..n)
+            .map(|i| -100.0 + 200.0 * i as f32 / (n - 1) as f32)
+            .collect();
         let result = compute_ocean_mask(&elevations, 0.7);
         assert!(
             (result.ocean_fraction - 0.7).abs() < 0.11,
-            "ocean fraction {:.3} should be near 0.70", result.ocean_fraction
+            "ocean fraction {:.3} should be near 0.70",
+            result.ocean_fraction
         );
     }
 
@@ -83,7 +93,10 @@ mod tests {
     fn wa_zero_is_all_land() {
         let elevations = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0];
         let result = compute_ocean_mask(&elevations, 0.0);
-        assert!(result.mask.iter().all(|&o| !o), "wa=0 should produce all land");
+        assert!(
+            result.mask.iter().all(|&o| !o),
+            "wa=0 should produce all land"
+        );
     }
 
     /// wa = 1.0 → all ocean.
@@ -91,7 +104,10 @@ mod tests {
     fn wa_one_is_all_ocean() {
         let elevations = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0];
         let result = compute_ocean_mask(&elevations, 1.0);
-        assert!(result.mask.iter().all(|&o| o), "wa=1 should produce all ocean");
+        assert!(
+            result.mask.iter().all(|&o| o),
+            "wa=1 should produce all ocean"
+        );
     }
 
     /// sea_level_km is stored in the result.
