@@ -202,6 +202,7 @@ mod tests {
         let overview = generate_planet_overview(&GlobalParams::default());
         let n = OVERVIEW_WIDTH * OVERVIEW_HEIGHT;
         assert_eq!(overview.elevations.len(), n);
+        assert_eq!(overview.physical_elevations.len(), n);
         assert_eq!(overview.ocean_mask.len(), n);
         assert_eq!(overview.regimes.len(), n);
         assert_eq!(overview.map_field.len(), n);
@@ -271,5 +272,30 @@ mod tests {
                 "seed={seed}: regime entropy {entropy:.3} < 1.2 bits"
             );
         }
+    }
+
+    #[test]
+    fn normalized_overview_respects_half_sea_level_hinge() {
+        let overview = generate_planet_overview(&GlobalParams::default());
+        for (&elevation, &is_ocean) in overview.elevations.iter().zip(overview.ocean_mask.iter()) {
+            if is_ocean {
+                assert!(elevation <= 0.5 + 1e-6);
+            } else {
+                assert!(elevation >= 0.5 - 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn normalized_overview_uses_full_render_range() {
+        let overview = generate_planet_overview(&GlobalParams::default());
+        let min = overview.elevations.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = overview
+            .elevations
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(min <= 1e-6, "expected minimum render elevation near 0, got {min:.6}");
+        assert!(max >= 1.0 - 1e-6, "expected maximum render elevation near 1, got {max:.6}");
     }
 }
