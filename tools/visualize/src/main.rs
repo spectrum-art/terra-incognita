@@ -7,12 +7,15 @@ use std::path::Path;
 use terra_core::climate::simulate_climate;
 use terra_core::generator::GlobalParams;
 use terra_core::hydraulic::apply_hydraulic_shaping;
-use terra_core::noise::{generate_tile, params::{GlacialClass, NoiseParams}};
-use terra_core::plates::{simulate_plates, TectonicRegime};
-use terra_core::plates::continents::CrustType;
+use terra_core::noise::{
+    generate_tile,
+    params::{GlacialClass, NoiseParams},
+};
+use terra_core::planet::generate_planet_overview;
 use terra_core::planet::planet_elevation::generate_planet_elevation;
 use terra_core::planet::sea_level::compute_ocean_mask;
-use terra_core::planet::generate_planet_overview;
+use terra_core::plates::continents::CrustType;
+use terra_core::plates::{simulate_plates, TectonicRegime};
 
 const W: usize = 512;
 const H: usize = 256;
@@ -22,11 +25,11 @@ const H: usize = 256;
 /// Tectonic regime → distinct RGB colour (user spec).
 fn regime_color(regime: TectonicRegime) -> [u8; 3] {
     match regime {
-        TectonicRegime::CratonicShield       => [210, 180, 140], // tan
-        TectonicRegime::ActiveCompressional  => [220,  50,  50], // red
-        TectonicRegime::ActiveExtensional    => [255, 140,   0], // orange
-        TectonicRegime::PassiveMargin        => [ 70, 130, 180], // steel blue
-        TectonicRegime::VolcanicHotspot      => [150,  50, 200], // purple
+        TectonicRegime::CratonicShield => [210, 180, 140], // tan
+        TectonicRegime::ActiveCompressional => [220, 50, 50], // red
+        TectonicRegime::ActiveExtensional => [255, 140, 0], // orange
+        TectonicRegime::PassiveMargin => [70, 130, 180],   // steel blue
+        TectonicRegime::VolcanicHotspot => [150, 50, 200], // purple
     }
 }
 
@@ -34,7 +37,7 @@ fn regime_color(regime: TectonicRegime) -> [u8; 3] {
 fn map_to_rgb(mm: f32) -> [u8; 3] {
     let t = (mm / 3000.0).clamp(0.0, 1.0);
     let lo = (255.0 * (1.0 - t)) as u8;
-    let b  = (255.0 - 75.0 * t) as u8; // 255 → 180
+    let b = (255.0 - 75.0 * t) as u8; // 255 → 180
     [lo, lo, b]
 }
 
@@ -64,7 +67,10 @@ fn is_mountain_boundary(r: usize, c: usize, is_mountain: &[bool]) -> bool {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
-    let params = GlobalParams { seed: 42, ..GlobalParams::default() };
+    let params = GlobalParams {
+        seed: 42,
+        ..GlobalParams::default()
+    };
 
     println!("Running plate simulation ({W}×{H})…");
     let sim = simulate_plates(params.seed, params.continental_fragmentation, W, H);
@@ -160,21 +166,18 @@ fn main() {
         let np = NoiseParams::default(); // FluvialHumid, h=0.75
         let tile_w = 512usize;
         let tile_h = 512usize;
-        let mut hf = generate_tile(&np, params.seed as u32, tile_w, tile_h,
-                                   0.0, 1.0, 0.0, 1.0);
+        let mut hf = generate_tile(&np, params.seed as u32, tile_w, tile_h, 0.0, 1.0, 0.0, 1.0);
 
         println!("Applying hydraulic shaping…");
-        let result = apply_hydraulic_shaping(
-            &mut hf,
-            np.terrain_class,
-            &[],
-            GlacialClass::None,
-        );
+        let result = apply_hydraulic_shaping(&mut hf, np.terrain_class, &[], GlacialClass::None);
 
         // ── 5. flow_accumulation.png (log-blue) ──────────────────────────────
         {
             // log10(1 + accum) normalised to [0, 1] → blue channel intensity.
-            let max_log = result.flow.accumulation.iter()
+            let max_log = result
+                .flow
+                .accumulation
+                .iter()
                 .map(|&a| (1.0 + a as f64).ln())
                 .fold(0.0f64, f64::max)
                 .max(1.0);
@@ -190,7 +193,8 @@ fn main() {
                 }
             }
             let path = out_dir.join("flow_accumulation.png");
-            img.save(&path).expect("failed to save flow_accumulation.png");
+            img.save(&path)
+                .expect("failed to save flow_accumulation.png");
             println!("Wrote {}", path.display());
         }
 
@@ -222,7 +226,10 @@ fn main() {
     // ── Phase A Diagnostics ───────────────────────────────────────────────────
     const DIAG_W: usize = 1024;
     const DIAG_H: usize = 512;
-    let diag_params = GlobalParams { seed: 42, ..GlobalParams::default() };
+    let diag_params = GlobalParams {
+        seed: 42,
+        ..GlobalParams::default()
+    };
 
     println!("\n── Phase A Diagnostics ({DIAG_W}×{DIAG_H}) ──────────────────────────────────");
 
@@ -234,9 +241,9 @@ fn main() {
         for r in 0..DIAG_H {
             for c in 0..DIAG_W {
                 let px = match sim_d.crust_field[r * DIAG_W + c] {
-                    CrustType::Oceanic       => image::Rgb([  0u8,   0,   0]),
-                    CrustType::Continental   => image::Rgb([255u8, 255, 255]),
-                    CrustType::ActiveMargin  => image::Rgb([180u8, 180, 180]),
+                    CrustType::Oceanic => image::Rgb([0u8, 0, 0]),
+                    CrustType::Continental => image::Rgb([255u8, 255, 255]),
+                    CrustType::ActiveMargin => image::Rgb([180u8, 180, 180]),
                     CrustType::PassiveMargin => image::Rgb([120u8, 120, 120]),
                 };
                 img.put_pixel(c as u32, r as u32, px);
@@ -254,34 +261,80 @@ fn main() {
     // D2: Regime distribution.
     {
         let n = DIAG_W * DIAG_H;
-        let pm = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::PassiveMargin).count();
-        let cs = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::CratonicShield).count();
-        let ac = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::ActiveCompressional).count();
-        let ae = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::ActiveExtensional).count();
-        let vh = sim42.regime_field.data.iter().filter(|&&r| r == TectonicRegime::VolcanicHotspot).count();
+        let pm = sim42
+            .regime_field
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::PassiveMargin)
+            .count();
+        let cs = sim42
+            .regime_field
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::CratonicShield)
+            .count();
+        let ac = sim42
+            .regime_field
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::ActiveCompressional)
+            .count();
+        let ae = sim42
+            .regime_field
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::ActiveExtensional)
+            .count();
+        let vh = sim42
+            .regime_field
+            .data
+            .iter()
+            .filter(|&&r| r == TectonicRegime::VolcanicHotspot)
+            .count();
         println!("\nD2: Regime distribution (seed=42, {DIAG_W}×{DIAG_H}):");
-        println!("  PassiveMargin:       {:5.1}%  ({pm})", pm as f32 / n as f32 * 100.0);
-        println!("  CratonicShield:      {:5.1}%  ({cs})", cs as f32 / n as f32 * 100.0);
-        println!("  ActiveCompressional: {:5.1}%  ({ac})", ac as f32 / n as f32 * 100.0);
-        println!("  ActiveExtensional:   {:5.1}%  ({ae})", ae as f32 / n as f32 * 100.0);
-        println!("  VolcanicHotspot:     {:5.1}%  ({vh})", vh as f32 / n as f32 * 100.0);
+        println!(
+            "  PassiveMargin:       {:5.1}%  ({pm})",
+            pm as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  CratonicShield:      {:5.1}%  ({cs})",
+            cs as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  ActiveCompressional: {:5.1}%  ({ac})",
+            ac as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  ActiveExtensional:   {:5.1}%  ({ae})",
+            ae as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  VolcanicHotspot:     {:5.1}%  ({vh})",
+            vh as f32 / n as f32 * 100.0
+        );
     }
 
     // D3: Elevation statistics.
     {
         let elevs = generate_planet_elevation(&sim42, 42);
         let n = elevs.len();
-        let min_e  = elevs.iter().cloned().fold(f32::INFINITY,     f32::min);
-        let max_e  = elevs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let min_e = elevs.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_e = elevs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let mean_e = elevs.iter().sum::<f32>() / n as f32;
         let sea_level = compute_ocean_mask(&elevs, diag_params.water_abundance).sea_level_km;
-        let near_sea  = elevs.iter().filter(|&&e| (e - sea_level).abs() < 0.1).count();
+        let near_sea = elevs
+            .iter()
+            .filter(|&&e| (e - sea_level).abs() < 0.1)
+            .count();
         println!("\nD3: Elevation statistics (seed=42, {DIAG_W}×{DIAG_H}):");
         println!("  min:          {min_e:.2} km");
         println!("  max:          {max_e:.2} km");
         println!("  mean:         {mean_e:.2} km");
         println!("  sea_level:    {sea_level:.2} km");
-        println!("  cells ±0.1km: {:.1}%  ({near_sea})", near_sea as f32 / n as f32 * 100.0);
+        println!(
+            "  cells ±0.1km: {:.1}%  ({near_sea})",
+            near_sea as f32 / n as f32 * 100.0
+        );
     }
 
     // D4: Glaciation distribution.
@@ -296,10 +349,22 @@ fn main() {
             DIAG_H,
         );
         let n = climate42.glaciation_mask.len();
-        let n_active = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::Active).count();
-        let n_former = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::Former).count();
-        let n_none   = climate42.glaciation_mask.iter().filter(|&&g| g == GlacialClass::None).count();
-        let mut polar_total     = 0usize;
+        let n_active = climate42
+            .glaciation_mask
+            .iter()
+            .filter(|&&g| g == GlacialClass::Active)
+            .count();
+        let n_former = climate42
+            .glaciation_mask
+            .iter()
+            .filter(|&&g| g == GlacialClass::Former)
+            .count();
+        let n_none = climate42
+            .glaciation_mask
+            .iter()
+            .filter(|&&g| g == GlacialClass::None)
+            .count();
+        let mut polar_total = 0usize;
         let mut polar_glaciated = 0usize;
         for r in 0..DIAG_H {
             let lat = 90.0_f32 - (r as f32 + 0.5) / DIAG_H as f32 * 180.0;
@@ -314,21 +379,35 @@ fn main() {
         }
         let gs = diag_params.glaciation;
         let active_thresh = 90.0_f32 - gs * 60.0;
-        let former_thresh  = active_thresh - gs * 30.0;
+        let former_thresh = active_thresh - gs * 30.0;
         println!("\nD4: Glaciation distribution (seed=42, glaciation={gs:.2}):");
-        println!("  GlacialClass::Active: {:5.1}%  ({n_active})", n_active as f32 / n as f32 * 100.0);
-        println!("  GlacialClass::Former: {:5.1}%  ({n_former})", n_former as f32 / n as f32 * 100.0);
-        println!("  GlacialClass::None:   {:5.1}%  ({n_none})",   n_none   as f32 / n as f32 * 100.0);
+        println!(
+            "  GlacialClass::Active: {:5.1}%  ({n_active})",
+            n_active as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  GlacialClass::Former: {:5.1}%  ({n_former})",
+            n_former as f32 / n as f32 * 100.0
+        );
+        println!(
+            "  GlacialClass::None:   {:5.1}%  ({n_none})",
+            n_none as f32 / n as f32 * 100.0
+        );
         println!("  active threshold:     |lat| > {active_thresh:.1}°");
         println!("  former threshold:     |lat| > {former_thresh:.1}°");
         println!("  polar total (|lat|≥60°): {polar_total}");
-        println!("  polar glaciated:         {polar_glaciated}  ({:.1}%)",
-            polar_glaciated as f32 / polar_total.max(1) as f32 * 100.0);
+        println!(
+            "  polar glaciated:         {polar_glaciated}  ({:.1}%)",
+            polar_glaciated as f32 / polar_total.max(1) as f32 * 100.0
+        );
     }
 
     // D6: Planet overview ocean_mask and elevation PNGs for seeds 42, 7, 99.
     for &dseed in &[42u64, 7, 99] {
-        let dparams = GlobalParams { seed: dseed, ..GlobalParams::default() };
+        let dparams = GlobalParams {
+            seed: dseed,
+            ..GlobalParams::default()
+        };
         println!("D6: generate_planet_overview seed={dseed}…");
         let ov = generate_planet_overview(&dparams);
 
@@ -343,14 +422,14 @@ fn main() {
                     match ov.glaciation[idx] {
                         GlacialClass::Active => image::Rgb([220u8, 235, 255]),
                         GlacialClass::Former => image::Rgb([190u8, 205, 220]),
-                        GlacialClass::None   => {
+                        GlacialClass::None => {
                             // Tint land by elevation.
                             let e = ov.elevations[idx];
                             let t = ((e - 0.5) / 0.4).clamp(0.0, 1.0); // 0=sea, 1=high
                             image::Rgb([
                                 (60 + (t * 130.0) as u8),
-                                (110 + (t * 60.0)  as u8),
-                                (50 + (t * 40.0)   as u8),
+                                (110 + (t * 60.0) as u8),
+                                (50 + (t * 40.0) as u8),
                             ])
                         }
                     }
@@ -366,12 +445,18 @@ fn main() {
     // D5: All 6 planet metrics for seeds 42, 7, 99.
     for &dseed in &[42u64, 7, 99] {
         println!("\nD5: Planet metrics (seed={dseed}, default params):");
-        let ov_params = GlobalParams { seed: dseed, ..GlobalParams::default() };
+        let ov_params = GlobalParams {
+            seed: dseed,
+            ..GlobalParams::default()
+        };
         let overview = generate_planet_overview(&ov_params);
         let pm = &overview.planet_metrics;
         for m in &pm.metrics {
             let status = if m.pass { "PASS" } else { "FAIL" };
-            println!("  [{status}] {:<28} raw={:.3}  threshold={:.3}", m.name, m.raw_value, m.threshold);
+            println!(
+                "  [{status}] {:<28} raw={:.3}  threshold={:.3}",
+                m.name, m.raw_value, m.threshold
+            );
         }
         println!("  all_pass: {}", pm.all_pass);
     }

@@ -42,7 +42,8 @@ pub fn build_transects(
         ((height - 1) as f64, 0.0),
         ((height - 1) as f64, (width - 1) as f64),
     ];
-    let projs: Vec<f64> = corners.iter()
+    let projs: Vec<f64> = corners
+        .iter()
         .map(|&(r, c)| r * grain_r + c * grain_c)
         .collect();
     let min_proj = projs.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -129,7 +130,9 @@ mod tests {
         // Transects should be nearly vertical.
         let transects = build_transects(w, h, 0.0, 3);
         for t in &transects {
-            if t.len() < 2 { continue; }
+            if t.len() < 2 {
+                continue;
+            }
             // First and last points: column difference should be small (vertical transect).
             let (r0, c0) = t[0];
             let (r1, c1) = t[t.len() - 1];
@@ -173,7 +176,11 @@ mod tests {
         // Find the column value — for horizontal grain, transect is vertical,
         // so all cols should be near the centre (col ≈ 10).
         let avg_c: f64 = t.iter().map(|&(_, c)| c as f64).sum::<f64>() / t.len() as f64;
-        assert!((avg_c - 9.5).abs() < 2.0, "centre transect avg col={}", avg_c);
+        assert!(
+            (avg_c - 9.5).abs() < 2.0,
+            "centre transect avg col={}",
+            avg_c
+        );
     }
 
     #[test]
@@ -183,7 +190,9 @@ mod tests {
         let grain = PI / 4.0; // 45° grain
         let transects = build_transects(w, h, grain, 5);
         for t in &transects {
-            if t.len() < 2 { continue; }
+            if t.len() < 2 {
+                continue;
+            }
             // Transects should go in the perpendicular direction (135° = -45°).
             let (r0, c0) = t[0];
             let (r1, c1) = t[t.len() - 1];
@@ -191,7 +200,12 @@ mod tests {
             let dc = (c1 - c0) as f64;
             // For perpendicular to 45°, |dr| ≈ |dc|.
             let ratio = if dc.abs() > 0.1 { (dr / dc).abs() } else { 1.0 };
-            assert!(ratio > 0.5 && ratio < 2.0, "Expected ~45° transect, dr={} dc={}", dr, dc);
+            assert!(
+                ratio > 0.5 && ratio < 2.0,
+                "Expected ~45° transect, dr={} dc={}",
+                dr,
+                dc
+            );
         }
     }
 }

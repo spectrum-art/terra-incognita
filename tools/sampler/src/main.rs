@@ -12,8 +12,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
-use tiff::decoder::DecodingResult;
 use terra_core::heightfield::HeightField;
+use tiff::decoder::DecodingResult;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -285,7 +285,11 @@ fn windows_u8(
                     let tiff_row = r0 + dr;
                     let row_start = tiff_row * src_cols + c0;
                     for &byte in &data[row_start..row_start + step] {
-                        let v = if byte == GEOM_NODATA { f32::NAN } else { f32::from(byte) };
+                        let v = if byte == GEOM_NODATA {
+                            f32::NAN
+                        } else {
+                            f32::from(byte)
+                        };
                         if !v.is_nan() {
                             valid += 1;
                         }
@@ -396,8 +400,15 @@ fn process_dem_archive(
             }
         };
 
-        let windows =
-            windows_f32(&f32_data, src_cols, lat_sw, lon_sw, bbox, tile_pixels, min_valid);
+        let windows = windows_f32(
+            &f32_data,
+            src_cols,
+            lat_sw,
+            lon_sw,
+            bbox,
+            tile_pixels,
+            min_valid,
+        );
         let n = windows.len();
 
         // Tile coord for output naming: strip "_dem" suffix → e.g. "n30e060"
@@ -495,8 +506,15 @@ fn process_geom_archive(
             }
         };
 
-        let windows =
-            windows_u8(&u8_data, src_cols, lat_sw, lon_sw, bbox, tile_pixels, min_valid);
+        let windows = windows_u8(
+            &u8_data,
+            src_cols,
+            lat_sw,
+            lon_sw,
+            bbox,
+            tile_pixels,
+            min_valid,
+        );
         let n = windows.len();
 
         for (i, hf) in windows.into_iter().enumerate() {
@@ -633,10 +651,7 @@ mod tests {
 
     #[test]
     fn parse_coord_chunk_geom_prefix() {
-        assert_eq!(
-            parse_coord_chunk("geom_90M_n00e000"),
-            Some((0.0, 0.0))
-        );
+        assert_eq!(parse_coord_chunk("geom_90M_n00e000"), Some((0.0, 0.0)));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! Extracts ridge-to-valley traversals along transects, normalizes them,
 //! bins by relief magnitude, and computes mean profiles.
 
-use crate::transects::{Transect, sample_dem, sample_geom};
+use crate::transects::{sample_dem, sample_geom, Transect};
 
 const RIDGE_CLASS: f32 = 3.0;
 const VALLEY_CLASS: f32 = 9.0;
@@ -72,10 +72,12 @@ pub fn extract_traversals(
     for (transect_idx, transect) in transects.iter().enumerate() {
         let side = if transect_idx % 2 == 0 { 1i32 } else { -1i32 }; // alternate sides
         let n = transect.len();
-        let classes: Vec<f32> = transect.iter()
+        let classes: Vec<f32> = transect
+            .iter()
             .map(|&(r, c)| sample_geom(geom, width, height, r, c))
             .collect();
-        let elevs: Vec<f32> = transect.iter()
+        let elevs: Vec<f32> = transect
+            .iter()
             .map(|&(r, c)| sample_dem(dem, width, height, r, c))
             .collect();
 
@@ -87,9 +89,9 @@ pub fn extract_traversals(
         // For each ridge pixel, look for the nearest valley/hollow in each direction.
         for &ridge_pos in &ridge_positions {
             for &dir in &[-1i32, 1i32] {
-                if let Some(traversal) = extract_one_traversal(
-                    &elevs, &classes, ridge_pos, dir, n, side,
-                ) {
+                if let Some(traversal) =
+                    extract_one_traversal(&elevs, &classes, ridge_pos, dir, n, side)
+                {
                     traversals.push(traversal);
                 }
             }
@@ -109,7 +111,9 @@ fn extract_one_traversal(
     side: i32,
 ) -> Option<Traversal> {
     let ridge_elev = elevs[ridge_pos];
-    if ridge_elev.is_nan() { return None; }
+    if ridge_elev.is_nan() {
+        return None;
+    }
 
     // Walk from ridge toward valley.
     let mut end_pos = None;
@@ -120,7 +124,8 @@ fn extract_one_traversal(
         let idx = pos as usize;
         let cls = classes[idx];
 
-        let is_valley = !cls.is_nan() && ((cls - VALLEY_CLASS).abs() < 0.5 || (cls - HOLLOW_CLASS).abs() < 0.5);
+        let is_valley =
+            !cls.is_nan() && ((cls - VALLEY_CLASS).abs() < 0.5 || (cls - HOLLOW_CLASS).abs() < 0.5);
 
         if is_valley {
             if valley_run_start.is_none() {
@@ -160,20 +165,30 @@ fn extract_one_traversal(
     let mut i = start;
     loop {
         pixels.push((elevs[i], classes[i]));
-        if i == stop { break; }
+        if i == stop {
+            break;
+        }
         i = (i as i32 + step) as usize;
     }
 
     // Ensure ridge is at the start (index 0 = ridge).
-    if dir < 0 { pixels.reverse(); }
+    if dir < 0 {
+        pixels.reverse();
+    }
 
-    if pixels.len() < MIN_TRAVERSAL_LEN { return None; }
+    if pixels.len() < MIN_TRAVERSAL_LEN {
+        return None;
+    }
 
     let valley_elev = pixels.last().map(|&(e, _)| e).unwrap_or(f32::NAN);
-    if valley_elev.is_nan() { return None; }
+    if valley_elev.is_nan() {
+        return None;
+    }
 
     let relief = ridge_elev - valley_elev;
-    if relief < MIN_ELEVATION_DROP { return None; }
+    if relief < MIN_ELEVATION_DROP {
+        return None;
+    }
 
     // Normalize to 21 sample points on [0,1].
     let distance_px = pixels.len() - 1;
@@ -190,7 +205,11 @@ fn extract_one_traversal(
         let e0 = pixels[lo].0;
         let e1 = pixels[hi].0;
         let elev = if e0.is_nan() || e1.is_nan() {
-            if e0.is_nan() { e1 as f64 } else { e0 as f64 }
+            if e0.is_nan() {
+                e1 as f64
+            } else {
+                e0 as f64
+            }
         } else {
             e0 as f64 * (1.0 - t) + e1 as f64 * t
         };
@@ -200,20 +219,38 @@ fn extract_one_traversal(
         geom_classes[k] = pixels[lo].1; // nearest-neighbor for class
     }
 
-    Some(Traversal { profile, geom_classes, relief_m: relief, distance_px, side })
+    Some(Traversal {
+        profile,
+        geom_classes,
+        relief_m: relief,
+        distance_px,
+        side,
+    })
 }
 
 /// Bin traversals by relief magnitude.
-pub enum ReliefBin { Low, Moderate, High }
+pub enum ReliefBin {
+    Low,
+    Moderate,
+    High,
+}
 
 pub fn classify_relief(relief_m: f32) -> ReliefBin {
-    if relief_m < 200.0 { ReliefBin::Low }
-    else if relief_m <= 800.0 { ReliefBin::Moderate }
-    else { ReliefBin::High }
+    if relief_m < 200.0 {
+        ReliefBin::Low
+    } else if relief_m <= 800.0 {
+        ReliefBin::Moderate
+    } else {
+        ReliefBin::High
+    }
 }
 
 /// Aggregate traversals from multiple windows into a ProfileBin.
-pub fn aggregate_traversals(traversals: &[&Traversal], n_windows: usize, asym_consistency: f64) -> ProfileBin {
+pub fn aggregate_traversals(
+    traversals: &[&Traversal],
+    n_windows: usize,
+    asym_consistency: f64,
+) -> ProfileBin {
     if traversals.is_empty() {
         return ProfileBin::empty();
     }
@@ -262,10 +299,22 @@ pub fn aggregate_traversals(traversals: &[&Traversal], n_windows: usize, asym_co
         // Determine majority side from traversals.
         let n_pos = traversals.iter().filter(|t| t.side > 0).count();
         let n_neg = n - n_pos;
-        let (steep_side, gentle_side) = if n_pos >= n_neg { (1i32, -1i32) } else { (-1i32, 1i32) };
+        let (steep_side, gentle_side) = if n_pos >= n_neg {
+            (1i32, -1i32)
+        } else {
+            (-1i32, 1i32)
+        };
 
-        let steep: Vec<&Traversal> = traversals.iter().copied().filter(|t| t.side == steep_side).collect();
-        let gentle: Vec<&Traversal> = traversals.iter().copied().filter(|t| t.side == gentle_side).collect();
+        let steep: Vec<&Traversal> = traversals
+            .iter()
+            .copied()
+            .filter(|t| t.side == steep_side)
+            .collect();
+        let gentle: Vec<&Traversal> = traversals
+            .iter()
+            .copied()
+            .filter(|t| t.side == gentle_side)
+            .collect();
 
         let steep_prof = mean_profile_of(&steep);
         let gentle_prof = mean_profile_of(&gentle);
@@ -288,14 +337,20 @@ pub fn aggregate_traversals(traversals: &[&Traversal], n_windows: usize, asym_co
 }
 
 fn mean_profile_of(traversals: &[&Traversal]) -> Option<[f64; PROFILE_POINTS]> {
-    if traversals.is_empty() { return None; }
+    if traversals.is_empty() {
+        return None;
+    }
     let mut sum = [0.0f64; PROFILE_POINTS];
     for t in traversals {
-        for (k, s) in sum.iter_mut().enumerate() { *s += t.profile[k]; }
+        for (k, s) in sum.iter_mut().enumerate() {
+            *s += t.profile[k];
+        }
     }
     let n = traversals.len() as f64;
     let mut out = [0.0f64; PROFILE_POINTS];
-    for k in 0..PROFILE_POINTS { out[k] = sum[k] / n; }
+    for k in 0..PROFILE_POINTS {
+        out[k] = sum[k] / n;
+    }
     Some(out)
 }
 
@@ -312,8 +367,12 @@ mod tests {
             for c in 0..w {
                 let dist = (c as i32 - 25).abs() as f32;
                 dem[r * w + c] = 1000.0 - dist * 20.0;
-                if c == 25 { geom[r * w + c] = 3.0; } // ridge
-                if dist > 20.0 { geom[r * w + c] = 9.0; } // valley
+                if c == 25 {
+                    geom[r * w + c] = 3.0;
+                } // ridge
+                if dist > 20.0 {
+                    geom[r * w + c] = 9.0;
+                } // valley
             }
         }
         (dem, geom)
@@ -337,10 +396,16 @@ mod tests {
         let transects = build_transects(w, h, std::f64::consts::FRAC_PI_2, 20);
         let traversals = extract_traversals(&dem, &geom, w, h, &transects);
         for t in &traversals {
-            assert!((t.profile[0] - 1.0).abs() < 0.1,
-                "profile[0] should be ~1.0 (ridge), got {}", t.profile[0]);
-            assert!(t.profile[PROFILE_POINTS - 1] < 0.2,
-                "profile[20] should be ~0.0 (valley), got {}", t.profile[PROFILE_POINTS - 1]);
+            assert!(
+                (t.profile[0] - 1.0).abs() < 0.1,
+                "profile[0] should be ~1.0 (ridge), got {}",
+                t.profile[0]
+            );
+            assert!(
+                t.profile[PROFILE_POINTS - 1] < 0.2,
+                "profile[20] should be ~0.0 (valley), got {}",
+                t.profile[PROFILE_POINTS - 1]
+            );
         }
     }
 
@@ -384,8 +449,11 @@ mod tests {
         let traversals = extract_traversals(&dem, &geom, w, h, &transects);
         // All traversals should be discarded (too short).
         for t in &traversals {
-            assert!(t.distance_px >= MIN_TRAVERSAL_LEN - 1,
-                "should not have traversals shorter than {}", MIN_TRAVERSAL_LEN);
+            assert!(
+                t.distance_px >= MIN_TRAVERSAL_LEN - 1,
+                "should not have traversals shorter than {}",
+                MIN_TRAVERSAL_LEN
+            );
         }
     }
 }

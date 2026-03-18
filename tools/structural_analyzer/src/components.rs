@@ -21,7 +21,12 @@ pub struct Components {
 /// Label connected components in a boolean mask using BFS.
 ///
 /// `mask[r * width + c]` is true for foreground pixels.
-pub fn label_components(mask: &[bool], width: usize, height: usize, connectivity: Connectivity) -> Components {
+pub fn label_components(
+    mask: &[bool],
+    width: usize,
+    height: usize,
+    connectivity: Connectivity,
+) -> Components {
     let n = width * height;
     let mut labels = vec![0u32; n];
     let mut sizes = Vec::new();
@@ -45,9 +50,14 @@ pub fn label_components(mask: &[bool], width: usize, height: usize, connectivity
             let neighbors: &[(i32, i32)] = match connectivity {
                 Connectivity::Four => &[(-1, 0), (1, 0), (0, -1), (0, 1)],
                 Connectivity::Eight => &[
-                    (-1, -1), (-1, 0), (-1, 1),
-                    (0, -1),           (0, 1),
-                    (1, -1),  (1, 0),  (1, 1),
+                    (-1, -1),
+                    (-1, 0),
+                    (-1, 1),
+                    (0, -1),
+                    (0, 1),
+                    (1, -1),
+                    (1, 0),
+                    (1, 1),
                 ],
             };
 
@@ -100,8 +110,10 @@ mod tests {
         //   0 0 0
         //   1 0 1
         let mut mask = vec![false; 9];
-        mask[0] = true; mask[2] = true;
-        mask[6] = true; mask[8] = true;
+        mask[0] = true;
+        mask[2] = true;
+        mask[6] = true;
+        mask[8] = true;
         let c = label_components(&mask, 3, 3, Connectivity::Four);
         assert_eq!(c.sizes.len(), 4, "four separate corner pixels");
         for &s in &c.sizes {
@@ -136,7 +148,10 @@ mod tests {
     fn two_separated_rows() {
         // 3×3: rows 0 and 2 all true, row 1 all false.
         let mut mask = vec![false; 9];
-        for c in 0..3 { mask[c] = true; mask[6 + c] = true; }
+        for c in 0..3 {
+            mask[c] = true;
+            mask[6 + c] = true;
+        }
         let comp = label_components(&mask, 3, 3, Connectivity::Four);
         assert_eq!(comp.sizes.len(), 2, "two rows = two components");
         assert_eq!(comp.sizes[0], 3);
@@ -147,8 +162,12 @@ mod tests {
     fn sizes_sum_equals_foreground_count() {
         let mut mask = vec![false; 16];
         // L-shape: rows 0-2 col 0, row 2 col 0-3.
-        for r in 0..3 { mask[r * 4] = true; }
-        for c in 0..4 { mask[2 * 4 + c] = true; }
+        for r in 0..3 {
+            mask[r * 4] = true;
+        }
+        for c in 0..4 {
+            mask[2 * 4 + c] = true;
+        }
         let comp = label_components(&mask, 4, 4, Connectivity::Four);
         let total: usize = comp.sizes.iter().sum();
         let fg: usize = mask.iter().filter(|&&b| b).count();

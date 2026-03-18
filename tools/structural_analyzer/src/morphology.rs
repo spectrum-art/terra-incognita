@@ -138,13 +138,13 @@ fn sub_iteration(mask: &[bool], width: usize, height: usize, second_iter: bool) 
             // Neighbors in Zhang-Suen order: P2..P9
             // P2=N, P3=NE, P4=E, P5=SE, P6=S, P7=SW, P8=W, P9=NW
             let neighbors = [
-                mask[(r - 1) as usize * width + c as usize],       // P2 = N
+                mask[(r - 1) as usize * width + c as usize], // P2 = N
                 mask[(r - 1) as usize * width + (c + 1) as usize], // P3 = NE
-                mask[r as usize * width + (c + 1) as usize],       // P4 = E
+                mask[r as usize * width + (c + 1) as usize], // P4 = E
                 mask[(r + 1) as usize * width + (c + 1) as usize], // P5 = SE
-                mask[(r + 1) as usize * width + c as usize],       // P6 = S
+                mask[(r + 1) as usize * width + c as usize], // P6 = S
                 mask[(r + 1) as usize * width + (c - 1) as usize], // P7 = SW
-                mask[r as usize * width + (c - 1) as usize],       // P8 = W
+                mask[r as usize * width + (c - 1) as usize], // P8 = W
                 mask[(r - 1) as usize * width + (c - 1) as usize], // P9 = NW
             ];
 
@@ -207,9 +207,17 @@ mod tests {
         mask[4 * w + 4] = true;
         let out = dilate(&mask, w, h, 2);
         let count = out.iter().filter(|&&v| v).count();
-        assert!(count > 1, "expected dilation to expand single pixel, got {}", count);
+        assert!(
+            count > 1,
+            "expected dilation to expand single pixel, got {}",
+            count
+        );
         // With R=2, SE has offsets dr²+dc²<=4 → at least a 3×3 cross and more.
-        assert!(count >= 9, "expected at least 9 ON pixels after R=2 dilation, got {}", count);
+        assert!(
+            count >= 9,
+            "expected at least 9 ON pixels after R=2 dilation, got {}",
+            count
+        );
     }
 
     #[test]
@@ -220,7 +228,10 @@ mod tests {
         mask[4 * w + 4] = true;
         let out = dilate(&mask, w, h, 3);
         // Original ON pixel must still be ON.
-        assert!(out[4 * w + 4], "original pixel must remain ON after dilation");
+        assert!(
+            out[4 * w + 4],
+            "original pixel must remain ON after dilation"
+        );
     }
 
     // ── Erosion tests ──────────────────────────────────────────────────────────
@@ -267,7 +278,10 @@ mod tests {
         let mask = vec![true, false, true, false, false];
         let out = close(&mask, w, h, 1);
         // After dilation: T,T,T,T,F — after erosion the gap at index 1 should be filled.
-        assert!(out[1], "closing with R=1 should fill single-pixel gap at index 1");
+        assert!(
+            out[1],
+            "closing with R=1 should fill single-pixel gap at index 1"
+        );
     }
 
     #[test]
@@ -283,7 +297,10 @@ mod tests {
         }
         let out = close(&mask, w, h, 2);
         // The center of the block should still be ON.
-        assert!(out[10 * w + 10], "center of large block must stay ON after closing");
+        assert!(
+            out[10 * w + 10],
+            "center of large block must stay ON after closing"
+        );
     }
 
     // ── Skeletonization tests ──────────────────────────────────────────────────
@@ -343,6 +360,9 @@ mod tests {
     fn skeletonize_empty_mask_stays_empty() {
         let mask = vec![false; 9];
         let out = skeletonize(&mask, 3, 3);
-        assert!(out.iter().all(|&v| !v), "empty mask must stay empty after skeletonize");
+        assert!(
+            out.iter().all(|&v| !v),
+            "empty mask must stay empty after skeletonize"
+        );
     }
 }

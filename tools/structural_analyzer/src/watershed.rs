@@ -12,20 +12,26 @@ use std::collections::BinaryHeap;
 /// D8 neighbour offsets. Index k → direction code k+1.
 /// Codes: 1=N, 2=NE, 3=E, 4=SE, 5=S, 6=SW, 7=W, 8=NW.
 const D8_OFFSETS: [(isize, isize); 8] = [
-    (-1,  0), // 1: N
-    (-1,  1), // 2: NE
-    ( 0,  1), // 3: E
-    ( 1,  1), // 4: SE
-    ( 1,  0), // 5: S
-    ( 1, -1), // 6: SW
-    ( 0, -1), // 7: W
+    (-1, 0),  // 1: N
+    (-1, 1),  // 2: NE
+    (0, 1),   // 3: E
+    (1, 1),   // 4: SE
+    (1, 0),   // 5: S
+    (1, -1),  // 6: SW
+    (0, -1),  // 7: W
     (-1, -1), // 8: NW
 ];
 
 /// Normalized distance to each D8 neighbour (cardinal=1, diagonal=√2).
 const D8_DIST: [f64; 8] = [
-    1.0, std::f64::consts::SQRT_2, 1.0, std::f64::consts::SQRT_2,
-    1.0, std::f64::consts::SQRT_2, 1.0, std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
+    1.0,
+    std::f64::consts::SQRT_2,
 ];
 
 // ── OrdF64 wrapper ────────────────────────────────────────────────────────────
@@ -40,7 +46,9 @@ impl PartialOrd for OrdF64 {
 }
 impl Ord for OrdF64 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -78,7 +86,9 @@ pub fn fill_pits(dem: &[f32], width: usize, height: usize) -> Vec<f64> {
                 continue;
             }
             let j = nr as usize * width + nc as usize;
-            if visited[j] { continue; }
+            if visited[j] {
+                continue;
+            }
             visited[j] = true;
             if filled[j] < elev {
                 filled[j] = elev;
@@ -148,7 +158,9 @@ pub fn compute_d8_directions(filled: &[f64], width: usize, height: usize) -> Vec
             }
             let j = nr as usize * width + nc as usize;
             // Only route flat pixels (direction=0) whose elevation equals neighbour.
-            if direction[j] != 0 || in_queue[j] { continue; }
+            if direction[j] != 0 || in_queue[j] {
+                continue;
+            }
             let opposite_code = match k {
                 0 => 5u8, // N's opposite is S
                 1 => 6,   // NE → SW
@@ -184,13 +196,17 @@ pub fn compute_flow_accumulation(
     let mut order: Vec<usize> = (0..n).collect();
     // Sort highest elevation first (sources before sinks).
     order.sort_unstable_by(|&a, &b| {
-        filled[b].partial_cmp(&filled[a]).unwrap_or(std::cmp::Ordering::Equal)
+        filled[b]
+            .partial_cmp(&filled[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     let mut accumulation = vec![1u32; n];
     for &i in &order {
         let code = direction[i];
-        if code == 0 { continue; }
+        if code == 0 {
+            continue;
+        }
         let (dr, dc) = D8_OFFSETS[(code - 1) as usize];
         let r = (i / width) as isize;
         let c = (i % width) as isize;
@@ -237,16 +253,20 @@ pub fn compute_watersheds(
     let mut bfs: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
 
     for start in 0..n {
-        if !is_stream[start] || stream_label[start] != 0 { continue; }
+        if !is_stream[start] || stream_label[start] != 0 {
+            continue;
+        }
         stream_label[start] = next_label;
         bfs.push_back(start);
         while let Some(i) = bfs.pop_front() {
             let r = (i / width) as isize;
             let c = (i % width) as isize;
-            for &(dr, dc) in &[(-1isize,0isize),(1,0),(0,-1),(0,1)] {
+            for &(dr, dc) in &[(-1isize, 0isize), (1, 0), (0, -1), (0, 1)] {
                 let nr = r + dr;
                 let nc = c + dc;
-                if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize { continue; }
+                if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize {
+                    continue;
+                }
                 let j = nr as usize * width + nc as usize;
                 if is_stream[j] && stream_label[j] == 0 {
                     stream_label[j] = next_label;
@@ -278,15 +298,21 @@ pub fn compute_watersheds(
         for &(dr, dc) in D8_OFFSETS.iter() {
             let nr = r + dr;
             let nc = c + dc;
-            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize { continue; }
+            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize {
+                continue;
+            }
             let j = nr as usize * width + nc as usize;
-            if in_queue[j] { continue; }
+            if in_queue[j] {
+                continue;
+            }
             // j flows into i if direction[j] points to i.
             // direction[j] = code means D8_OFFSETS[code-1] is the (dr,dc) from j to its downstream.
             // j's downstream is j + D8_OFFSETS[direction[j]-1].
             // We want: j + D8_OFFSETS[direction[j]-1] == i, i.e., (dr,dc) from j = (r-nr, c-nc).
             let d = direction[j];
-            if d == 0 { continue; }
+            if d == 0 {
+                continue;
+            }
             let (fdr, fdc) = D8_OFFSETS[(d - 1) as usize];
             let dest_r = nr + fdr;
             let dest_c = nc + fdc;
@@ -311,13 +337,26 @@ pub fn extract_ridge_pixels(labels: &[u32], width: usize, height: usize) -> Vec<
 
     for i in 0..n {
         let l = labels[i];
-        if l == 0 { continue; }
+        if l == 0 {
+            continue;
+        }
         let r = (i / width) as isize;
         let c = (i % width) as isize;
-        for &(dr, dc) in &[(-1isize,0isize),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)] {
+        for &(dr, dc) in &[
+            (-1isize, 0isize),
+            (1, 0),
+            (0, -1),
+            (0, 1),
+            (-1, -1),
+            (-1, 1),
+            (1, -1),
+            (1, 1),
+        ] {
             let nr = r + dr;
             let nc = c + dc;
-            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize { continue; }
+            if nr < 0 || nc < 0 || nr >= height as isize || nc >= width as isize {
+                continue;
+            }
             let j = nr as usize * width + nc as usize;
             if labels[j] != 0 && labels[j] != l {
                 ridge[i] = true;
@@ -335,7 +374,9 @@ mod tests {
     use super::*;
 
     fn make_dem(rows: usize, cols: usize, f: impl Fn(usize, usize) -> f32 + Copy) -> Vec<f32> {
-        (0..rows).flat_map(|r| (0..cols).map(move |c| f(r, c))).collect()
+        (0..rows)
+            .flat_map(|r| (0..cols).map(move |c| f(r, c)))
+            .collect()
     }
 
     // ── fill_pits ─────────────────────────────────────────────────────────────
@@ -346,7 +387,11 @@ mod tests {
         let mut dem = vec![100.0f32; 25];
         dem[12] = 50.0; // pit at (2,2)
         let filled = fill_pits(&dem, 5, 5);
-        assert!(filled[12] >= 99.9, "pit should be raised to surrounding level, got {}", filled[12]);
+        assert!(
+            filled[12] >= 99.9,
+            "pit should be raised to surrounding level, got {}",
+            filled[12]
+        );
     }
 
     #[test]
@@ -368,13 +413,14 @@ mod tests {
     #[test]
     fn d8_ramp_flows_east() {
         // z = (cols - c) * 10 → flows east (toward col cols-1).
-        let cols = 8usize; let rows = 4usize;
+        let cols = 8usize;
+        let rows = 4usize;
         let dem = make_dem(rows, cols, |_, c| (cols - c) as f32 * 10.0);
         let filled = fill_pits(&dem, cols, rows);
         let dir = compute_d8_directions(&filled, cols, rows);
         // Interior pixels should flow east (code 3 = E).
-        for r in 1..rows-1 {
-            for c in 1..cols-2 {
+        for r in 1..rows - 1 {
+            for c in 1..cols - 2 {
                 assert_eq!(dir[r * cols + c], 3, "pixel ({r},{c}) should flow E");
             }
         }
@@ -384,7 +430,8 @@ mod tests {
 
     #[test]
     fn accumulation_increases_downslope() {
-        let cols = 16usize; let rows = 8usize;
+        let cols = 16usize;
+        let rows = 8usize;
         let dem = make_dem(rows, cols, |_, c| (cols - c) as f32 * 10.0);
         let filled = fill_pits(&dem, cols, rows);
         let dir = compute_d8_directions(&filled, cols, rows);
@@ -392,7 +439,10 @@ mod tests {
         let row = 4;
         let upslope = acc[row * cols + 1];
         let downslope = acc[row * cols + cols - 2];
-        assert!(downslope > upslope, "downslope ({downslope}) should have more accumulation than upslope ({upslope})");
+        assert!(
+            downslope > upslope,
+            "downslope ({downslope}) should have more accumulation than upslope ({upslope})"
+        );
     }
 
     // ── compute_watersheds / extract_ridge_pixels ─────────────────────────────
@@ -402,7 +452,8 @@ mod tests {
         // Simple symmetric ridge-valley pattern (9 rows × 9 cols):
         // Ridge down the centre column (col 4), valleys on each side.
         // Elevation: ridge=100, slopes descend outward.
-        let cols = 9usize; let rows = 9usize;
+        let cols = 9usize;
+        let rows = 9usize;
         let dem = make_dem(rows, cols, |_, c| {
             let dist = (c as isize - 4).unsigned_abs() as f32;
             100.0 - dist * 20.0
@@ -416,7 +467,7 @@ mod tests {
         assert!(n_ridge > 0, "expected ridge pixels at watershed boundary");
 
         // Centre column should be on a ridge boundary.
-        let centre_ridge = (1..rows-1).any(|r| ridge_px[r * cols + 4]);
+        let centre_ridge = (1..rows - 1).any(|r| ridge_px[r * cols + 4]);
         assert!(centre_ridge, "centre column should be a ridge boundary");
     }
 
@@ -429,7 +480,11 @@ mod tests {
         let n_ridge: usize = ridge_px.iter().filter(|&&b| b).count();
         // Flat terrain may produce some boundary pixels but not many.
         // The important thing: no crash. Ridge count can be 0 or small.
-        assert!(n_ridge < 100, "flat terrain should have few ridge pixels, got {}", n_ridge);
+        assert!(
+            n_ridge < 100,
+            "flat terrain should have few ridge pixels, got {}",
+            n_ridge
+        );
     }
 
     #[test]
@@ -437,14 +492,15 @@ mod tests {
         // Two parallel ridges (cols 2 and 6) in a 10-wide window.
         //   col: 0  1  2  3  4  5  6  7  8  9
         //   elev:10 30 50 30 10 30 50 30 10 10
-        let cols = 10usize; let rows = 10usize;
+        let cols = 10usize;
+        let rows = 10usize;
         let profile = [10f32, 30.0, 50.0, 30.0, 10.0, 30.0, 50.0, 30.0, 10.0, 10.0];
         let dem = make_dem(rows, cols, |_, c| profile[c]);
         let (labels, _) = compute_watersheds(&dem, cols, rows, 3);
         let ridge_px = extract_ridge_pixels(&labels, cols, rows);
         // Both ridge columns should be boundary pixels.
-        let col2_ridge = (1..rows-1).any(|r| ridge_px[r * cols + 2]);
-        let col6_ridge = (1..rows-1).any(|r| ridge_px[r * cols + 6]);
+        let col2_ridge = (1..rows - 1).any(|r| ridge_px[r * cols + 2]);
+        let col6_ridge = (1..rows - 1).any(|r| ridge_px[r * cols + 6]);
         assert!(col2_ridge, "col 2 (ridge) should be a watershed boundary");
         assert!(col6_ridge, "col 6 (ridge) should be a watershed boundary");
     }
