@@ -1422,3 +1422,27 @@ Comprehensive cleanup based on full-workspace audit:
 
 Known issues still open: ocean arc artifacts (Issue 2), Coastal MAP-blindness (Issue 4),
 geomorphon L1 ceiling, aspect CV threshold. These are documented in earlier entries.
+
+---
+
+## Entry 26 — 2026-03-17 — Standalone Plate Geometry Prototype
+
+Added a new standalone module at `crates/terra-core/src/plates/plate_generation.rs` that generates
+plate IDs from progressive spherical Voronoi splitting plus curl-noise warping. This is diagnostic
+and exploratory only: it is exported from `plates/mod.rs` but is **not** integrated into
+`simulate_plates()` yet.
+
+Implementation notes:
+- Initial seed count = `max(3, n_plates / 4)` with a 60° relaxed minimum separation target
+- Largest-plate iterative splitting uses the farthest in-plate cell as the next seed
+- Curl warp uses 3D Perlin potential sampled on the sphere surface, tangent-plane finite
+  differences, and a 90° gradient rotation to form a divergence-free displacement field
+- Warp amplitude is capped at one third of the minimum seed separation
+- Post-warp connected-component cleanup reassigns orphan fragments to the dominant bordering plate
+
+Diagnostic example added at `crates/terra-core/examples/plate_diagnostic.rs`.
+For 15 plates at 1024×512 with warp = 6.0°:
+- Seed 42: largest plate 13.7%, smallest 3.2%, raw-vs-warped change 12.2%
+- All tested seeds produced contiguous plates after cleanup
+- Boundary curvature is visibly improved over raw Voronoi while preserving a realistic
+  large/medium/small plate distribution
