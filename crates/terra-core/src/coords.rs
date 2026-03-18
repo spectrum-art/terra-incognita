@@ -39,8 +39,14 @@ impl TileAddr {
         let n = (1u32 << self.zoom) as f64;
         let lon_min = (self.x as f64 / n) * 360.0 - 180.0;
         let lon_max = ((self.x + 1) as f64 / n) * 360.0 - 180.0;
-        let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * self.y as f64 / n)).sinh().atan().to_degrees();
-        let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (self.y + 1) as f64 / n)).sinh().atan().to_degrees();
+        let lat_max = (std::f64::consts::PI * (1.0 - 2.0 * self.y as f64 / n))
+            .sinh()
+            .atan()
+            .to_degrees();
+        let lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (self.y + 1) as f64 / n))
+            .sinh()
+            .atan()
+            .to_degrees();
         (lat_min, lon_min, lat_max, lon_max)
     }
 
@@ -49,7 +55,9 @@ impl TileAddr {
         let n = (1u32 << zoom) as f64;
         let x = ((ll.lon + 180.0) / 360.0 * n).floor() as u32;
         let lat_rad = ll.lat.to_radians();
-        let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n).floor() as u32;
+        let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0
+            * n)
+            .floor() as u32;
         Self { zoom, x, y }
     }
 
@@ -69,9 +77,13 @@ mod tests {
         let mut rng_state: u64 = 42;
         for _ in 0..1000 {
             // LCG for deterministic pseudo-random
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let lat = (rng_state as f64 / u64::MAX as f64) * 170.0 - 85.0;
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let lon = (rng_state as f64 / u64::MAX as f64) * 360.0 - 180.0;
 
             let ll = LatLon::new(lat, lon);

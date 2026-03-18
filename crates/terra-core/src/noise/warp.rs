@@ -17,7 +17,7 @@ pub fn domain_warp(x: f64, y: f64, macro_scale: f64, micro_scale: f64, seed: u32
     let p_my = Perlin::new(seed ^ 0x0002);
 
     // Level 1: macro warp with decorrelated x/y offsets.
-    let xm = x + macro_scale * p_mx.get([x,       y      ]);
+    let xm = x + macro_scale * p_mx.get([x, y]);
     let ym = y + macro_scale * p_my.get([x + 5.2, y + 1.3]);
 
     if micro_scale < 1e-9 {
@@ -28,7 +28,7 @@ pub fn domain_warp(x: f64, y: f64, macro_scale: f64, micro_scale: f64, seed: u32
     let p_ux = Perlin::new(seed ^ 0x0003);
     let p_uy = Perlin::new(seed ^ 0x0004);
 
-    let xu = xm + micro_scale * p_ux.get([xm,       ym      ]);
+    let xu = xm + micro_scale * p_ux.get([xm, ym]);
     let yu = ym + micro_scale * p_uy.get([xm + 3.7, ym + 9.1]);
 
     (xu, yu)

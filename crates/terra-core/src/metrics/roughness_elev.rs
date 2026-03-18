@@ -24,7 +24,9 @@ pub struct RoughnessElevResult {
 /// (uniform terrain produces no signal).
 pub fn compute_roughness_elev(hf: &HeightField) -> RoughnessElevResult {
     if hf.width < 3 || hf.height < 3 {
-        return RoughnessElevResult { pearson_r: f32::NAN };
+        return RoughnessElevResult {
+            pearson_r: f32::NAN,
+        };
     }
 
     let rows = hf.height;
@@ -85,11 +87,15 @@ pub fn compute_roughness_elev(hf: &HeightField) -> RoughnessElevResult {
     }
 
     if var_r < 1e-12 || var_e < 1e-12 {
-        return RoughnessElevResult { pearson_r: f32::NAN };
+        return RoughnessElevResult {
+            pearson_r: f32::NAN,
+        };
     }
 
     let pearson_r = cov / (var_r.sqrt() * var_e.sqrt());
-    RoughnessElevResult { pearson_r: pearson_r as f32 }
+    RoughnessElevResult {
+        pearson_r: pearson_r as f32,
+    }
 }
 
 #[cfg(test)]
@@ -104,8 +110,10 @@ mod tests {
     /// near-perfect Pearson r ≈ 1.0.
     fn make_correlated_field(rows: usize, cols: usize) -> HeightField {
         let mut hf = HeightField::flat(rows, cols);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
 
         for r in 0..rows {
             for c in 0..cols {

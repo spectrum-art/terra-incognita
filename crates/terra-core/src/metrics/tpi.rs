@@ -50,7 +50,14 @@ pub fn compute_tpi(hf: &HeightField) -> TpiResult {
         (ratio_r1_r2 - ratio_r2_r3).abs() > 0.1
     };
 
-    TpiResult { std_r1, std_r2, std_r3, ratio_r1_r2, ratio_r2_r3, is_scale_dependent }
+    TpiResult {
+        std_r1,
+        std_r2,
+        std_r3,
+        ratio_r1_r2,
+        ratio_r2_r3,
+        is_scale_dependent,
+    }
 }
 
 /// Build a circular kernel: list of (dr, dc) offsets with dr²+dc² ≤ radius².
@@ -80,7 +87,7 @@ fn tpi_std_at_radius(hf: &HeightField, radius: usize) -> f32 {
     let k_len = kernel.len() as f64;
 
     let row_range: Vec<usize> = (radius..hf.height - radius).step_by(step).collect();
-    let col_range: Vec<usize> = (radius..hf.width  - radius).step_by(step).collect();
+    let col_range: Vec<usize> = (radius..hf.width - radius).step_by(step).collect();
     let cap = row_range.len() * col_range.len();
 
     let mut tpis: Vec<f64> = Vec::with_capacity(cap);
@@ -91,10 +98,7 @@ fn tpi_std_at_radius(hf: &HeightField, radius: usize) -> f32 {
             let mean: f64 = kernel
                 .iter()
                 .map(|&(dr, dc)| {
-                    hf.get(
-                        (row as isize + dr) as usize,
-                        (col as isize + dc) as usize,
-                    ) as f64
+                    hf.get((row as isize + dr) as usize, (col as isize + dc) as usize) as f64
                 })
                 .sum::<f64>()
                 / k_len;
@@ -120,8 +124,10 @@ mod tests {
     /// making the ratios unequal (is_scale_dependent=true).
     fn make_two_scale_field(n: usize) -> HeightField {
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
         for r in 0..n {
             for c in 0..n {
                 let v = (2.0 * std::f64::consts::PI * c as f64 / 4.0).sin() * 50.0
@@ -138,8 +144,10 @@ mod tests {
     /// ratio_r2_r3 is close to 1.0; ratio_r1_r2 is significantly different.
     fn make_single_scale_field(n: usize) -> HeightField {
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
         for r in 0..n {
             for c in 0..n {
                 let v = (2.0 * std::f64::consts::PI * c as f64 / 7.0).sin() * 100.0;
@@ -160,8 +168,7 @@ mod tests {
         assert!(
             result.is_scale_dependent,
             "Two-scale field: expected is_scale_dependent=true, ratios = {} / {}",
-            result.ratio_r1_r2,
-            result.ratio_r2_r3
+            result.ratio_r1_r2, result.ratio_r2_r3
         );
     }
 
@@ -194,6 +201,9 @@ mod tests {
         // Field smaller than 2*R3+1 = 41 px → std_r3 = NaN.
         let hf = HeightField::flat(30, 30);
         let result = compute_tpi(&hf);
-        assert!(result.std_r3.is_nan(), "std_r3 should be NaN for 30×30 field");
+        assert!(
+            result.std_r3.is_nan(),
+            "std_r3 should be NaN for 30×30 field"
+        );
     }
 }

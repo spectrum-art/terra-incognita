@@ -16,7 +16,7 @@ pub fn apply_anisotropy(x: f64, y: f64, grain_angle: f64, grain_intensity: f64) 
     // 1. Rotate so the grain axis aligns with x.
     let cos_a = grain_angle.cos();
     let sin_a = grain_angle.sin();
-    let xr =  x * cos_a + y * sin_a;
+    let xr = x * cos_a + y * sin_a;
     let yr = -x * sin_a + y * cos_a;
 
     // 2. Compress the cross-grain axis, elongating features along the grain.
@@ -35,7 +35,7 @@ mod tests {
         // With intensity=0, scale=1: output is just a rotation (length preserved).
         let (x, y) = (1.0, 0.0);
         let (xo, yo) = apply_anisotropy(x, y, PI / 4.0, 0.0);
-        let len_in  = (x * x + y * y).sqrt();
+        let len_in = (x * x + y * y).sqrt();
         let len_out = (xo * xo + yo * yo).sqrt();
         assert!((len_in - len_out).abs() < 1e-10);
     }

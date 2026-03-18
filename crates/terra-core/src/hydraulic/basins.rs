@@ -1,8 +1,8 @@
 //! Drainage basin delineation and per-basin statistics.
 //! Phase 6, Task P6.6.
+use super::flow_routing::{FlowField, D8_OFFSETS};
 use crate::heightfield::HeightField;
 use crate::metrics::gradient::{cellsize_m, horn_gradient};
-use super::flow_routing::{FlowField, D8_OFFSETS};
 
 /// Statistics for a single drainage basin.
 pub struct DrainageBasin {
@@ -116,8 +116,12 @@ pub fn delineate_basins(flow: &FlowField, hf: &HeightField) -> Vec<DrainageBasin
             let i = r * cols + c;
             let bid = basin_id[i] as usize;
             let z = hf.get(r, c);
-            if z < min_z[bid] { min_z[bid] = z; }
-            if z > max_z[bid] { max_z[bid] = z; }
+            if z < min_z[bid] {
+                min_z[bid] = z;
+            }
+            if z > max_z[bid] {
+                max_z[bid] = z;
+            }
             sum_z[bid] += z as f64;
             area[bid] += 1;
             if r >= 1 && r < rows - 1 && c >= 1 && c < cols - 1 {
@@ -126,54 +130,71 @@ pub fn delineate_basins(flow: &FlowField, hf: &HeightField) -> Vec<DrainageBasin
                 slope_count[bid] += 1;
             }
             // Update bounding box.
-            if r < min_r[bid] { min_r[bid] = r; }
-            if r > max_r[bid] { max_r[bid] = r; }
-            if c < min_c[bid] { min_c[bid] = c; }
-            if c > max_c[bid] { max_c[bid] = c; }
+            if r < min_r[bid] {
+                min_r[bid] = r;
+            }
+            if r > max_r[bid] {
+                max_r[bid] = r;
+            }
+            if c < min_c[bid] {
+                min_c[bid] = c;
+            }
+            if c > max_c[bid] {
+                max_c[bid] = c;
+            }
             // Perimeter: count cells with at least one 4-connected neighbour in
             // a different basin.
-            let is_perim = [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
-                .iter()
-                .any(|&(nr, nc)| {
-                    if nr < rows && nc < cols {
-                        basin_id[nr * cols + nc] != basin_id[i]
-                    } else {
-                        true // edge = perimeter
-                    }
-                });
-            if is_perim { perimeter[bid] += 1; }
+            let is_perim = [
+                (r.wrapping_sub(1), c),
+                (r + 1, c),
+                (r, c.wrapping_sub(1)),
+                (r, c + 1),
+            ]
+            .iter()
+            .any(|&(nr, nc)| {
+                if nr < rows && nc < cols {
+                    basin_id[nr * cols + nc] != basin_id[i]
+                } else {
+                    true // edge = perimeter
+                }
+            });
+            if is_perim {
+                perimeter[bid] += 1;
+            }
         }
     }
 
-    (0..num_basins).map(|bid| {
-        let a = area[bid];
-        let hi = if (max_z[bid] - min_z[bid]) > 1.0 {
-            let mean = (sum_z[bid] / a as f64) as f32;
-            (mean - min_z[bid]) / (max_z[bid] - min_z[bid])
-        } else {
-            0.5
-        };
-        let mean_slope = if slope_count[bid] > 0 {
-            (sum_slope[bid] / slope_count[bid] as f64) as f32
-        } else {
-            0.0
-        };
-        let bbox_rows = (max_r[bid] + 1).saturating_sub(min_r[bid]) as f32;
-        let bbox_cols = (max_c[bid] + 1).saturating_sub(min_c[bid]) as f32;
-        let bbox_max = bbox_rows.max(bbox_cols).max(1.0);
-        let equiv_diam = ((4.0 * a as f32) / std::f32::consts::PI).sqrt();
-        let elongation_ratio = (equiv_diam / bbox_max).clamp(0.0, 1.0);
-        let p = perimeter[bid].max(1) as f32;
-        let circularity = (4.0 * std::f32::consts::PI * a as f32 / (p * p)).clamp(0.0, 1.0);
-        DrainageBasin {
-            id: bid as u32,
-            area_cells: a,
-            hypsometric_integral: hi.clamp(0.0, 1.0),
-            elongation_ratio,
-            circularity,
-            mean_slope,
-        }
-    }).collect()
+    (0..num_basins)
+        .map(|bid| {
+            let a = area[bid];
+            let hi = if (max_z[bid] - min_z[bid]) > 1.0 {
+                let mean = (sum_z[bid] / a as f64) as f32;
+                (mean - min_z[bid]) / (max_z[bid] - min_z[bid])
+            } else {
+                0.5
+            };
+            let mean_slope = if slope_count[bid] > 0 {
+                (sum_slope[bid] / slope_count[bid] as f64) as f32
+            } else {
+                0.0
+            };
+            let bbox_rows = (max_r[bid] + 1).saturating_sub(min_r[bid]) as f32;
+            let bbox_cols = (max_c[bid] + 1).saturating_sub(min_c[bid]) as f32;
+            let bbox_max = bbox_rows.max(bbox_cols).max(1.0);
+            let equiv_diam = ((4.0 * a as f32) / std::f32::consts::PI).sqrt();
+            let elongation_ratio = (equiv_diam / bbox_max).clamp(0.0, 1.0);
+            let p = perimeter[bid].max(1) as f32;
+            let circularity = (4.0 * std::f32::consts::PI * a as f32 / (p * p)).clamp(0.0, 1.0);
+            DrainageBasin {
+                id: bid as u32,
+                area_cells: a,
+                hypsometric_integral: hi.clamp(0.0, 1.0),
+                elongation_ratio,
+                circularity,
+                mean_slope,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -221,13 +242,21 @@ mod tests {
             for c in 0..cols {
                 // Ridge at centre; both sides slope toward their edge.
                 let dist_to_edge = if c < ridge_c { c } else { cols - 1 - c };
-                hf.set(r, c, (ridge_c - dist_to_edge) as f32 * 10.0 + (rows - 1 - r) as f32);
+                hf.set(
+                    r,
+                    c,
+                    (ridge_c - dist_to_edge) as f32 * 10.0 + (rows - 1 - r) as f32,
+                );
             }
         }
         let flow = compute_d8_flow(&hf);
         let basins = delineate_basins(&flow, &hf);
         // Two sides of the ridge should belong to separate basins.
-        assert!(basins.len() >= 2, "ridge terrain should yield ≥ 2 basins, got {}", basins.len());
+        assert!(
+            basins.len() >= 2,
+            "ridge terrain should yield ≥ 2 basins, got {}",
+            basins.len()
+        );
         // Total must still equal all cells.
         let total: u32 = basins.iter().map(|b| b.area_cells).sum();
         assert_eq!(total, (rows * cols) as u32);

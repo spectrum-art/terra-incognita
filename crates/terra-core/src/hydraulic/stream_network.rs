@@ -73,7 +73,11 @@ pub fn extract_stream_network(flow: &FlowField, a_min: u32) -> StreamNetwork {
             1 // source / channel head
         } else {
             let mx = donor_max_order[i];
-            if donor_max_count[i] >= 2 { mx + 1 } else { mx }
+            if donor_max_count[i] >= 2 {
+                mx + 1
+            } else {
+                mx
+            }
         };
         orders[i] = ord;
 
@@ -101,7 +105,11 @@ pub fn extract_stream_network(flow: &FlowField, a_min: u32) -> StreamNetwork {
     }
 
     let max_order = orders.iter().cloned().max().unwrap_or(0);
-    StreamNetwork { stream_cells, orders, max_order }
+    StreamNetwork {
+        stream_cells,
+        orders,
+        max_order,
+    }
 }
 
 #[cfg(test)]
@@ -167,10 +175,19 @@ mod tests {
         accumulation[idx(2, 3)] = 4; // mB+self
         accumulation[idx(3, 2)] = 9; // (2,1)+(2,3)+self
 
-        let flow = FlowField { direction, accumulation, width: cols, height: rows };
+        let flow = FlowField {
+            direction,
+            accumulation,
+            width: cols,
+            height: rows,
+        };
         let net = extract_stream_network(&flow, 1);
 
-        assert_eq!(net.max_order, 3, "Expected Strahler order 3, got {}", net.max_order);
+        assert_eq!(
+            net.max_order, 3,
+            "Expected Strahler order 3, got {}",
+            net.max_order
+        );
         assert_eq!(net.orders[idx(1, 0)], 2, "mA (1,0) should be order 2");
         assert_eq!(net.orders[idx(1, 4)], 2, "mB (1,4) should be order 2");
         assert_eq!(net.orders[idx(3, 2)], 3, "(3,2) should be order 3");

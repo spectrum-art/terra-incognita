@@ -13,7 +13,9 @@ use crate::heightfield::HeightField;
 /// where γ = 1/target_hi − 1, then reassign elevations in the new shape.
 pub fn apply_hypsometric_shaping(hf: &mut HeightField, target_hi: f32) {
     let n = hf.data.len();
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
 
     let target = target_hi.clamp(0.05, 0.95);
     let gamma = (1.0 / target - 1.0).max(0.1) as f64;
@@ -21,11 +23,15 @@ pub fn apply_hypsometric_shaping(hf: &mut HeightField, target_hi: f32) {
     let min = hf.min_elevation();
     let max = hf.max_elevation();
     let range = max - min;
-    if range < 1.0 { return; }
+    if range < 1.0 {
+        return;
+    }
 
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| {
-        hf.data[a].partial_cmp(&hf.data[b]).unwrap_or(std::cmp::Ordering::Equal)
+        hf.data[a]
+            .partial_cmp(&hf.data[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     let mut new_data = vec![0.0f32; n];
@@ -60,7 +66,8 @@ mod tests {
             let result = compute_hypsometric(&hf);
             assert!(
                 (result.integral - target).abs() < 0.06,
-                "target={target:.2}, got HI={:.3}", result.integral
+                "target={target:.2}, got HI={:.3}",
+                result.integral
             );
         }
     }

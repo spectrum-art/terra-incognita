@@ -32,8 +32,8 @@ use crate::plates::regime_field::{RegimeField, TectonicRegime};
 
 const WINDWARD_MIN: f32 = 1.5; // narrow belt (1 cell)
 const WINDWARD_MAX: f32 = 3.0; // wide belt  (8+ cells)
-const LEEWARD_MIN:  f32 = 0.3; // wide belt
-const LEEWARD_MAX:  f32 = 0.7; // narrow belt
+const LEEWARD_MIN: f32 = 0.3; // wide belt
+const LEEWARD_MAX: f32 = 0.7; // narrow belt
 
 /// Belt width (in cells) at which the maximum multiplier is reached.
 const BELT_WIDTH_SATURATE: usize = 8;
@@ -65,7 +65,11 @@ pub fn apply_orographic_correction(
 
     for r in 0..height {
         let lat_deg = 90.0 - (r as f64 + 0.5) / height as f64 * 180.0;
-        let upwind: i64 = if prevailing_wind_eastward(lat_deg) { -1 } else { 1 };
+        let upwind: i64 = if prevailing_wind_eastward(lat_deg) {
+            -1
+        } else {
+            1
+        };
         let downwind: i64 = -upwind;
 
         for c in 0..width {
@@ -79,7 +83,8 @@ pub fn apply_orographic_correction(
                 let bw = belt_width_at(r, mc, width, &is_mountain);
                 map_field[idx] *= leeward_mult(bw);
             // Windward: mountain lies downwind (wind will hit it next).
-            } else if let Some(mc) = scan_direction(r, c, downwind, influence, width, &is_mountain) {
+            } else if let Some(mc) = scan_direction(r, c, downwind, influence, width, &is_mountain)
+            {
                 let bw = belt_width_at(r, mc, width, &is_mountain);
                 map_field[idx] *= windward_mult(bw);
             }
@@ -118,11 +123,19 @@ fn belt_width_at(row: usize, mountain_col: usize, width: usize, is_mountain: &[b
 
     for step in 1..=max_scan {
         let ce = (mountain_col as i64 + step).rem_euclid(w) as usize;
-        if is_mountain[row * width + ce] { count += 1; } else { break; }
+        if is_mountain[row * width + ce] {
+            count += 1;
+        } else {
+            break;
+        }
     }
     for step in 1..=max_scan {
         let cw = (mountain_col as i64 - step).rem_euclid(w) as usize;
-        if is_mountain[row * width + cw] { count += 1; } else { break; }
+        if is_mountain[row * width + cw] {
+            count += 1;
+        } else {
+            break;
+        }
     }
     count
 }
@@ -162,7 +175,11 @@ mod tests {
         for r in 0..h {
             data[r * w + col] = TectonicRegime::ActiveCompressional;
         }
-        RegimeField { data, width: w, height: h }
+        RegimeField {
+            data,
+            width: w,
+            height: h,
+        }
     }
 
     fn mountain_cols(w: usize, h: usize, cols: &[usize]) -> RegimeField {
@@ -172,7 +189,11 @@ mod tests {
                 data[r * w + c] = TectonicRegime::ActiveCompressional;
             }
         }
-        RegimeField { data, width: w, height: h }
+        RegimeField {
+            data,
+            width: w,
+            height: h,
+        }
     }
 
     /// ✓ Leeward ≥ 40% below windward for a single-column (narrow) belt.
@@ -189,7 +210,7 @@ mod tests {
 
         let r = 16usize;
         let windward = map[r * w + 28];
-        let leeward  = map[r * w + 36];
+        let leeward = map[r * w + 36];
         assert!(
             leeward < windward * 0.6,
             "narrow belt: leeward {leeward:.1} should be < 60% of windward {windward:.1}"
@@ -239,10 +260,14 @@ mod tests {
         for w in 1..=16 {
             let wm = windward_mult(w);
             let lm = leeward_mult(w);
-            assert!((WINDWARD_MIN..=WINDWARD_MAX).contains(&wm),
-                "windward_mult({w}) = {wm:.3} outside [1.5, 3.0]");
-            assert!((LEEWARD_MIN..=LEEWARD_MAX).contains(&lm),
-                "leeward_mult({w}) = {lm:.3} outside [0.3, 0.7]");
+            assert!(
+                (WINDWARD_MIN..=WINDWARD_MAX).contains(&wm),
+                "windward_mult({w}) = {wm:.3} outside [1.5, 3.0]"
+            );
+            assert!(
+                (LEEWARD_MIN..=LEEWARD_MAX).contains(&lm),
+                "leeward_mult({w}) = {lm:.3} outside [0.3, 0.7]"
+            );
         }
     }
 
@@ -257,8 +282,10 @@ mod tests {
         apply_orographic_correction(&mut map, &regime, w, h);
         for r in 0..h {
             let v = map[r * w + 8];
-            assert!((v - base).abs() < 1e-3,
-                "mountain cell row={r} was modified: {v:.1}");
+            assert!(
+                (v - base).abs() < 1e-3,
+                "mountain cell row={r} was modified: {v:.1}"
+            );
         }
     }
 
@@ -268,20 +295,30 @@ mod tests {
         let w = 32usize;
         let h = 16usize;
         let data = vec![TectonicRegime::CratonicShield; w * h];
-        let regime = RegimeField { data, width: w, height: h };
+        let regime = RegimeField {
+            data,
+            width: w,
+            height: h,
+        };
         let base = 1000.0_f32;
         let mut map = vec![base; w * h];
         apply_orographic_correction(&mut map, &regime, w, h);
         for &v in &map {
-            assert!((v - base).abs() < 1e-3,
-                "flat regime should not modify MAP, got {v:.1}");
+            assert!(
+                (v - base).abs() < 1e-3,
+                "flat regime should not modify MAP, got {v:.1}"
+            );
         }
     }
 
     /// Empty grid does not panic.
     #[test]
     fn empty_grid_no_panic() {
-        let regime = RegimeField { data: vec![], width: 0, height: 0 };
+        let regime = RegimeField {
+            data: vec![],
+            width: 0,
+            height: 0,
+        };
         let mut map: Vec<f32> = vec![];
         apply_orographic_correction(&mut map, &regime, 0, 0);
         assert!(map.is_empty());

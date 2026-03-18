@@ -57,10 +57,14 @@ pub fn compute_morans_i_from_heightfield(hf: &HeightField) -> f32 {
 /// HI = (mean − min) / (max − min). Returns None when range < 1 m.
 fn hypsometric_integral_slice(data: &[f32]) -> Option<f32> {
     let valid: Vec<f32> = data.iter().cloned().filter(|v| v.is_finite()).collect();
-    if valid.is_empty() { return None; }
+    if valid.is_empty() {
+        return None;
+    }
     let mn = valid.iter().cloned().fold(f32::INFINITY, f32::min);
     let mx = valid.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    if (mx - mn) < 1.0 { return None; }
+    if (mx - mn) < 1.0 {
+        return None;
+    }
     let mean = valid.iter().sum::<f32>() / valid.len() as f32;
     Some((mean - mn) / (mx - mn))
 }
@@ -81,9 +85,15 @@ fn moran_1d_queen(values: &[f32]) -> f32 {
             }
         }
     }
-    if den == 0.0 || w_sum == 0.0 { return f32::NAN; }
+    if den == 0.0 || w_sum == 0.0 {
+        return f32::NAN;
+    }
     let i_stat = (n as f64 / w_sum) * (num / den);
-    if i_stat.is_finite() { i_stat as f32 } else { f32::NAN }
+    if i_stat.is_finite() {
+        i_stat as f32
+    } else {
+        f32::NAN
+    }
 }
 
 /// Queen-contiguity Moran's I on a 2-D grid.
@@ -95,7 +105,9 @@ fn moran_grid_queen(grid: &[f32], nr: usize, nc: usize) -> f32 {
         .map(|(i, &v)| (i, v))
         .collect();
 
-    if valid.len() < 4 { return f32::NAN; }
+    if valid.len() < 4 {
+        return f32::NAN;
+    }
 
     let mean_hi = valid.iter().map(|(_, v)| v).sum::<f32>() / valid.len() as f32;
 
@@ -109,10 +121,14 @@ fn moran_grid_queen(grid: &[f32], nr: usize, nc: usize) -> f32 {
         let ci = (i % nc) as i32;
         for dr in -1i32..=1 {
             for dc in -1i32..=1 {
-                if dr == 0 && dc == 0 { continue; }
+                if dr == 0 && dc == 0 {
+                    continue;
+                }
                 let rn = ri + dr;
                 let cn = ci + dc;
-                if rn < 0 || cn < 0 || rn >= nr as i32 || cn >= nc as i32 { continue; }
+                if rn < 0 || cn < 0 || rn >= nr as i32 || cn >= nc as i32 {
+                    continue;
+                }
                 let j = rn as usize * nc + cn as usize;
                 if grid[j].is_finite() {
                     num += ((vi - mean_hi) * (grid[j] - mean_hi)) as f64;
@@ -122,9 +138,15 @@ fn moran_grid_queen(grid: &[f32], nr: usize, nc: usize) -> f32 {
         }
     }
 
-    if den == 0.0 || w_sum == 0.0 { return f32::NAN; }
+    if den == 0.0 || w_sum == 0.0 {
+        return f32::NAN;
+    }
     let i_stat = (valid.len() as f64 / w_sum) * (num / den);
-    if i_stat.is_finite() { i_stat as f32 } else { f32::NAN }
+    if i_stat.is_finite() {
+        i_stat as f32
+    } else {
+        f32::NAN
+    }
 }
 
 #[cfg(test)]
@@ -140,7 +162,10 @@ mod tests {
     fn small_field_returns_nan() {
         let hf = make_hf(64); // only 1×1 sub-basin grid → NaN
         let r = compute_morans_i_from_heightfield(&hf);
-        assert!(r.is_nan(), "expected NaN for field smaller than 2×2 sub-basins");
+        assert!(
+            r.is_nan(),
+            "expected NaN for field smaller than 2×2 sub-basins"
+        );
     }
 
     #[test]
@@ -153,16 +178,47 @@ mod tests {
             }
         }
         let r = compute_morans_i_from_heightfield(&hf);
-        assert!(r.is_finite(), "uniform ramp should yield finite Moran's I, got {r}");
+        assert!(
+            r.is_finite(),
+            "uniform ramp should yield finite Moran's I, got {r}"
+        );
     }
 
     #[test]
     fn moran_i_basin_interface_finite() {
         let basins = vec![
-            DrainageBasin { id: 0, area_cells: 100, hypsometric_integral: 0.4, elongation_ratio: 0.7, circularity: 0.6, mean_slope: 0.1 },
-            DrainageBasin { id: 1, area_cells: 120, hypsometric_integral: 0.5, elongation_ratio: 0.8, circularity: 0.7, mean_slope: 0.2 },
-            DrainageBasin { id: 2, area_cells: 90,  hypsometric_integral: 0.3, elongation_ratio: 0.6, circularity: 0.5, mean_slope: 0.1 },
-            DrainageBasin { id: 3, area_cells: 110, hypsometric_integral: 0.6, elongation_ratio: 0.9, circularity: 0.8, mean_slope: 0.3 },
+            DrainageBasin {
+                id: 0,
+                area_cells: 100,
+                hypsometric_integral: 0.4,
+                elongation_ratio: 0.7,
+                circularity: 0.6,
+                mean_slope: 0.1,
+            },
+            DrainageBasin {
+                id: 1,
+                area_cells: 120,
+                hypsometric_integral: 0.5,
+                elongation_ratio: 0.8,
+                circularity: 0.7,
+                mean_slope: 0.2,
+            },
+            DrainageBasin {
+                id: 2,
+                area_cells: 90,
+                hypsometric_integral: 0.3,
+                elongation_ratio: 0.6,
+                circularity: 0.5,
+                mean_slope: 0.1,
+            },
+            DrainageBasin {
+                id: 3,
+                area_cells: 110,
+                hypsometric_integral: 0.6,
+                elongation_ratio: 0.9,
+                circularity: 0.8,
+                mean_slope: 0.3,
+            },
         ];
         let r = compute_morans_i(&basins);
         assert!(r.is_finite(), "4-basin Moran's I should be finite, got {r}");

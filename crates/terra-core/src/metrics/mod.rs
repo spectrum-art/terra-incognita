@@ -1,7 +1,7 @@
 pub mod aspect;
-pub(crate) mod gradient;
 pub mod drainage;
 pub mod geomorphons;
+pub(crate) mod gradient;
 pub mod hurst;
 pub mod hypsometric;
 pub mod morans;

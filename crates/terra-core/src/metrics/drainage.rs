@@ -16,8 +16,14 @@ const STREAM_THRESHOLD: u32 = 50;
 
 /// D8 neighbour offsets (row, col) in order N, NE, E, SE, S, SW, W, NW.
 const D8_OFFSETS: [(isize, isize); 8] = [
-    (-1, 0), (-1, 1), (0, 1), (1, 1),
-    (1, 0),  (1, -1), (0, -1), (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+    (1, 0),
+    (1, -1),
+    (0, -1),
+    (-1, -1),
 ];
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 const D8_DIST: [f64; 8] = [1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2, 1.0, SQRT2];
@@ -30,7 +36,9 @@ pub fn compute_drainage_density(hf: &HeightField) -> DrainageDensityResult {
     let cs = cellsize_m(hf); // metres per pixel
 
     if n == 0 {
-        return DrainageDensityResult { density_km_per_km2: 0.0 };
+        return DrainageDensityResult {
+            density_km_per_km2: 0.0,
+        };
     }
 
     // ── D8 flow direction: index of steepest-descent neighbour, or usize::MAX for sinks ──
@@ -89,7 +97,9 @@ pub fn compute_drainage_density(hf: &HeightField) -> DrainageDensityResult {
         0.0
     };
 
-    DrainageDensityResult { density_km_per_km2: density }
+    DrainageDensityResult {
+        density_km_per_km2: density,
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +116,11 @@ mod tests {
         // Flat field → all cells are sinks → no flow accumulation → density ≈ 0.
         let hf = make_hf(64, 100.0);
         let r = compute_drainage_density(&hf);
-        assert!(r.density_km_per_km2 < 1.0, "flat field density = {}", r.density_km_per_km2);
+        assert!(
+            r.density_km_per_km2 < 1.0,
+            "flat field density = {}",
+            r.density_km_per_km2
+        );
     }
 
     #[test]
@@ -121,7 +135,10 @@ mod tests {
         }
         let res = compute_drainage_density(&hf);
         // Expect meaningful drainage density (flow converges along rows).
-        assert!(res.density_km_per_km2 > 0.0, "sloped field should have non-zero density");
+        assert!(
+            res.density_km_per_km2 > 0.0,
+            "sloped field should have non-zero density"
+        );
     }
 
     #[test]

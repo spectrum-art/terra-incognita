@@ -13,8 +13,7 @@ use basins::{delineate_basins, DrainageBasin};
 use flow_routing::{compute_d8_flow, FlowField};
 use glacial::apply_glacial_carving;
 use stream_network::{
-    extract_stream_network, StreamNetwork,
-    A_MIN_ALPINE, A_MIN_COASTAL, A_MIN_CRATONIC,
+    extract_stream_network, StreamNetwork, A_MIN_ALPINE, A_MIN_COASTAL, A_MIN_CRATONIC,
     A_MIN_FLUVIAL_ARID, A_MIN_FLUVIAL_HUMID,
 };
 use stream_power::apply_stream_power;
@@ -86,7 +85,8 @@ pub fn apply_hydraulic_shaping(
 
     // Step 1 — stream power erosion.  Returns the final flow field after the
     // last erosion iteration.
-    let flow_after_erosion = apply_stream_power(hf, erodibility, p.erosion_iters, p.angle_of_repose_deg);
+    let flow_after_erosion =
+        apply_stream_power(hf, erodibility, p.erosion_iters, p.angle_of_repose_deg);
 
     // Step 2 — glacial carving (borrows pre-erosion flow field only for the
     // glacial mask; recomputes internally after carving).
@@ -101,7 +101,11 @@ pub fn apply_hydraulic_shaping(
     // Step 5 — basin delineation.
     let basins = delineate_basins(&flow, hf);
 
-    HydraulicResult { flow, network, basins }
+    HydraulicResult {
+        flow,
+        network,
+        basins,
+    }
 }
 
 #[cfg(test)]
@@ -138,12 +142,8 @@ mod tests {
     #[test]
     fn basin_areas_cover_all_cells() {
         let mut hf = make_ramp(16, 32);
-        let result = apply_hydraulic_shaping(
-            &mut hf,
-            TerrainClass::FluvialHumid,
-            &[],
-            GlacialClass::None,
-        );
+        let result =
+            apply_hydraulic_shaping(&mut hf, TerrainClass::FluvialHumid, &[], GlacialClass::None);
         let total: u32 = result.basins.iter().map(|b| b.area_cells).sum();
         assert_eq!(
             total,
@@ -157,12 +157,8 @@ mod tests {
         // V-valley: cells from both sides converge to the centre column, giving
         // accumulation ≈ rows × (cols/2) >> A_min for all terrain classes.
         let mut hf = make_valley(32, 32);
-        let result = apply_hydraulic_shaping(
-            &mut hf,
-            TerrainClass::FluvialHumid,
-            &[],
-            GlacialClass::None,
-        );
+        let result =
+            apply_hydraulic_shaping(&mut hf, TerrainClass::FluvialHumid, &[], GlacialClass::None);
         assert!(
             result.network.max_order >= 1,
             "stream network must have at least Strahler order 1"

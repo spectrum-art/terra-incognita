@@ -6,10 +6,10 @@
 //!   2. Compute Horn slope at each cell.
 //!   3. Apply dz = −K · √A · S, clipped to ±10 m.
 //!   4. Apply mass wasting.
-use crate::heightfield::HeightField;
-use crate::metrics::gradient::{cellsize_m, horn_gradient};
 use super::flow_routing::{compute_d8_flow, FlowField};
 use super::mass_wasting::apply_mass_wasting;
+use crate::heightfield::HeightField;
+use crate::metrics::gradient::{cellsize_m, horn_gradient};
 
 /// Apply `iterations` rounds of stream power erosion + mass wasting.
 ///
@@ -40,7 +40,11 @@ pub fn apply_stream_power(
         for r in 1..rows - 1 {
             for c in 1..cols - 1 {
                 let i = r * cols + c;
-                let k = if uniform_k { 0.5 } else { erodibility[i] as f64 };
+                let k = if uniform_k {
+                    0.5
+                } else {
+                    erodibility[i] as f64
+                };
                 if k <= 0.0 {
                     continue;
                 }

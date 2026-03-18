@@ -28,8 +28,7 @@ pub fn map_base_mm(lat_deg: f64, water_abundance: f32) -> f32 {
     //   wa=0.30 → 1.46× (hyperarid subtropical belts)
     //   wa>0.55 → 1.0×  (cap; wetter planets don't extend the desert)
     let arid_strength = (2.0 - water_abundance as f64 / 0.55).max(1.0);
-    let subtropical_arid =
-        -560.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp() * arid_strength;
+    let subtropical_arid = -560.0 * (-(lat_abs - 28.0).powi(2) / 128.0_f64).exp() * arid_strength;
 
     // Temperate westerlies: secondary peak centred at 50°, σ ≈ 15°.
     let temperate = 420.0 * (-(lat_abs - 50.0).powi(2) / 450.0_f64).exp();
@@ -74,7 +73,7 @@ mod tests {
     #[test]
     fn water_abundance_scales_output() {
         let high = map_base_mm(5.0, 1.0);
-        let low  = map_base_mm(5.0, 0.1);
+        let low = map_base_mm(5.0, 0.1);
         assert!(high > low, "higher water_abundance should give higher MAP");
         // At water_abundance=0, output should be near 0.
         let zero = map_base_mm(5.0, 0.0);

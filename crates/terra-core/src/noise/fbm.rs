@@ -16,7 +16,12 @@ impl Fbm {
     /// Construct an fBm with the given seed, Hurst exponent, and octave count.
     /// `lacunarity` is fixed at 2.0; gain is derived from H.
     pub fn new(seed: u32, h: f32, octaves: u32) -> Self {
-        Self { h, octaves, lacunarity: 2.0, noise: Perlin::new(seed) }
+        Self {
+            h,
+            octaves,
+            lacunarity: 2.0,
+            noise: Perlin::new(seed),
+        }
     }
 
     /// Per-octave amplitude decay: gain = lacunarity^(−H).
@@ -59,7 +64,11 @@ mod tests {
         let mut hf = HeightField::new(n, n, 0.0, deg, 0.0, deg, 0.0);
         for r in 0..n {
             for c in 0..n {
-                hf.set(r, c, fbm.sample(c as f64 * base_freq, r as f64 * base_freq) as f32);
+                hf.set(
+                    r,
+                    c,
+                    fbm.sample(c as f64 * base_freq, r as f64 * base_freq) as f32,
+                );
             }
         }
         hf
@@ -78,7 +87,8 @@ mod tests {
         let r = compute_hurst(&hf);
         assert!(
             !r.h.is_nan() && (r.h - 0.75).abs() < 0.20,
-            "input H=0.75, measured H={:.3}", r.h
+            "input H=0.75, measured H={:.3}",
+            r.h
         );
     }
 
@@ -86,9 +96,12 @@ mod tests {
     fn higher_h_gives_smoother_field() {
         // Smooth (H=0.9) should have higher measured Hurst than rough (H=0.4).
         let hf_smooth = sample_tile(7, 0.9, 256);
-        let hf_rough  = sample_tile(7, 0.4, 256);
+        let hf_rough = sample_tile(7, 0.4, 256);
         let h_sm = compute_hurst(&hf_smooth).h;
         let h_ro = compute_hurst(&hf_rough).h;
-        assert!(h_sm > h_ro, "H_smooth={h_sm:.3} should exceed H_rough={h_ro:.3}");
+        assert!(
+            h_sm > h_ro,
+            "H_smooth={h_sm:.3} should exceed H_rough={h_ro:.3}"
+        );
     }
 }

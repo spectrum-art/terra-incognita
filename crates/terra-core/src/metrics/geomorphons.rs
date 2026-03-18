@@ -40,8 +40,14 @@ pub struct GeomorphonResult {
 // 8 directions (dr, dc) and their horizontal-distance multipliers.
 // N NE E SE S SW W NW
 const DIRS: [(isize, isize); 8] = [
-    (-1, 0), (-1, 1), (0, 1), (1, 1),
-    (1, 0),  (1, -1), (0, -1), (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+    (1, 0),
+    (1, -1),
+    (0, -1),
+    (-1, -1),
 ];
 // Cardinal: 1.0; diagonal: sqrt(2)
 const SQRT2: f64 = std::f64::consts::SQRT_2;
@@ -54,30 +60,30 @@ fn ternary_to_class(pattern: &[i8; 8]) -> Geomorphon {
     let n_pos = pattern.iter().filter(|&&v| v == 1).count() as u8;
     let n_neg = pattern.iter().filter(|&&v| v == -1).count() as u8;
     match (n_pos, n_neg) {
-        (0, 0)                        => Geomorphon::Flat,
-        (8, _) | (7, 0)              => Geomorphon::Pit,
-        (_, 8) | (0, 7)              => Geomorphon::Peak,
-        (p, m) if m == 0 && p >= 6  => Geomorphon::Valley,
-        (p, m) if p == 0 && m >= 6  => Geomorphon::Ridge,
-        (p, m) if m <= 1 && p >= 4  => Geomorphon::Footslope,
-        (p, m) if p <= 1 && m >= 4  => Geomorphon::Shoulder,
-        (p, m) if p > m             => Geomorphon::Hollow,
-        (p, m) if m > p             => Geomorphon::Spur,
-        _                            => Geomorphon::Slope,
+        (0, 0) => Geomorphon::Flat,
+        (8, _) | (7, 0) => Geomorphon::Pit,
+        (_, 8) | (0, 7) => Geomorphon::Peak,
+        (p, m) if m == 0 && p >= 6 => Geomorphon::Valley,
+        (p, m) if p == 0 && m >= 6 => Geomorphon::Ridge,
+        (p, m) if m <= 1 && p >= 4 => Geomorphon::Footslope,
+        (p, m) if p <= 1 && m >= 4 => Geomorphon::Shoulder,
+        (p, m) if p > m => Geomorphon::Hollow,
+        (p, m) if m > p => Geomorphon::Spur,
+        _ => Geomorphon::Slope,
     }
 }
 
 /// Canonical 3^8 code: rotate the 8-element ternary array to its lexicographic minimum.
 fn canonical_code(pattern: &[i8; 8]) -> u32 {
-    let encode = |p: &[i8; 8]| {
-        p.iter().fold(0u32, |acc, &v| acc * 3 + (v + 1) as u32)
-    };
+    let encode = |p: &[i8; 8]| p.iter().fold(0u32, |acc, &v| acc * 3 + (v + 1) as u32);
     let mut best = encode(pattern);
     let mut rot = *pattern;
     for _ in 1..8 {
         rot.rotate_left(1);
         let c = encode(&rot);
-        if c < best { best = c; }
+        if c < best {
+            best = c;
+        }
     }
     best
 }
@@ -144,16 +150,20 @@ pub fn classify_geomorphons(
                     let z1 = hf.get(nr as usize, nc as usize) as f64;
                     let horiz = h_scale * t as f64;
                     let angle = (z1 - z0).atan2(horiz); // zenith if +, nadir if −
-                    if angle > max_zenith { max_zenith = angle; }
-                    if angle < min_zenith { min_zenith = angle; }
+                    if angle > max_zenith {
+                        max_zenith = angle;
+                    }
+                    if angle < min_zenith {
+                        min_zenith = angle;
+                    }
                 }
 
                 pattern[d] = if max_zenith > flat_rad {
-                    1  // focal is lower (looking up) → concave
+                    1 // focal is lower (looking up) → concave
                 } else if min_zenith < -flat_rad {
                     -1 // focal is higher (looking down) → convex
                 } else {
-                    0  // flat
+                    0 // flat
                 };
             }
 
@@ -239,7 +249,11 @@ mod tests {
         let res = classify_geomorphons(&hf, 3, 1.0, TerrainClass::Alpine);
         let mid = 32 / 2;
         let center = res.classes[mid * 32 + mid];
-        assert_eq!(center, Geomorphon::Peak, "center of peak field should be Peak");
+        assert_eq!(
+            center,
+            Geomorphon::Peak,
+            "center of peak field should be Peak"
+        );
     }
 
     #[test]
@@ -251,7 +265,10 @@ mod tests {
             .flat_map(|r| (2..62_usize).map(move |c| (r, c)))
             .map(|(r, c)| res.classes[r * 64 + c])
             .collect();
-        let n_slope = interior.iter().filter(|&&c| c == Geomorphon::Slope || c == Geomorphon::Spur).count();
+        let n_slope = interior
+            .iter()
+            .filter(|&&c| c == Geomorphon::Slope || c == Geomorphon::Spur)
+            .count();
         assert!(
             n_slope as f32 / interior.len() as f32 > 0.5,
             "majority of interior cells on a linear slope should be Slope/Spur"
@@ -263,7 +280,11 @@ mod tests {
         let hf = slope_hf(64);
         let res = classify_geomorphons(&hf, 3, 1.0, TerrainClass::Alpine);
         let total: f32 = res.hist_10.iter().sum();
-        assert!((total - 1.0).abs() < 1e-4, "hist_10 must sum to 1.0, got {}", total);
+        assert!(
+            (total - 1.0).abs() < 1e-4,
+            "hist_10 must sum to 1.0, got {}",
+            total
+        );
     }
 
     #[test]

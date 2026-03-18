@@ -4,8 +4,8 @@
 //! Uses the shared Horn (1981) gradient from `super::gradient`. Aspect is
 //! computed at every interior cell; cells with slope < 0.01° are treated as
 //! flat and excluded from the circular statistics.
-use crate::heightfield::HeightField;
 use super::gradient::{cellsize_m, horn_gradient};
+use crate::heightfield::HeightField;
 
 pub struct AspectResult {
     /// Circular variance: 1 − |mean resultant length R|.
@@ -107,8 +107,10 @@ mod tests {
         let pixel_deg = 90.0 / 111_320.0;
         let extent = n as f64 * pixel_deg;
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = extent;
-        hf.min_lon = 0.0; hf.max_lon = extent;
+        hf.min_lat = 0.0;
+        hf.max_lat = extent;
+        hf.min_lon = 0.0;
+        hf.max_lon = extent;
         let cellsize_m = pixel_deg * 111_320.0;
         let rise = cellsize_m * 10.0_f64.to_radians().tan(); // 10° slope
         for r in 0..n {
@@ -123,8 +125,10 @@ mod tests {
     /// Gradient directions are pseudo-random → circular_variance ≈ 1.
     fn make_noise_field(n: usize) -> HeightField {
         let mut hf = HeightField::flat(n, n);
-        hf.min_lat = 0.0; hf.max_lat = 1.0;
-        hf.min_lon = 0.0; hf.max_lon = 1.0;
+        hf.min_lat = 0.0;
+        hf.max_lat = 1.0;
+        hf.min_lon = 0.0;
+        hf.max_lon = 1.0;
 
         let hash = |r: usize, c: usize| -> f32 {
             let h = (r as u64)

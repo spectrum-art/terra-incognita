@@ -5,9 +5,9 @@
 //! has excess material transferred to its steepest D8 downslope neighbour,
 //! conserving mass.  Cells are processed high-to-low so that each transfer
 //! is visible to downstream cells in the same sweep.
+use super::flow_routing::{D8_DIST, D8_OFFSETS};
 use crate::heightfield::HeightField;
 use crate::metrics::gradient::{cellsize_m, horn_gradient};
-use super::flow_routing::{D8_DIST, D8_OFFSETS};
 
 /// Apply one pass of slope-threshold mass wasting to `hf`.
 ///
@@ -24,7 +24,9 @@ pub fn apply_mass_wasting(hf: &mut HeightField, angle_of_repose_deg: f32) {
         .flat_map(|r| (1..cols - 1).map(move |c| r * cols + c))
         .collect();
     order.sort_unstable_by(|&a, &b| {
-        hf.data[b].partial_cmp(&hf.data[a]).unwrap_or(std::cmp::Ordering::Equal)
+        hf.data[b]
+            .partial_cmp(&hf.data[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     for &i in &order {

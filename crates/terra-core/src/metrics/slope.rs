@@ -4,8 +4,8 @@
 //! Computes slope angle (degrees) at every interior cell using Horn's (1981)
 //! 3×3 weighted finite-difference gradient. Returns the full distribution as
 //! mode, mean, std, skewness, and a 90-bin histogram (fractions, bins 0–89°).
-use crate::heightfield::HeightField;
 use super::gradient::{cellsize_m, horn_gradient};
+use crate::heightfield::HeightField;
 
 pub struct SlopeResult {
     /// Histogram mode (bin centre, degrees). 0.0 for flat fields.
@@ -78,7 +78,12 @@ pub fn compute_slope(hf: &HeightField) -> SlopeResult {
     let histogram: Vec<f32> = bins.iter().map(|&b| b as f32 / total).collect();
 
     // Mode: bin with the highest count; centre = bin + 0.5.
-    let mode_bin = bins.iter().enumerate().max_by_key(|(_, &b)| b).map(|(i, _)| i).unwrap_or(0);
+    let mode_bin = bins
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, &b)| b)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     let mode_deg = mode_bin as f32 + 0.5;
 
     // Mean and std.

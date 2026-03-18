@@ -14,7 +14,10 @@ pub struct HypsometricResult {
 pub fn compute_hypsometric(hf: &HeightField) -> HypsometricResult {
     let n = hf.data.len();
     if n == 0 {
-        return HypsometricResult { integral: f32::NAN, cdf: vec![0.0; 100] };
+        return HypsometricResult {
+            integral: f32::NAN,
+            cdf: vec![0.0; 100],
+        };
     }
 
     let min = hf.min_elevation();
@@ -23,7 +26,10 @@ pub fn compute_hypsometric(hf: &HeightField) -> HypsometricResult {
 
     if range < 1.0 {
         // Flat or nearly flat field — integral is undefined (return 0.0).
-        return HypsometricResult { integral: 0.0, cdf: vec![0.0; 100] };
+        return HypsometricResult {
+            integral: 0.0,
+            cdf: vec![0.0; 100],
+        };
     }
 
     let mean = (hf.data.iter().map(|&v| v as f64).sum::<f64>() / n as f64) as f32;

@@ -30,7 +30,7 @@ pub fn generate_h_field(
     for r in 0..height {
         for c in 0..width {
             let raw = perlin.get([c as f64 * freq, r as f64 * freq]) as f32; // ∈ (−1, 1)
-            // Remap (−1, 1) → (lo, hi)
+                                                                             // Remap (−1, 1) → (lo, hi)
             let h = lo + (raw + 1.0) * 0.5 * (hi - lo);
             field.push(h.clamp(lo.min(0.3), hi.max(0.9)));
         }
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn h_field_values_within_range() {
         let h_base = 0.75f32;
-        let h_var  = 0.15f32;
+        let h_var = 0.15f32;
         let field = generate_h_field(64, 64, h_base, h_var, 99);
         let lo = (h_base - h_var).min(0.3);
         let hi = (h_base + h_var).max(0.9);

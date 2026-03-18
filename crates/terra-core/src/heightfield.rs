@@ -16,7 +16,15 @@ pub struct HeightField {
 
 impl HeightField {
     /// Create a new HeightField filled with the given value.
-    pub fn new(width: usize, height: usize, min_lon: f64, max_lon: f64, min_lat: f64, max_lat: f64, fill: f32) -> Self {
+    pub fn new(
+        width: usize,
+        height: usize,
+        min_lon: f64,
+        max_lon: f64,
+        min_lat: f64,
+        max_lat: f64,
+        fill: f32,
+    ) -> Self {
         Self {
             data: vec![fill; width * height],
             width,

@@ -33,90 +33,204 @@ pub struct RealismScore {
 }
 
 /// Per-class, per-metric reference bands (p10, p90) from Phase 1 empirical data.
-struct Band { p10: f32, p90: f32 }
+struct Band {
+    p10: f32,
+    p90: f32,
+}
 
 fn hurst_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.683, p90: 0.819 },
-        TerrainClass::Coastal      => Band { p10: 0.416, p90: 0.572 },
-        TerrainClass::Cratonic     => Band { p10: 0.482, p90: 0.662 },
-        TerrainClass::FluvialArid  => Band { p10: 0.551, p90: 0.782 },
-        TerrainClass::FluvialHumid => Band { p10: 0.357, p90: 0.629 },
+        TerrainClass::Alpine => Band {
+            p10: 0.683,
+            p90: 0.819,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.416,
+            p90: 0.572,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.482,
+            p90: 0.662,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 0.551,
+            p90: 0.782,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.357,
+            p90: 0.629,
+        },
     }
 }
 
 fn roughness_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.023, p90: 0.712 },
-        TerrainClass::Coastal      => Band { p10: -0.156, p90: 0.240 },
-        TerrainClass::Cratonic     => Band { p10: 0.053, p90: 0.632 },
-        TerrainClass::FluvialArid  => Band { p10: -0.087, p90: 0.629 },
-        TerrainClass::FluvialHumid => Band { p10: -0.184, p90: 0.560 },
+        TerrainClass::Alpine => Band {
+            p10: 0.023,
+            p90: 0.712,
+        },
+        TerrainClass::Coastal => Band {
+            p10: -0.156,
+            p90: 0.240,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.053,
+            p90: 0.632,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: -0.087,
+            p90: 0.629,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: -0.184,
+            p90: 0.560,
+        },
     }
 }
 
 fn multifractal_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.204, p90: 1.123 },
-        TerrainClass::Coastal      => Band { p10: 0.149, p90: 0.740 },
-        TerrainClass::Cratonic     => Band { p10: 0.123, p90: 0.648 },
-        TerrainClass::FluvialArid  => Band { p10: 0.258, p90: 0.907 },
-        TerrainClass::FluvialHumid => Band { p10: 0.170, p90: 0.888 },
+        TerrainClass::Alpine => Band {
+            p10: 0.204,
+            p90: 1.123,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.149,
+            p90: 0.740,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.123,
+            p90: 0.648,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 0.258,
+            p90: 0.907,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.170,
+            p90: 0.888,
+        },
     }
 }
 
 fn hypsometric_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.196, p90: 0.513 },
-        TerrainClass::Coastal      => Band { p10: 0.334, p90: 0.606 },
-        TerrainClass::Cratonic     => Band { p10: 0.137, p90: 0.435 },
-        TerrainClass::FluvialArid  => Band { p10: 0.217, p90: 0.521 },
-        TerrainClass::FluvialHumid => Band { p10: 0.218, p90: 0.509 },
+        TerrainClass::Alpine => Band {
+            p10: 0.196,
+            p90: 0.513,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.334,
+            p90: 0.606,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.137,
+            p90: 0.435,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 0.217,
+            p90: 0.521,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.218,
+            p90: 0.509,
+        },
     }
 }
 
 fn drainage_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 1.407, p90: 3.187 },
-        TerrainClass::Coastal      => Band { p10: 0.024, p90: 1.886 },
-        TerrainClass::Cratonic     => Band { p10: 0.084, p90: 0.972 },
-        TerrainClass::FluvialArid  => Band { p10: 1.351, p90: 2.793 },
-        TerrainClass::FluvialHumid => Band { p10: 0.060, p90: 2.662 },
+        TerrainClass::Alpine => Band {
+            p10: 1.407,
+            p90: 3.187,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.024,
+            p90: 1.886,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.084,
+            p90: 0.972,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 1.351,
+            p90: 2.793,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.060,
+            p90: 2.662,
+        },
     }
 }
 
 fn morans_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.021, p90: 0.355 },
-        TerrainClass::Coastal      => Band { p10: 0.054, p90: 0.404 },
-        TerrainClass::Cratonic     => Band { p10: 0.027, p90: 0.350 },
-        TerrainClass::FluvialArid  => Band { p10: 0.062, p90: 0.404 },
-        TerrainClass::FluvialHumid => Band { p10: 0.068, p90: 0.378 },
+        TerrainClass::Alpine => Band {
+            p10: 0.021,
+            p90: 0.355,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.054,
+            p90: 0.404,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.027,
+            p90: 0.350,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 0.062,
+            p90: 0.404,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.068,
+            p90: 0.378,
+        },
     }
 }
 
 fn slope_mode_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.5,  p90: 20.5 },
-        TerrainClass::Coastal      => Band { p10: 0.5,  p90: 1.5  },
-        TerrainClass::Cratonic     => Band { p10: 0.5,  p90: 0.5  },
-        TerrainClass::FluvialArid  => Band { p10: 0.5,  p90: 2.5  },
-        TerrainClass::FluvialHumid => Band { p10: 0.5,  p90: 2.5  },
+        TerrainClass::Alpine => Band {
+            p10: 0.5,
+            p90: 20.5,
+        },
+        TerrainClass::Coastal => Band { p10: 0.5, p90: 1.5 },
+        TerrainClass::Cratonic => Band { p10: 0.5, p90: 0.5 },
+        TerrainClass::FluvialArid => Band { p10: 0.5, p90: 2.5 },
+        TerrainClass::FluvialHumid => Band { p10: 0.5, p90: 2.5 },
     }
 }
 
 fn aspect_band(_tc: TerrainClass) -> Band {
     // Aspect circular variance target: 0.4 – 0.85 across all classes.
-    Band { p10: 0.4, p90: 0.85 }
+    Band {
+        p10: 0.4,
+        p90: 0.85,
+    }
 }
 
 fn tpi_band(tc: TerrainClass) -> Band {
     match tc {
-        TerrainClass::Alpine       => Band { p10: 0.074, p90: 0.130 },
-        TerrainClass::Coastal      => Band { p10: 0.224, p90: 0.347 },
-        TerrainClass::Cratonic     => Band { p10: 0.132, p90: 0.334 },
-        TerrainClass::FluvialArid  => Band { p10: 0.088, p90: 0.198 },
-        TerrainClass::FluvialHumid => Band { p10: 0.167, p90: 0.393 },
+        TerrainClass::Alpine => Band {
+            p10: 0.074,
+            p90: 0.130,
+        },
+        TerrainClass::Coastal => Band {
+            p10: 0.224,
+            p90: 0.347,
+        },
+        TerrainClass::Cratonic => Band {
+            p10: 0.132,
+            p90: 0.334,
+        },
+        TerrainClass::FluvialArid => Band {
+            p10: 0.088,
+            p90: 0.198,
+        },
+        TerrainClass::FluvialHumid => Band {
+            p10: 0.167,
+            p90: 0.393,
+        },
     }
 }
 
@@ -161,16 +275,16 @@ fn geomorphon_score(l1: f32) -> f32 {
 }
 
 // ── Metric weights (sum = 1.0) ───────────────────────────────────────────────
-const W_HURST:       f32 = 0.10;
-const W_ROUGHNESS:   f32 = 0.10;
-const W_MULTIFRAC:   f32 = 0.08;
-const W_SLOPE:       f32 = 0.08;
-const W_ASPECT:      f32 = 0.08;
-const W_TPI:         f32 = 0.08;
-const W_HYPS:        f32 = 0.12;
-const W_GEOMORPHON:  f32 = 0.14;
-const W_DRAINAGE:    f32 = 0.12;
-const W_MORANS:      f32 = 0.10;
+const W_HURST: f32 = 0.10;
+const W_ROUGHNESS: f32 = 0.10;
+const W_MULTIFRAC: f32 = 0.08;
+const W_SLOPE: f32 = 0.08;
+const W_ASPECT: f32 = 0.08;
+const W_TPI: f32 = 0.08;
+const W_HYPS: f32 = 0.12;
+const W_GEOMORPHON: f32 = 0.14;
+const W_DRAINAGE: f32 = 0.12;
+const W_MORANS: f32 = 0.10;
 
 /// Compute the full realism score for a HeightField.
 /// `terrain_class` selects per-class reference distributions.
@@ -179,20 +293,19 @@ pub fn compute_realism_score(
     terrain_class: TerrainClass,
 ) -> RealismScore {
     use super::{
-        compute_aspect, compute_drainage_density, compute_hurst,
-        compute_hypsometric, compute_multifractal, compute_roughness_elev,
-        compute_slope, compute_tpi, classify_geomorphons,
-        compute_morans_i_from_heightfield,
+        classify_geomorphons, compute_aspect, compute_drainage_density, compute_hurst,
+        compute_hypsometric, compute_morans_i_from_heightfield, compute_multifractal,
+        compute_roughness_elev, compute_slope, compute_tpi,
     };
 
     // Compute all metrics.
-    let hurst_r    = compute_hurst(hf);
-    let rough_r    = compute_roughness_elev(hf);
-    let multi_r    = compute_multifractal(hf);
-    let slope_r    = compute_slope(hf);
-    let aspect_r   = compute_aspect(hf);
-    let tpi_r      = compute_tpi(hf);
-    let hyps_r     = compute_hypsometric(hf);
+    let hurst_r = compute_hurst(hf);
+    let rough_r = compute_roughness_elev(hf);
+    let multi_r = compute_multifractal(hf);
+    let slope_r = compute_slope(hf);
+    let aspect_r = compute_aspect(hf);
+    let tpi_r = compute_tpi(hf);
+    let hyps_r = compute_hypsometric(hf);
     let cs = super::gradient::cellsize_m(hf);
     // At tile scale (cs ≤ 1 km): maintain 1.57 m absolute elevation sensitivity
     // (90 m × tan 1° from Phase 1 SRTM reference data).
@@ -209,8 +322,8 @@ pub fn compute_realism_score(
     } else {
         ((1.57_f64 / cs).atan().to_degrees() as f32).clamp(0.001, 2.0)
     };
-    let geom_r     = classify_geomorphons(hf, 3, flat_deg, terrain_class);
-    let drain_r    = compute_drainage_density(hf);
+    let geom_r = classify_geomorphons(hf, 3, flat_deg, terrain_class);
+    let drain_r = compute_drainage_density(hf);
     let morans_val = compute_morans_i_from_heightfield(hf);
 
     // TPI: use ratio_r1_r2 as a summary value (or NaN).
@@ -227,7 +340,10 @@ pub fn compute_realism_score(
     } else {
         band_score(finite(hurst_r.h, 0.0), &hurst_band(terrain_class))
     };
-    let re_score = band_score(finite(rough_r.pearson_r,      0.0), &roughness_band(terrain_class));
+    let re_score = band_score(
+        finite(rough_r.pearson_r, 0.0),
+        &roughness_band(terrain_class),
+    );
     // At planetary scale, the multifractal width estimator measures continental
     // H-field variation (78 km scale) rather than the local roughness variation
     // the Phase 1 90 m reference was derived from.  Two failure modes arise:
@@ -235,15 +351,20 @@ pub fn compute_realism_score(
     //   • raw < 0: numerical artefact on near-flat terrain (q=-2 moment unstable).
     // In either case the measurement is not comparable to the reference; use 0.5.
     let mf_raw = finite(multi_r.width, 0.0);
-    let mf_score: f32 = if cs > 1_000.0
-        && (mf_raw > multifractal_band(terrain_class).p90 || mf_raw < 0.0)
-    {
-        SCALE_NEUTRAL
-    } else {
-        band_score(mf_raw, &multifractal_band(terrain_class))
-    };
-    let sl_score = band_score(finite(slope_r.mode_deg,       0.0), &slope_mode_band(terrain_class));
-    let as_score = band_score(finite(aspect_r.circular_variance, 0.5), &aspect_band(terrain_class));
+    let mf_score: f32 =
+        if cs > 1_000.0 && (mf_raw > multifractal_band(terrain_class).p90 || mf_raw < 0.0) {
+            SCALE_NEUTRAL
+        } else {
+            band_score(mf_raw, &multifractal_band(terrain_class))
+        };
+    let sl_score = band_score(
+        finite(slope_r.mode_deg, 0.0),
+        &slope_mode_band(terrain_class),
+    );
+    let as_score = band_score(
+        finite(aspect_r.circular_variance, 0.5),
+        &aspect_band(terrain_class),
+    );
     // At planetary scale (cs > 1 km), TPI radii (r1=20, r2=40, r3=80 cells ≈
     // 1,500–6,000 km) measure continental-basin curvature rather than the
     // 900 m–2 km hilltop-to-valley TPI the Phase 1 90 m target was derived from.
@@ -254,7 +375,10 @@ pub fn compute_realism_score(
     } else {
         band_score(finite(tpi_val, 0.0), &tpi_band(terrain_class))
     };
-    let hy_score = band_score(finite(hyps_r.integral,        0.0), &hypsometric_band(terrain_class));
+    let hy_score = band_score(
+        finite(hyps_r.integral, 0.0),
+        &hypsometric_band(terrain_class),
+    );
     // At planetary scale, the geomorphon distribution cannot match the Phase 1
     // 90 m SRTM reference: erosion at 78 km/px creates structural Hollow and
     // Spur excesses (basin walls) that have no equivalent at tile scale.  The
@@ -275,25 +399,104 @@ pub fn compute_realism_score(
     let dr_score: f32 = if cs > 1_000.0 && drainage_band(terrain_class).p10 > 0.5 {
         SCALE_NEUTRAL
     } else {
-        band_score(finite(drain_r.density_km_per_km2, 0.0), &drainage_band(terrain_class))
+        band_score(
+            finite(drain_r.density_km_per_km2, 0.0),
+            &drainage_band(terrain_class),
+        )
     };
-    let mo_score = band_score(finite(morans_val,             0.0), &morans_band(terrain_class));
+    let mo_score = band_score(finite(morans_val, 0.0), &morans_band(terrain_class));
 
     let metrics = vec![
-        MetricScore { name: "hurst",          raw_value: hurst_r.h,                    score_0_1: h_score,  passed: h_score  >= 0.5, subsystem: "noise_synth" },
-        MetricScore { name: "roughness_elev", raw_value: rough_r.pearson_r,            score_0_1: re_score, passed: re_score >= 0.5, subsystem: "noise_synth" },
-        MetricScore { name: "multifractal",   raw_value: multi_r.width,                score_0_1: mf_score, passed: mf_score >= 0.5, subsystem: "noise_synth" },
-        MetricScore { name: "slope_mode",     raw_value: slope_r.mode_deg,             score_0_1: sl_score, passed: sl_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "aspect_circ_var",raw_value: aspect_r.circular_variance,   score_0_1: as_score, passed: as_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "tpi_ratio",      raw_value: tpi_val,                      score_0_1: tp_score, passed: tp_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "hypsometric",    raw_value: hyps_r.integral,              score_0_1: hy_score, passed: hy_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "geomorphon_l1",  raw_value: geom_r.l1_distance,           score_0_1: gm_score, passed: gm_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "drainage",       raw_value: drain_r.density_km_per_km2,   score_0_1: dr_score, passed: dr_score >= 0.5, subsystem: "hydraulic" },
-        MetricScore { name: "morans_i",       raw_value: morans_val,                   score_0_1: mo_score, passed: mo_score >= 0.5, subsystem: "hydraulic" },
+        MetricScore {
+            name: "hurst",
+            raw_value: hurst_r.h,
+            score_0_1: h_score,
+            passed: h_score >= 0.5,
+            subsystem: "noise_synth",
+        },
+        MetricScore {
+            name: "roughness_elev",
+            raw_value: rough_r.pearson_r,
+            score_0_1: re_score,
+            passed: re_score >= 0.5,
+            subsystem: "noise_synth",
+        },
+        MetricScore {
+            name: "multifractal",
+            raw_value: multi_r.width,
+            score_0_1: mf_score,
+            passed: mf_score >= 0.5,
+            subsystem: "noise_synth",
+        },
+        MetricScore {
+            name: "slope_mode",
+            raw_value: slope_r.mode_deg,
+            score_0_1: sl_score,
+            passed: sl_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "aspect_circ_var",
+            raw_value: aspect_r.circular_variance,
+            score_0_1: as_score,
+            passed: as_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "tpi_ratio",
+            raw_value: tpi_val,
+            score_0_1: tp_score,
+            passed: tp_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "hypsometric",
+            raw_value: hyps_r.integral,
+            score_0_1: hy_score,
+            passed: hy_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "geomorphon_l1",
+            raw_value: geom_r.l1_distance,
+            score_0_1: gm_score,
+            passed: gm_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "drainage",
+            raw_value: drain_r.density_km_per_km2,
+            score_0_1: dr_score,
+            passed: dr_score >= 0.5,
+            subsystem: "hydraulic",
+        },
+        MetricScore {
+            name: "morans_i",
+            raw_value: morans_val,
+            score_0_1: mo_score,
+            passed: mo_score >= 0.5,
+            subsystem: "hydraulic",
+        },
     ];
 
-    let weights = [W_HURST, W_ROUGHNESS, W_MULTIFRAC, W_SLOPE, W_ASPECT, W_TPI, W_HYPS, W_GEOMORPHON, W_DRAINAGE, W_MORANS];
-    let total = metrics.iter().zip(weights.iter()).map(|(m, &w)| m.score_0_1 * w).sum::<f32>() * 100.0;
+    let weights = [
+        W_HURST,
+        W_ROUGHNESS,
+        W_MULTIFRAC,
+        W_SLOPE,
+        W_ASPECT,
+        W_TPI,
+        W_HYPS,
+        W_GEOMORPHON,
+        W_DRAINAGE,
+        W_MORANS,
+    ];
+    let total = metrics
+        .iter()
+        .zip(weights.iter())
+        .map(|(m, &w)| m.score_0_1 * w)
+        .sum::<f32>()
+        * 100.0;
 
     RealismScore { total, metrics }
 }
@@ -318,7 +521,11 @@ mod tests {
     fn total_score_is_0_to_100() {
         let n = 128usize;
         let mut hf = make_hf(n, 0.0);
-        for r in 0..n { for c in 0..n { hf.set(r, c, (r * n + c) as f32); } }
+        for r in 0..n {
+            for c in 0..n {
+                hf.set(r, c, (r * n + c) as f32);
+            }
+        }
         let res = compute_realism_score(&hf, TerrainClass::Alpine);
         assert!((0.0..=100.0).contains(&res.total), "total={}", res.total);
     }
@@ -327,10 +534,18 @@ mod tests {
     fn subsystem_attribution_correct() {
         let hf = make_hf(128, 500.0);
         let r = compute_realism_score(&hf, TerrainClass::FluvialArid);
-        let noise_metrics: Vec<_> = r.metrics.iter().filter(|m| m.subsystem == "noise_synth").collect();
-        let hydr_metrics: Vec<_>  = r.metrics.iter().filter(|m| m.subsystem == "hydraulic").collect();
+        let noise_metrics: Vec<_> = r
+            .metrics
+            .iter()
+            .filter(|m| m.subsystem == "noise_synth")
+            .collect();
+        let hydr_metrics: Vec<_> = r
+            .metrics
+            .iter()
+            .filter(|m| m.subsystem == "hydraulic")
+            .collect();
         assert_eq!(noise_metrics.len(), 3, "3 noise_synth metrics expected");
-        assert_eq!(hydr_metrics.len(),  7, "7 hydraulic metrics expected");
+        assert_eq!(hydr_metrics.len(), 7, "7 hydraulic metrics expected");
     }
 
     #[test]
@@ -356,10 +571,17 @@ mod tests {
         let n = 512usize;
         let deg = n as f64 * 0.0009;
         let mut hf = crate::heightfield::HeightField::new(n, n, 0.0, deg, 0.0, deg, 0.0);
-        for r in 0..n { for c in 0..n { hf.set(r, c, (r * n + c) as f32); } }
+        for r in 0..n {
+            for c in 0..n {
+                hf.set(r, c, (r * n + c) as f32);
+            }
+        }
         let t = std::time::Instant::now();
         let _ = compute_realism_score(&hf, TerrainClass::Alpine);
         let elapsed = t.elapsed().as_millis();
-        assert!(elapsed < 500, "512×512 scoring took {elapsed}ms, budget is 500ms");
+        assert!(
+            elapsed < 500,
+            "512×512 scoring took {elapsed}ms, budget is 500ms"
+        );
     }
 }
