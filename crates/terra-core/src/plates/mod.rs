@@ -11,7 +11,7 @@ pub mod plate_generation;
 pub mod regime_field;
 
 use crate::sphere::Vec3;
-use age_field::{compute_thermal_age, distance_to_seeds_km, DistanceField};
+use age_field::{compute_thermal_age, distance_to_seeds_km};
 use boundary_curves::{extract_boundary_polylines, BoundaryPolyline};
 use continent_placement::place_continents;
 use continents::CrustType;
@@ -51,10 +51,7 @@ pub struct PlateSimulation {
     pub grain_field: GrainField,
     pub erodibility_field: Vec<f32>,
     pub hotspots: Vec<Vec3>,
-    pub convergent_distance_km: Vec<f32>,
     pub divergent_distance_km: Vec<f32>,
-    pub convergent_rate_at_nearest: Vec<f32>,
-    pub overriding_side: Vec<bool>,
     pub width: usize,
     pub height: usize,
 }
@@ -103,14 +100,6 @@ pub fn simulate_plates(
         .enumerate()
         .filter_map(|(idx, &is_boundary)| is_boundary.then_some(idx))
         .collect();
-    let convergent_seeds: Vec<usize> = boundary_field
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, character)| {
-            (dynamics.is_boundary[idx] && character.convergent_rate > CONVERGENT_THRESHOLD_CM_YR)
-                .then_some(idx)
-        })
-        .collect();
     let divergent_seeds: Vec<usize> = boundary_field
         .iter()
         .enumerate()
@@ -121,7 +110,6 @@ pub fn simulate_plates(
         .collect();
 
     let all_boundary_distance = distance_to_seeds_km(width, height, &all_boundary_seeds);
-    let convergent_distance = distance_to_seeds_km(width, height, &convergent_seeds);
     let divergent_distance = distance_to_seeds_km(width, height, &divergent_seeds);
     let thermal_age = compute_thermal_age(
         &placement.continental_mask,
@@ -135,17 +123,15 @@ pub fn simulate_plates(
         width,
         height,
     );
-    let convergent_rate_at_nearest =
-        rate_at_nearest_sources(&boundary_field, &convergent_distance, width * height);
-    let overriding_side = convergent_distance
-        .nearest_source
+    let convergent_seeds: Vec<usize> = boundary_field
         .iter()
         .enumerate()
-        .map(|(idx, &source)| {
-            source != usize::MAX
-                && geometry.plate_ids[idx] == boundary_field[source].overriding_plate
+        .filter_map(|(idx, character)| {
+            (dynamics.is_boundary[idx] && character.convergent_rate > CONVERGENT_THRESHOLD_CM_YR)
+                .then_some(idx)
         })
-        .collect::<Vec<_>>();
+        .collect();
+    let convergent_distance = distance_to_seeds_km(width, height, &convergent_seeds);
 
     let regime_character = compute_regime_character(
         &dynamics,
@@ -182,30 +168,10 @@ pub fn simulate_plates(
         grain_field,
         erodibility_field,
         hotspots,
-        convergent_distance_km: convergent_distance.distance_km,
         divergent_distance_km: divergent_distance.distance_km,
-        convergent_rate_at_nearest,
-        overriding_side,
         width,
         height,
     }
-}
-
-fn rate_at_nearest_sources(
-    boundary_field: &[BoundaryCharacter],
-    distance: &DistanceField,
-    n: usize,
-) -> Vec<f32> {
-    (0..n)
-        .map(|idx| {
-            let source = distance.nearest_source[idx];
-            if source == usize::MAX {
-                0.0
-            } else {
-                boundary_field[source].convergent_rate
-            }
-        })
-        .collect()
 }
 
 fn apply_continental_overriding(
