@@ -90,24 +90,11 @@ fn regime_range(regime: TectonicRegime) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plates::{
-        age_field::{compute_age_field, find_subduction_sites},
-        continents::assign_continental_crust,
-        regime_field::{generate_hotspots, generate_regime_field},
-        ridges::generate_ridges,
-        subduction::generate_subduction_arcs,
-    };
+    use crate::plates::simulate_plates;
 
     fn make_erodibility(seed: u64, w: usize, h: usize) -> (Vec<f32>, RegimeField) {
-        let ridges = generate_ridges(seed, 5);
-        let age = compute_age_field(&ridges, w, h);
-        let sites = find_subduction_sites(&age, w, h);
-        let arcs = generate_subduction_arcs(&sites, w, h, seed, 10);
-        let crust = assign_continental_crust(&age, &arcs, w, h);
-        let hotspots = generate_hotspots(seed, 3);
-        let regime = generate_regime_field(&ridges, &arcs, &hotspots, &crust, w, h);
-        let erod = generate_erodibility_field(&regime, seed);
-        (erod, regime)
+        let sim = simulate_plates(seed, 0.5, 0.5, w, h);
+        (sim.erodibility_field, sim.regime_field)
     }
 
     #[test]

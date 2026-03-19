@@ -83,12 +83,13 @@ impl SummaryStats {
 fn main() -> Result<()> {
     let cwd = env::current_dir().context("failed to read current working directory")?;
     let params = GlobalParams::default();
-    let seeds = [42_u64, 7, 99, 312_300, 655_773];
+    let seeds = [42_u64, 7, 99];
 
     for seed in seeds {
         let plates = simulate_plates(
             seed,
             params.continental_fragmentation,
+            params.mountain_prevalence,
             OVERVIEW_WIDTH,
             OVERVIEW_HEIGHT,
         );
@@ -156,7 +157,7 @@ fn main() -> Result<()> {
             ocean.sea_level_km,
             &plates.crust_field,
             &plates.regime_field.data,
-            &plates.age_field,
+            &plates.thermal_age,
             &hotspot_distance_km,
         )?;
     }
@@ -367,7 +368,7 @@ fn print_seed_report(
     sea_level_km: f32,
     crust_field: &[CrustType],
     regimes: &[TectonicRegime],
-    age_field: &[f32],
+    thermal_age: &[f32],
     hotspot_distance_km: &[f32],
 ) -> Result<()> {
     let global =
@@ -391,7 +392,7 @@ fn print_seed_report(
         .filter(|&&value| value >= sea_level_km)
         .count();
     println!(
-        "\n=== Seed {seed}, {}x{} ===\n",
+        "\n=== Seed {seed}, full pipeline ({}x{}) ===\n",
         OVERVIEW_WIDTH, OVERVIEW_HEIGHT
     );
     println!("Global:");
@@ -483,13 +484,13 @@ fn print_seed_report(
     let oceanic_ridge: Vec<f32> = elevations
         .iter()
         .enumerate()
-        .filter(|(idx, _)| crust_field[*idx] == CrustType::Oceanic && age_field[*idx] < 0.1)
+        .filter(|(idx, _)| crust_field[*idx] == CrustType::Oceanic && thermal_age[*idx] < 0.1)
         .map(|(_, &value)| value)
         .collect();
     let oceanic_abyss: Vec<f32> = elevations
         .iter()
         .enumerate()
-        .filter(|(idx, _)| crust_field[*idx] == CrustType::Oceanic && age_field[*idx] > 0.9)
+        .filter(|(idx, _)| crust_field[*idx] == CrustType::Oceanic && thermal_age[*idx] > 0.9)
         .map(|(_, &value)| value)
         .collect();
     let hotspot_pixels: Vec<f32> = elevations

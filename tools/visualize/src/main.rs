@@ -73,7 +73,13 @@ fn main() {
     };
 
     println!("Running plate simulation ({W}×{H})…");
-    let sim = simulate_plates(params.seed, params.continental_fragmentation, W, H);
+    let sim = simulate_plates(
+        params.seed,
+        params.continental_fragmentation,
+        params.mountain_prevalence,
+        W,
+        H,
+    );
 
     println!("Running climate layer…");
     let climate = simulate_climate(
@@ -236,7 +242,13 @@ fn main() {
     // D1: crust_field B&W PNG for seeds 42, 7, 99.
     for &dseed in &[42u64, 7, 99] {
         println!("D1: simulate_plates seed={dseed}…");
-        let sim_d = simulate_plates(dseed, diag_params.continental_fragmentation, DIAG_W, DIAG_H);
+        let sim_d = simulate_plates(
+            dseed,
+            diag_params.continental_fragmentation,
+            diag_params.mountain_prevalence,
+            DIAG_W,
+            DIAG_H,
+        );
         let mut img = image::RgbImage::new(DIAG_W as u32, DIAG_H as u32);
         for r in 0..DIAG_H {
             for c in 0..DIAG_W {
@@ -256,7 +268,13 @@ fn main() {
 
     // D2–D4 share seed=42 plate simulation at DIAG_W×DIAG_H.
     println!("D2-D4: simulate_plates seed=42…");
-    let sim42 = simulate_plates(42, diag_params.continental_fragmentation, DIAG_W, DIAG_H);
+    let sim42 = simulate_plates(
+        42,
+        diag_params.continental_fragmentation,
+        diag_params.mountain_prevalence,
+        DIAG_W,
+        DIAG_H,
+    );
 
     // D2: Regime distribution.
     {

@@ -83,7 +83,13 @@ pub fn generate_planet_overview(params: &GlobalParams) -> PlanetOverview {
     let h = OVERVIEW_HEIGHT;
 
     // ── 1. Plate simulation at overview resolution ────────────────────────
-    let plates = simulate_plates(params.seed, params.continental_fragmentation, w, h);
+    let plates = simulate_plates(
+        params.seed,
+        params.continental_fragmentation,
+        params.mountain_prevalence,
+        w,
+        h,
+    );
 
     // ── 2. Climate layer at overview resolution ───────────────────────────
     let climate = simulate_climate(

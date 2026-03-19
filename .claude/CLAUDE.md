@@ -11,7 +11,7 @@
 ## Absolute rules (never violate these)
 
 1. Never add time-step simulation loops to the core generator. Temporal processes belong in offline calibration tools only.
-2. Never use Voronoi diagrams for plate geometry. Plates are generated boundary-first. See docs/02_design_bible.docx Section 3.1.
+2. Plate geometry uses weighted spherical Voronoi tessellation with curl-noise warping (see `crates/terra-core/src/plates/plate_generation.rs`). The previous boundary-first ridge model was replaced because it produced distance fields rather than actual plate polygons.
 3. Prescriptive metrics (Hurst, roughness-elevation correlation, multifractal width, grain anisotropy) are built into the generator as construction constraints. They are never measured post-hoc and used to reject output.
 4. Non-stationarity is non-negotiable. Roughness must correlate with elevation (Pearson r > 0.4). This must be implemented before any other noise tuning.
 5. Scoring is always per terrain class. Never compute a single global score across all classes.

@@ -75,6 +75,14 @@ fn main() -> Result<()> {
             HEIGHT,
             &render_crust_type_map(&geometry, &dynamics, &placement),
         )?;
+        if seed == 42 {
+            write_png(
+                &cwd.join("plate_overview_42.png"),
+                WIDTH,
+                HEIGHT,
+                &render_plate_overview(&geometry, &dynamics, &placement),
+            )?;
+        }
 
         print_statistics(seed, &geometry, &placement);
     }
@@ -218,6 +226,16 @@ fn render_crust_type_map(
     rgba
 }
 
+fn render_plate_overview(
+    geometry: &PlateGeometry,
+    dynamics: &PlateDynamics,
+    placement: &ContinentPlacement,
+) -> Vec<u8> {
+    let mut rgba = render_continent_placement_map(geometry, dynamics, placement);
+    overlay_velocity_arrows(&mut rgba, geometry, dynamics);
+    rgba
+}
+
 fn overlay_boundaries(rgba: &mut [u8], geometry: &PlateGeometry, dynamics: &PlateDynamics) {
     for idx in 0..geometry.plate_ids.len() {
         if !dynamics.is_boundary[idx] {
@@ -230,6 +248,134 @@ fn overlay_boundaries(rgba: &mut [u8], geometry: &PlateGeometry, dynamics: &Plat
         rgba[base + 2] = color[2];
         rgba[base + 3] = 255;
     }
+}
+
+fn overlay_velocity_arrows(rgba: &mut [u8], geometry: &PlateGeometry, dynamics: &PlateDynamics) {
+    let anchors = plate_arrow_anchors(geometry);
+    for (plate_id, &(row, col)) in anchors.iter().enumerate() {
+        let velocity = dynamics.plate_velocities[plate_id];
+        let speed = (velocity.0 * velocity.0 + velocity.1 * velocity.1).sqrt();
+        if speed <= 0.05 {
+            continue;
+        }
+        let length_px = 16.0 + 4.0 * speed;
+        let dx = velocity.0 / speed * length_px;
+        let dy = -velocity.1 / speed * length_px;
+        let start = (col as f32, row as f32);
+        let end = (start.0 + dx, start.1 + dy);
+        draw_arrow(
+            rgba,
+            geometry.width,
+            geometry.height,
+            start,
+            end,
+            [255, 244, 120],
+            [0, 0, 0],
+        );
+    }
+}
+
+fn plate_arrow_anchors(geometry: &PlateGeometry) -> Vec<(usize, usize)> {
+    let mut sums = vec![(0.0_f64, 0.0_f64, 0.0_f64); geometry.n_plates];
+    for row in 0..geometry.height {
+        for col in 0..geometry.width {
+            let idx = row * geometry.width + col;
+            let plate_id = usize::from(geometry.plate_ids[idx]);
+            let point = terra_core::plates::age_field::cell_to_vec3(
+                row,
+                col,
+                geometry.width,
+                geometry.height,
+            );
+            sums[plate_id].0 += point.x;
+            sums[plate_id].1 += point.y;
+            sums[plate_id].2 += point.z;
+        }
+    }
+
+    sums.into_iter()
+        .map(|(x, y, z)| {
+            let point = terra_core::sphere::Vec3::new(x, y, z).normalize();
+            let (lat_deg, lon_deg) = point.to_latlon();
+            let row = ((90.0 - lat_deg) / 180.0 * geometry.height as f64)
+                .floor()
+                .clamp(0.0, (geometry.height - 1) as f64) as usize;
+            let col = ((lon_deg + 180.0) / 360.0 * geometry.width as f64)
+                .floor()
+                .rem_euclid(geometry.width as f64) as usize;
+            (row, col)
+        })
+        .collect()
+}
+
+fn draw_arrow(
+    rgba: &mut [u8],
+    width: usize,
+    height: usize,
+    start: (f32, f32),
+    end: (f32, f32),
+    color: Rgb,
+    outline: Rgb,
+) {
+    draw_line(rgba, width, height, start, end, outline, 3);
+    draw_line(rgba, width, height, start, end, color, 1);
+
+    let dir_x = end.0 - start.0;
+    let dir_y = end.1 - start.1;
+    let length = (dir_x * dir_x + dir_y * dir_y).sqrt().max(1.0);
+    let ux = dir_x / length;
+    let uy = dir_y / length;
+    let left = (end.0 - ux * 7.0 + uy * 4.0, end.1 - uy * 7.0 - ux * 4.0);
+    let right = (end.0 - ux * 7.0 - uy * 4.0, end.1 - uy * 7.0 + ux * 4.0);
+    draw_line(rgba, width, height, end, left, outline, 3);
+    draw_line(rgba, width, height, end, right, outline, 3);
+    draw_line(rgba, width, height, end, left, color, 1);
+    draw_line(rgba, width, height, end, right, color, 1);
+}
+
+fn draw_line(
+    rgba: &mut [u8],
+    width: usize,
+    height: usize,
+    start: (f32, f32),
+    end: (f32, f32),
+    color: Rgb,
+    thickness: i32,
+) {
+    let steps = ((end.0 - start.0).abs().max((end.1 - start.1).abs()) * 2.0)
+        .ceil()
+        .max(1.0) as usize;
+    for step in 0..=steps {
+        let t = step as f32 / steps as f32;
+        let x = start.0 + (end.0 - start.0) * t;
+        let y = start.1 + (end.1 - start.1) * t;
+        for dy in -thickness..=thickness {
+            for dx in -thickness..=thickness {
+                if dx * dx + dy * dy > thickness * thickness {
+                    continue;
+                }
+                plot_rgb(
+                    rgba,
+                    width,
+                    height,
+                    x.round() as i32 + dx,
+                    y.round() as i32 + dy,
+                    color,
+                );
+            }
+        }
+    }
+}
+
+fn plot_rgb(rgba: &mut [u8], width: usize, height: usize, x: i32, y: i32, color: Rgb) {
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+        return;
+    }
+    let idx = (y as usize * width + x as usize) * 4;
+    rgba[idx] = color[0];
+    rgba[idx + 1] = color[1];
+    rgba[idx + 2] = color[2];
+    rgba[idx + 3] = 255;
 }
 
 fn boundary_color(character: BoundaryCharacter) -> Rgb {

@@ -10,8 +10,8 @@ use crate::noise::{
     params::{GlacialClass, NoiseParams, TerrainClass},
 };
 use crate::plates::{
-    continents::CrustType, regime_field::TectonicRegime, ridges::n_ridges_from_fragmentation,
-    simulate_plates,
+    continents::CrustType, plate_generation::plate_count_from_fragmentation,
+    regime_field::TectonicRegime, simulate_plates,
 };
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +81,7 @@ pub struct DebugParams {
     pub h_base: f32,
     pub h_variance: f32,
     pub erosion_iterations: u32,
-    pub n_ridges: usize,
+    pub n_plates: usize,
     pub tectonic_uplift_scale: f32,
     pub mountain_height_scale: f32,
     pub map_base_mm_equator: f32,
@@ -110,7 +110,7 @@ pub fn derive_debug_params(p: &GlobalParams) -> DebugParams {
     };
 
     // Plate parameters (analytical — no simulation).
-    let n_ridges = n_ridges_from_fragmentation(p.continental_fragmentation);
+    let n_plates = plate_count_from_fragmentation(p.continental_fragmentation);
 
     // Elevation scaling.
     let tectonic_uplift_scale = 0.5 + p.tectonic_activity * 1.5;
@@ -135,7 +135,7 @@ pub fn derive_debug_params(p: &GlobalParams) -> DebugParams {
         h_base,
         h_variance,
         erosion_iterations,
-        n_ridges,
+        n_plates,
         tectonic_uplift_scale,
         mountain_height_scale,
         map_base_mm_equator,
@@ -180,6 +180,7 @@ impl PlanetGenerator {
         let plates = simulate_plates(
             params.seed,
             params.continental_fragmentation,
+            params.mountain_prevalence,
             GRID_WIDTH,
             GRID_HEIGHT,
         );
@@ -427,6 +428,7 @@ pub fn generate_at_location(params: &GlobalParams, lat: f32, lon: f32) -> Locati
     let plates = simulate_plates(
         params.seed,
         params.continental_fragmentation,
+        params.mountain_prevalence,
         OVERVIEW_WIDTH,
         OVERVIEW_HEIGHT,
     );
@@ -793,6 +795,7 @@ mod tests {
         let plates = simulate_plates(
             params.seed,
             params.continental_fragmentation,
+            params.mountain_prevalence,
             OVERVIEW_WIDTH,
             OVERVIEW_HEIGHT,
         );

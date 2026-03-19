@@ -1,13 +1,12 @@
-//! Tectonic regime field classification (P4.6).
+//! Continuous tectonic regime characterization for the rebuilt plate system.
 //!
-//! Every grid cell is classified into one of 5 tectonic regimes based on
-//! proximity to ridges, subduction arcs, and continental crust type.
+//! Note: ridge/arc proximity classification was removed in the plate system rebuild.
+//! See git history before commit `eb343e4` for the previous implementation.
 
-use crate::plates::age_field::cell_to_vec3;
+use crate::plates::age_field::{cell_to_vec3, distance_to_seeds_km, DistanceField};
 use crate::plates::continents::CrustType;
-use crate::plates::ridges::RidgeSegment;
-use crate::plates::subduction::{point_to_subduction_distance, SubductionArc};
-use crate::sphere::{point_to_arc_distance, Vec3};
+use crate::plates::plate_dynamics::{BoundaryCharacter, PlateDynamics};
+use crate::sphere::Vec3;
 use serde::{Deserialize, Serialize};
 
 /// Tectonic regime at a point on the planet surface.
@@ -21,6 +20,7 @@ pub enum TectonicRegime {
 }
 
 /// A 2D field of tectonic regime classifications.
+#[derive(Clone, Debug, PartialEq)]
 pub struct RegimeField {
     pub data: Vec<TectonicRegime>,
     pub width: usize,
@@ -30,7 +30,7 @@ pub struct RegimeField {
 impl RegimeField {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
-            data: vec![TectonicRegime::CratonicShield; width * height],
+            data: vec![TectonicRegime::PassiveMargin; width * height],
             width,
             height,
         }
@@ -45,116 +45,23 @@ impl RegimeField {
     }
 }
 
-// ── Classification thresholds ───────────────────────────────────────────────
-
-/// Proximity to a ridge → ActiveExtensional (≈ 2° ≈ 222 km).
-const RIDGE_THRESHOLD_RAD: f64 = 2.0 * std::f64::consts::PI / 180.0;
-
-/// Proximity to a subduction arc → ActiveCompressional (≈ 3° ≈ 333 km).
-const SUBDUCTION_THRESHOLD_RAD: f64 = 3.0 * std::f64::consts::PI / 180.0;
-
-/// Proximity to a hotspot centre → VolcanicHotspot (≈ 2° ≈ 222 km).
-const HOTSPOT_THRESHOLD_RAD: f64 = 2.0 * std::f64::consts::PI / 180.0;
-
-/// Generate the regime field from all plate simulation outputs.
-///
-/// Classification priority (highest first):
-///   1. Near a ridge → ActiveExtensional
-///   2. Near a subduction arc → ActiveCompressional
-///   3. Near a hotspot → VolcanicHotspot
-///   4. Continental (high age) → CratonicShield
-///   5. Continental (moderate age) or oceanic far from ridges → PassiveMargin
-pub fn generate_regime_field(
-    ridges: &[RidgeSegment],
-    arcs: &[SubductionArc],
-    hotspots: &[Vec3],
-    crust_field: &[CrustType],
-    width: usize,
-    height: usize,
-) -> RegimeField {
-    // Precompute ridge arc normals for early-exit culling.
-    // Use coarse main arcs (one per ridge) — transform fault offsets (≤2.5°) are
-    // negligible relative to the 2° extensional threshold.
-    struct RidgeArc {
-        a: Vec3,
-        b: Vec3,
-        normal: Vec3,
-    }
-    let ridge_arcs: Vec<RidgeArc> = ridges
-        .iter()
-        .map(|r| {
-            let (a, b) = (r.main_start, r.main_end);
-            let n_raw = a.cross(b);
-            let normal = if n_raw.length() > 1e-12 {
-                n_raw.normalize()
-            } else {
-                Vec3::new(0.0, 0.0, 1.0)
-            };
-            RidgeArc { a, b, normal }
-        })
-        .collect();
-
-    let mut field = RegimeField::new(width, height);
-    let n = width * height;
-    if n == 0 {
-        return field;
-    }
-
-    for r in 0..height {
-        for c in 0..width {
-            let p = cell_to_vec3(r, c, width, height);
-            let idx = r * width + c;
-
-            // 1. Ridge proximity → ActiveExtensional.
-            let mut min_ridge_dist = f64::MAX;
-            for ra in &ridge_arcs {
-                let gc_dist = ra.normal.dot(p).abs().asin();
-                if gc_dist >= RIDGE_THRESHOLD_RAD {
-                    continue;
-                }
-                let d = point_to_arc_distance(p, ra.a, ra.b);
-                if d < min_ridge_dist {
-                    min_ridge_dist = d;
-                }
-            }
-            if min_ridge_dist < RIDGE_THRESHOLD_RAD {
-                field.set(r, c, TectonicRegime::ActiveExtensional);
-                continue;
-            }
-
-            // 2. Subduction proximity → ActiveCompressional.
-            let near_subduction = arcs
-                .iter()
-                .any(|arc| point_to_subduction_distance(p, arc) < SUBDUCTION_THRESHOLD_RAD);
-            if near_subduction {
-                field.set(r, c, TectonicRegime::ActiveCompressional);
-                continue;
-            }
-
-            // 3. Hotspot proximity → VolcanicHotspot.
-            let near_hotspot = hotspots
-                .iter()
-                .any(|&h| p.dot(h).clamp(-1.0, 1.0).acos() < HOTSPOT_THRESHOLD_RAD);
-            if near_hotspot {
-                field.set(r, c, TectonicRegime::VolcanicHotspot);
-                continue;
-            }
-
-            // 4/5. Continental vs. passive/oceanic.
-            let regime = match crust_field[idx] {
-                CrustType::Continental => TectonicRegime::CratonicShield,
-                CrustType::ActiveMargin => TectonicRegime::ActiveCompressional,
-                CrustType::PassiveMargin => TectonicRegime::PassiveMargin,
-                CrustType::Oceanic => TectonicRegime::PassiveMargin,
-            };
-            field.set(r, c, regime);
-        }
-    }
-
-    field
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegimeCharacterField {
+    pub convergent_influence: Vec<f32>,
+    pub divergent_influence: Vec<f32>,
+    pub transform_influence: Vec<f32>,
+    pub hotspot_influence: Vec<f32>,
+    pub cratonic_stability: Vec<f32>,
+    pub width: usize,
+    pub height: usize,
 }
 
-/// Generate a small set of volcanic hotspot positions using the given seed.
+const HOTSPOT_RADIUS_KM: f64 = 300.0;
+const BOUNDARY_INFLUENCE_RADIUS_KM: f32 = 500.0;
+const RATE_REFERENCE_CM_YR: f32 = 8.0;
+const MIN_ACTIVE_INFLUENCE: f32 = 0.02;
+const MIN_CRATONIC_STABILITY: f32 = 0.05;
+
 pub fn generate_hotspots(seed: u64, n: usize) -> Vec<Vec3> {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -170,75 +77,199 @@ pub fn generate_hotspots(seed: u64, n: usize) -> Vec<Vec3> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plates::{
-        age_field::{compute_age_field, find_subduction_sites},
-        continents::assign_continental_crust,
-        ridges::generate_ridges,
-        subduction::generate_subduction_arcs,
-    };
+pub fn compute_regime_character(
+    dynamics: &PlateDynamics,
+    crust_field: &[CrustType],
+    thermal_age: &[f32],
+    hotspots: &[Vec3],
+    convergent_distance: &DistanceField,
+    divergent_distance: &DistanceField,
+    width: usize,
+) -> RegimeCharacterField {
+    let height = crust_field.len() / width;
+    let n = width * height;
+    let transform_seeds: Vec<usize> = dynamics
+        .boundary_field
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, character)| {
+            (dynamics.is_boundary[idx]
+                && character.transform_rate.abs() >= character.convergent_rate.abs())
+            .then_some(idx)
+        })
+        .collect();
+    let transform_distance = distance_to_seeds_km(width, height, &transform_seeds);
 
-    fn make_regime(seed: u64, w: usize, h: usize) -> RegimeField {
-        let ridges = generate_ridges(seed, 5);
-        let age = compute_age_field(&ridges, w, h);
-        let sites = find_subduction_sites(&age, w, h);
-        let arcs = generate_subduction_arcs(&sites, w, h, seed, 10);
-        let crust = assign_continental_crust(&age, &arcs, w, h);
-        let hotspots = generate_hotspots(seed, 3);
-        generate_regime_field(&ridges, &arcs, &hotspots, &crust, w, h)
-    }
-
-    #[test]
-    fn regime_full_coverage() {
-        // Every cell must have a valid (non-panic) regime — just checking all access is safe.
-        let rf = make_regime(42, 64, 32);
-        assert_eq!(rf.data.len(), 64 * 32);
-    }
-
-    #[test]
-    fn regime_no_unclassified() {
-        // All TectonicRegime variants are valid; just ensure no out-of-bounds panics.
-        let rf = make_regime(42, 64, 32);
-        let known_variants = [
-            TectonicRegime::PassiveMargin,
-            TectonicRegime::CratonicShield,
-            TectonicRegime::ActiveCompressional,
-            TectonicRegime::ActiveExtensional,
-            TectonicRegime::VolcanicHotspot,
-        ];
-        for &v in &rf.data {
-            assert!(known_variants.contains(&v), "unknown regime: {v:?}");
+    let mut hotspot_influence = vec![0.0_f32; n];
+    for row in 0..height {
+        for col in 0..width {
+            let idx = row * width + col;
+            let point = cell_to_vec3(row, col, width, height);
+            let mut best = 0.0_f32;
+            for &hotspot in hotspots {
+                let distance_km = point.dot(hotspot).clamp(-1.0, 1.0).acos() * 6371.0_f64;
+                let influence =
+                    (1.0 - distance_km as f32 / HOTSPOT_RADIUS_KM as f32).clamp(0.0, 1.0);
+                best = best.max(influence);
+            }
+            hotspot_influence[idx] = best;
         }
     }
 
+    let convergent_influence = influence_from_distance_field(
+        &convergent_distance.distance_km,
+        &convergent_distance.nearest_source,
+        &dynamics.boundary_field,
+        BOUNDARY_INFLUENCE_RADIUS_KM,
+        width * height,
+        true,
+    );
+    let divergent_influence = influence_from_distance_field(
+        &divergent_distance.distance_km,
+        &divergent_distance.nearest_source,
+        &dynamics.boundary_field,
+        BOUNDARY_INFLUENCE_RADIUS_KM,
+        width * height,
+        false,
+    );
+    let transform_influence: Vec<f32> = transform_distance
+        .distance_km
+        .iter()
+        .zip(transform_distance.nearest_source.iter())
+        .map(|(&distance_km, &source)| {
+            if source == usize::MAX {
+                return 0.0;
+            }
+            let rate = dynamics.boundary_field[source].transform_rate.abs() / RATE_REFERENCE_CM_YR;
+            (1.0 - distance_km / BOUNDARY_INFLUENCE_RADIUS_KM).clamp(0.0, 1.0)
+                * rate.clamp(0.0, 1.0)
+        })
+        .collect();
+
+    let cratonic_stability = crust_field
+        .iter()
+        .enumerate()
+        .map(|(idx, &crust)| {
+            if crust != CrustType::Continental {
+                return 0.0;
+            }
+            let boundary_max = convergent_influence[idx]
+                .max(divergent_influence[idx])
+                .max(transform_influence[idx]);
+            let continental_age = ((thermal_age[idx] - 0.3) / 0.7).clamp(0.0, 1.0);
+            continental_age * (1.0 - boundary_max).clamp(0.0, 1.0)
+        })
+        .collect();
+
+    RegimeCharacterField {
+        convergent_influence,
+        divergent_influence,
+        transform_influence,
+        hotspot_influence,
+        cratonic_stability,
+        width,
+        height,
+    }
+}
+
+fn influence_from_distance_field(
+    distances_km: &[f32],
+    nearest_source: &[usize],
+    boundary_field: &[BoundaryCharacter],
+    radius_km: f32,
+    n: usize,
+    convergent: bool,
+) -> Vec<f32> {
+    (0..n)
+        .map(|idx| {
+            let source = nearest_source[idx];
+            if source == usize::MAX {
+                return 0.0;
+            }
+            let rate = boundary_field[source].convergent_rate;
+            let rate_mag = if convergent {
+                rate.max(0.0)
+            } else {
+                (-rate).max(0.0)
+            };
+            let rate_scale = (rate_mag / RATE_REFERENCE_CM_YR).clamp(0.0, 1.0);
+            (1.0 - distances_km[idx] / radius_km).clamp(0.0, 1.0) * rate_scale
+        })
+        .collect()
+}
+
+pub fn discretize_regime_field(
+    character: &RegimeCharacterField,
+    crust_field: &[CrustType],
+) -> RegimeField {
+    let mut field = RegimeField::new(character.width, character.height);
+    for (idx, regime) in field.data.iter_mut().enumerate() {
+        let convergent = character.convergent_influence[idx];
+        let divergent = character.divergent_influence[idx];
+        let hotspot = character.hotspot_influence[idx];
+        let cratonic = character.cratonic_stability[idx];
+        let transform = character.transform_influence[idx];
+
+        *regime = if convergent >= MIN_ACTIVE_INFLUENCE
+            && convergent >= divergent
+            && convergent >= transform
+            && convergent >= hotspot
+            && convergent >= cratonic
+        {
+            TectonicRegime::ActiveCompressional
+        } else if divergent >= MIN_ACTIVE_INFLUENCE
+            && divergent >= transform
+            && divergent >= hotspot
+            && divergent >= cratonic
+        {
+            TectonicRegime::ActiveExtensional
+        } else if hotspot >= MIN_ACTIVE_INFLUENCE && hotspot >= transform && hotspot >= cratonic {
+            TectonicRegime::VolcanicHotspot
+        } else if crust_field[idx] == CrustType::Continental
+            && cratonic >= MIN_CRATONIC_STABILITY
+            && cratonic >= transform
+        {
+            TectonicRegime::CratonicShield
+        } else {
+            TectonicRegime::PassiveMargin
+        };
+    }
+    field
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
-    fn regime_has_extensional_zones() {
-        let rf = make_regime(42, 128, 64);
-        let n = rf
-            .data
-            .iter()
-            .filter(|&&r| r == TectonicRegime::ActiveExtensional)
-            .count();
-        assert!(n > 0, "expected some ActiveExtensional zones near ridges");
+    fn hotspots_count_matches_request() {
+        let hotspots = generate_hotspots(42, 4);
+        assert_eq!(hotspots.len(), 4);
     }
 
     #[test]
-    fn regime_has_craton_zones() {
-        let rf = make_regime(42, 128, 64);
-        let n = rf
-            .data
-            .iter()
-            .filter(|&&r| r == TectonicRegime::CratonicShield)
-            .count();
-        assert!(n > 0, "expected some CratonicShield zones");
-    }
-
-    #[test]
-    fn regime_get_set_roundtrip() {
-        let mut rf = RegimeField::new(4, 4);
-        rf.set(1, 2, TectonicRegime::ActiveCompressional);
-        assert_eq!(rf.get(1, 2), TectonicRegime::ActiveCompressional);
+    fn discrete_regime_prefers_strongest_influence() {
+        let character = RegimeCharacterField {
+            convergent_influence: vec![0.9, 0.1, 0.1, 0.1, 0.1],
+            divergent_influence: vec![0.1, 0.9, 0.1, 0.1, 0.1],
+            transform_influence: vec![0.1, 0.1, 0.2, 0.7, 0.2],
+            hotspot_influence: vec![0.1, 0.1, 0.9, 0.1, 0.1],
+            cratonic_stability: vec![0.1, 0.1, 0.1, 0.1, 0.9],
+            width: 5,
+            height: 1,
+        };
+        let crust = vec![
+            CrustType::ActiveMargin,
+            CrustType::Oceanic,
+            CrustType::Oceanic,
+            CrustType::PassiveMargin,
+            CrustType::Continental,
+        ];
+        let field = discretize_regime_field(&character, &crust);
+        assert_eq!(field.data[0], TectonicRegime::ActiveCompressional);
+        assert_eq!(field.data[1], TectonicRegime::ActiveExtensional);
+        assert_eq!(field.data[2], TectonicRegime::VolcanicHotspot);
+        assert_eq!(field.data[3], TectonicRegime::PassiveMargin);
+        assert_eq!(field.data[4], TectonicRegime::CratonicShield);
     }
 }

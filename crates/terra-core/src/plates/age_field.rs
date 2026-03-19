@@ -1,172 +1,202 @@
-//! Lithospheric age field from distance to nearest ridge (P4.3).
+//! Thermal-age and spherical grid-distance helpers for the rebuilt plate system.
 //!
-//! Age is normalized 0 (at a ridge) → 1 (maximum distance).  Points where
-//! age exceeds `SUBDUCTION_THRESHOLD` are flagged as subduction initiation sites.
+//! Note: ridge-based age computation removed in the plate system rebuild.
+//! See git history before commit `eb343e4` for the previous implementation.
 
-use crate::plates::ridges::RidgeSegment;
-use crate::sphere::{point_to_arc_distance, Vec3};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
-/// Normalized age at which old oceanic crust initiates subduction.
-pub const SUBDUCTION_THRESHOLD: f32 = 0.65;
+use crate::sphere::Vec3;
 
-/// Grid-cell (row, col) coordinates.
-pub type GridCell = (usize, usize);
+const EARTH_RADIUS_KM: f64 = 6371.0;
+const MAX_OCEANIC_THERMAL_DISTANCE_KM: f32 = 7000.0;
+const MAX_CONTINENTAL_BOUNDARY_DISTANCE_KM: f32 = 2500.0;
 
-/// Compute the lithospheric age field for a `width × height` lon/lat grid.
-///
-/// The grid covers the full sphere: row 0 = 90°N, row height−1 = 90°S,
-/// col 0 = −180°E, col width−1 = +180°E.
-///
-/// Returns a `Vec<f32>` of length `width * height`.  Values are in `[0, 1]`
-/// where 0 = at a ridge and 1 = oldest crust.
-pub fn compute_age_field(ridges: &[RidgeSegment], width: usize, height: usize) -> Vec<f32> {
-    let n = width * height;
-    if n == 0 || ridges.is_empty() {
-        return vec![1.0_f32; n];
-    }
-
-    // Precompute arc normals for early-exit culling.
-    // Use the coarse main arc (main_start → main_end) per ridge rather than all sub-arcs.
-    // Transform fault offsets are at most 2.5° — negligible relative to the age-field
-    // gradient scale (~10°), so the main arc approximation is accurate.
-    struct ArcData {
-        a: Vec3,
-        b: Vec3,
-        normal: Vec3, // unit normal to great circle plane
-    }
-    let mut arcs: Vec<ArcData> = Vec::with_capacity(ridges.len());
-    for ridge in ridges {
-        let (a, b) = (ridge.main_start, ridge.main_end);
-        let n_raw = a.cross(b);
-        let normal = if n_raw.length() > 1e-12 {
-            n_raw.normalize()
-        } else {
-            Vec3::new(0.0, 0.0, 1.0)
-        };
-        arcs.push(ArcData { a, b, normal });
-    }
-
-    let mut raw = vec![0.0_f64; n];
-    let mut max_dist = 0.0_f64;
-
-    for r in 0..height {
-        let lat_deg = 90.0 - r as f64 * 180.0 / (height - 1).max(1) as f64;
-        for c in 0..width {
-            let lon_deg = -180.0 + c as f64 * 360.0 / (width - 1).max(1) as f64;
-            let p = Vec3::from_latlon(lat_deg, lon_deg);
-
-            let mut min_dist = f64::MAX;
-            for arc in &arcs {
-                // Early-exit: minimum possible distance = angular distance to great circle.
-                let gc_dist = arc.normal.dot(p).abs().asin();
-                if gc_dist >= min_dist {
-                    continue;
-                }
-                let d = point_to_arc_distance(p, arc.a, arc.b);
-                if d < min_dist {
-                    min_dist = d;
-                }
-            }
-            raw[r * width + c] = min_dist;
-            if min_dist > max_dist {
-                max_dist = min_dist;
-            }
-        }
-    }
-
-    // Normalize to [0, 1].
-    if max_dist < 1e-12 {
-        return vec![0.0_f32; n];
-    }
-    raw.iter().map(|&v| (v / max_dist) as f32).collect()
+#[derive(Clone, Debug, PartialEq)]
+pub struct DistanceField {
+    pub distance_km: Vec<f32>,
+    pub nearest_source: Vec<usize>,
 }
 
-/// Return all grid cells where lithospheric age exceeds the subduction threshold.
-pub fn find_subduction_sites(age_field: &[f32], width: usize, height: usize) -> Vec<GridCell> {
-    let mut sites = Vec::new();
-    for r in 0..height {
-        for c in 0..width {
-            if age_field[r * width + c] >= SUBDUCTION_THRESHOLD {
-                sites.push((r, c));
-            }
-        }
-    }
-    sites
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct QueueNode {
+    distance_km: f32,
+    idx: usize,
+    source_idx: usize,
 }
 
-/// Convert a grid cell to a unit-sphere point.
-///
-/// Uses **cell-centred** coordinates: row 0 maps to ~89.6°N (not 90°),
-/// row `height-1` to ~89.6°S.  This prevents degenerate pole mapping where
-/// all columns of the top or bottom row would collapse to the same Vec3 point,
-/// which caused uniform-regime bands spanning the full grid width.
+impl Eq for QueueNode {}
+
+impl Ord for QueueNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .distance_km
+            .partial_cmp(&self.distance_km)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| self.idx.cmp(&other.idx))
+    }
+}
+
+impl PartialOrd for QueueNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Convert a grid cell to a unit-sphere point using cell-centred sampling.
 pub fn cell_to_vec3(r: usize, c: usize, width: usize, height: usize) -> Vec3 {
     let lat_deg = 90.0 - (r as f64 + 0.5) * 180.0 / height as f64;
     let lon_deg = -180.0 + (c as f64 + 0.5) * 360.0 / width as f64;
     Vec3::from_latlon(lat_deg, lon_deg)
 }
 
+fn east_west_step_km(row: usize, width: usize, height: usize) -> f32 {
+    let point = cell_to_vec3(row, 0, width, height);
+    let lat_cos = (point.x * point.x + point.y * point.y).sqrt().max(1e-4);
+    let lat_step_rad = std::f64::consts::PI / height as f64;
+    (lat_step_rad * EARTH_RADIUS_KM * lat_cos) as f32
+}
+
+fn north_south_step_km(height: usize) -> f32 {
+    (std::f64::consts::PI * EARTH_RADIUS_KM / height as f64) as f32
+}
+
+fn neighbors4_with_cost(idx: usize, width: usize, height: usize) -> [(Option<usize>, f32); 4] {
+    let row = idx / width;
+    let col = idx % width;
+    let north_south = north_south_step_km(height);
+    let east_west = east_west_step_km(row, width, height);
+    [
+        (
+            if row > 0 {
+                Some((row - 1) * width + col)
+            } else {
+                None
+            },
+            north_south,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + col)
+            } else {
+                None
+            },
+            north_south,
+        ),
+        (
+            Some(row * width + if col > 0 { col - 1 } else { width - 1 }),
+            east_west,
+        ),
+        (
+            Some(row * width + if col + 1 < width { col + 1 } else { 0 }),
+            east_west,
+        ),
+    ]
+}
+
+/// Compute spherical approximate distance-to-seed on the equirectangular grid.
+pub fn distance_to_seeds_km(width: usize, height: usize, seeds: &[usize]) -> DistanceField {
+    let n = width * height;
+    let mut distance_km = vec![f32::INFINITY; n];
+    let mut nearest_source = vec![usize::MAX; n];
+    let mut heap = BinaryHeap::new();
+
+    for &seed in seeds {
+        if seed >= n {
+            continue;
+        }
+        distance_km[seed] = 0.0;
+        nearest_source[seed] = seed;
+        heap.push(QueueNode {
+            distance_km: 0.0,
+            idx: seed,
+            source_idx: seed,
+        });
+    }
+
+    while let Some(node) = heap.pop() {
+        if node.distance_km > distance_km[node.idx] {
+            continue;
+        }
+        for (neighbor, step_km) in neighbors4_with_cost(node.idx, width, height) {
+            let Some(neighbor) = neighbor else {
+                continue;
+            };
+            let next_distance = node.distance_km + step_km;
+            if next_distance < distance_km[neighbor] {
+                distance_km[neighbor] = next_distance;
+                nearest_source[neighbor] = node.source_idx;
+                heap.push(QueueNode {
+                    distance_km: next_distance,
+                    idx: neighbor,
+                    source_idx: node.source_idx,
+                });
+            }
+        }
+    }
+
+    DistanceField {
+        distance_km,
+        nearest_source,
+    }
+}
+
+/// Compute normalized thermal age from boundary distances.
+pub fn compute_thermal_age(
+    continental_mask: &[bool],
+    divergent_distance_km: &[f32],
+    boundary_distance_km: &[f32],
+) -> Vec<f32> {
+    continental_mask
+        .iter()
+        .enumerate()
+        .map(|(idx, &is_continental)| {
+            if is_continental {
+                (boundary_distance_km[idx] / MAX_CONTINENTAL_BOUNDARY_DISTANCE_KM).clamp(0.3, 1.0)
+            } else {
+                (divergent_distance_km[idx] / MAX_OCEANIC_THERMAL_DISTANCE_KM).clamp(0.0, 1.0)
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plates::ridges::generate_ridges;
 
-    fn make_field(w: usize, h: usize) -> Vec<f32> {
-        let ridges = generate_ridges(42, 5);
-        compute_age_field(&ridges, w, h)
+    #[test]
+    fn cell_to_vec3_uses_cell_centres() {
+        let north = cell_to_vec3(0, 0, 64, 32);
+        let south = cell_to_vec3(31, 0, 64, 32);
+        let (north_lat, _) = north.to_latlon();
+        let (south_lat, _) = south.to_latlon();
+        assert!(north_lat < 90.0);
+        assert!(south_lat > -90.0);
     }
 
     #[test]
-    fn age_field_correct_size() {
-        let field = make_field(64, 32);
-        assert_eq!(field.len(), 64 * 32);
+    fn seed_distance_is_zero_at_seed() {
+        let field = distance_to_seeds_km(16, 8, &[10]);
+        assert_eq!(field.distance_km[10], 0.0);
+        assert_eq!(field.nearest_source[10], 10);
     }
 
     #[test]
-    fn age_field_values_in_range() {
-        let field = make_field(64, 32);
-        for &v in &field {
-            assert!((0.0..=1.0).contains(&v), "age value {v} outside [0, 1]");
-        }
-    }
-
-    #[test]
-    fn age_field_has_zero_at_ridge() {
-        // With 5 ridges on a 64×32 grid, at least one cell should have age < 0.05.
-        let field = make_field(64, 32);
-        let min = field.iter().cloned().fold(f32::INFINITY, f32::min);
-        assert!(min < 0.05, "no cell near a ridge; min age = {min:.4}");
-    }
-
-    #[test]
-    fn age_field_has_max_one() {
-        let field = make_field(64, 32);
-        let max = field.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        assert!((max - 1.0).abs() < 1e-6, "max age should be 1.0, got {max}");
-    }
-
-    #[test]
-    fn subduction_sites_exist() {
-        let field = make_field(64, 32);
-        let sites = find_subduction_sites(&field, 64, 32);
-        assert!(
-            !sites.is_empty(),
-            "subduction sites should exist for THRESHOLD < 1.0"
+    fn thermal_age_stays_in_unit_range() {
+        let continental_mask = vec![false, false, true, true];
+        let age = compute_thermal_age(
+            &continental_mask,
+            &[0.0, 3500.0, 1000.0, 1000.0],
+            &[100.0, 200.0, 0.0, 5000.0],
         );
-    }
-
-    #[test]
-    fn subduction_sites_above_threshold() {
-        let field = make_field(64, 32);
-        let sites = find_subduction_sites(&field, 64, 32);
-        for (r, c) in sites {
-            assert!(field[r * 64 + c] >= SUBDUCTION_THRESHOLD);
+        for value in age {
+            assert!((0.0..=1.0).contains(&value));
         }
     }
 
     #[test]
-    fn empty_ridges_returns_ones() {
-        let field = compute_age_field(&[], 8, 4);
-        assert!(field.iter().all(|&v| v == 1.0));
+    fn continental_age_has_minimum_floor() {
+        let age = compute_thermal_age(&[true], &[0.0], &[0.0]);
+        assert_eq!(age[0], 0.3);
     }
 }

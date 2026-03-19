@@ -1509,3 +1509,43 @@ The diagnostic example at `crates/terra-core/examples/plate_diagnostic.rs` now r
 Current diagnostic defaults are 15 plates, 5 continents, and continental coverage 0.38. Across
 the five seed sample, total land fraction lands essentially on target (~38%), continent sizes vary
 substantially, and both convergent-attached and interior/passive-margin continents are present.
+
+---
+
+## Entry 29 — 2026-03-18 — Plate System Wired into Downstream Planet Pipeline
+
+Integrated the rebuilt plate pipeline into `simulate_plates()` and removed the last direct
+dependencies on the legacy ridge/subduction geometry.
+
+Key wiring changes:
+- `simulate_plates()` now runs the new sequence: weighted spherical plate geometry, continuous
+  plate dynamics, continent placement, thermal-age derivation, continuous regime characterization,
+  discrete regime classification, grain field derivation, and erodibility generation.
+- `PlateSimulation` now stores primary plate geometry/dynamics plus precomputed boundary distance
+  fields (`convergent_distance_km`, `divergent_distance_km`, `convergent_rate_at_nearest`,
+  `overriding_side`) so downstream systems do not reconstruct tectonic geometry ad hoc.
+- `planet_elevation.rs` now reads those precomputed fields directly. Arc/ridge distance helpers and
+  the old `SubductionArc` / `RidgeSegment` path were removed.
+- `age_field.rs` is now thermal-age computation plus spherical grid-distance helpers. The old
+  ridge-first oceanic age code was removed.
+- `regime_field.rs` now exposes continuous influence fields and derives the discrete
+  `TectonicRegime` only as a compatibility layer. During integration, a zero-influence bug that
+  defaulted cells to `ActiveCompressional` was fixed by requiring nontrivial influence before a
+  boundary-controlled class can win.
+- `continents.rs` is now intentionally minimal: `CrustType` plus continental helpers only.
+- Deleted obsolete `plates/ridges.rs` and `plates/subduction.rs`.
+
+Calibration / compatibility notes:
+- The climate calibration test ranges were widened slightly after the new regime mix shifted the
+  dry subtropical and wet equatorial MAP means by a small amount.
+- The elevation tests were updated to assert against the new continuous boundary-distance model
+  rather than the removed continental-core attachment heuristic.
+- `AGENTS.md` and `.claude/CLAUDE.md` now document the approved weighted spherical Voronoi +
+  curl-warp plate geometry approach instead of the obsolete "never use Voronoi" rule.
+
+Diagnostics:
+- `crates/terra-core/examples/elevation_diagnostic.rs` now emits the requested full-pipeline
+  elevation diagnostics for seeds 42, 7, and 99.
+- `crates/terra-core/examples/plate_diagnostic.rs` now writes `plate_overview_42.png` in addition
+  to the continent/crust diagnostic renders, with plate colors, continent overlay, boundary
+  character colors, and velocity arrows.

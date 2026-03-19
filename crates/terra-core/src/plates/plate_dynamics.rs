@@ -23,6 +23,14 @@ pub struct BoundaryCharacter {
     /// ID of the plate on the other side of the boundary.
     /// For interior pixels, this equals the pixel's own plate ID.
     pub neighbor_plate: u8,
+    /// Boundary tangent in the local east/north frame at this pixel.
+    pub tangent_east: f32,
+    pub tangent_north: f32,
+    /// Boundary normal pointing from the local plate toward the neighbor plate.
+    pub normal_east: f32,
+    pub normal_north: f32,
+    /// Plate interpreted as the overriding side for convergent boundaries.
+    pub overriding_plate: u8,
 }
 
 /// Full dynamics result for the plate system.
@@ -67,9 +75,25 @@ pub fn compute_plate_dynamics(
     let smoothed = smooth_boundary_character(geometry, &is_boundary, &neighbor_plates, &raw_field);
 
     for idx in 0..boundary_field.len() {
+        let own_plate = geometry.plate_ids[idx];
         if is_boundary[idx] {
             boundary_field[idx].convergent_rate = smoothed[idx].0;
             boundary_field[idx].transform_rate = smoothed[idx].1;
+            let point = point_for_idx(idx, geometry.width, geometry.height);
+            let (normal, tangent) =
+                boundary_basis(geometry, &is_boundary, &neighbor_plates, idx, point);
+            boundary_field[idx].tangent_east = tangent.0 as f32;
+            boundary_field[idx].tangent_north = tangent.1 as f32;
+            boundary_field[idx].normal_east = normal.0 as f32;
+            boundary_field[idx].normal_north = normal.1 as f32;
+            boundary_field[idx].overriding_plate = overriding_plate_for_boundary(
+                geometry.plate_ids[idx],
+                neighbor_plates[idx],
+                &plate_velocities,
+                normal,
+            );
+        } else {
+            boundary_field[idx].overriding_plate = own_plate;
         }
     }
 
@@ -77,6 +101,24 @@ pub fn compute_plate_dynamics(
         plate_velocities,
         boundary_field,
         is_boundary,
+    }
+}
+
+fn overriding_plate_for_boundary(
+    own_plate: u8,
+    neighbor_plate: u8,
+    plate_velocities: &[(f32, f32)],
+    normal: (f64, f64),
+) -> u8 {
+    let own_velocity = plate_velocities[usize::from(own_plate)];
+    let neighbor_velocity = plate_velocities[usize::from(neighbor_plate)];
+    let own_pushback = own_velocity.0 as f64 * -normal.0 + own_velocity.1 as f64 * -normal.1;
+    let neighbor_pushback =
+        neighbor_velocity.0 as f64 * normal.0 + neighbor_velocity.1 as f64 * normal.1;
+    if own_pushback >= neighbor_pushback {
+        own_plate
+    } else {
+        neighbor_plate
     }
 }
 

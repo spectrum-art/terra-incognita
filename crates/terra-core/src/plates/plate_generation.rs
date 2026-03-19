@@ -27,6 +27,7 @@ const CURL_DIFF_STEP_DEG: f64 = 3.0;
 const CURL_MAGNITUDE_NORMALIZER: f64 = 1.5;
 const CURL_SEED_SALT: u32 = 0xC011_AA77;
 const HANGING_CHAD_PASSES: usize = 3;
+pub const DEFAULT_PLATE_WARP_AMPLITUDE_DEG: f64 = 7.0;
 
 /// Current weighted-Voronoi and curl-warp tuning used by diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,6 +68,17 @@ pub fn generate_raw_plate_geometry(
     height: usize,
 ) -> PlateGeometry {
     generate_raw_plate_geometry_with_weights(n_plates, seed, width, height).0
+}
+
+pub fn plate_count_from_fragmentation(fragmentation: f32) -> usize {
+    let t = fragmentation.clamp(0.0, 1.0) as f64;
+    let span = (MAX_PLATES - MIN_PLATES) as f64;
+    (MIN_PLATES as f64 + span * t).round() as usize
+}
+
+pub fn continent_count_from_fragmentation(fragmentation: f32) -> usize {
+    let t = fragmentation.clamp(0.0, 1.0) as f64;
+    (3.0 + 4.0 * t).round() as usize
 }
 
 /// Generate plate geometry for the given grid.
