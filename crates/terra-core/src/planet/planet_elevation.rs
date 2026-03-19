@@ -8,11 +8,13 @@
 //!
 //! Output is returned in physical kilometres above a structural datum.
 
-use std::collections::VecDeque;
-
 use noise::{NoiseFn, Perlin};
 
-use crate::plates::{age_field::cell_to_vec3, continents::CrustType, PlateSimulation};
+use crate::plates::{
+    age_field::{cell_to_vec3, distance_to_mask_km},
+    continents::CrustType,
+    PlateSimulation,
+};
 use crate::sphere::{great_circle_distance_rad, Vec3};
 
 const EARTH_RADIUS_KM: f64 = 6371.0;
@@ -57,44 +59,7 @@ fn build_cell_points(width: usize, height: usize) -> Vec<Vec3> {
 }
 
 fn multi_source_grid_distance(seeds: &[bool], width: usize, height: usize) -> Vec<f32> {
-    let n = width * height;
-    let mut distances = vec![f32::INFINITY; n];
-    let mut queue = VecDeque::new();
-
-    for (idx, &is_seed) in seeds.iter().enumerate() {
-        if is_seed {
-            distances[idx] = 0.0;
-            queue.push_back(idx);
-        }
-    }
-
-    while let Some(idx) = queue.pop_front() {
-        let r = idx / width;
-        let c = idx % width;
-        let next_distance = distances[idx] + 1.0;
-        let neighbours = [
-            if r > 0 {
-                Some((r - 1) * width + c)
-            } else {
-                None
-            },
-            if r + 1 < height {
-                Some((r + 1) * width + c)
-            } else {
-                None
-            },
-            Some(r * width + if c > 0 { c - 1 } else { width - 1 }),
-            Some(r * width + if c + 1 < width { c + 1 } else { 0 }),
-        ];
-        for neighbour in neighbours.into_iter().flatten() {
-            if next_distance < distances[neighbour] {
-                distances[neighbour] = next_distance;
-                queue.push_back(neighbour);
-            }
-        }
-    }
-
-    distances
+    distance_to_mask_km(width, height, seeds)
 }
 
 fn base_thickness_km(crust: CrustType, continental_fraction: f32) -> f32 {
@@ -531,15 +496,18 @@ mod tests {
 
         let ac: Vec<f32> = elev
             .iter()
-            .zip(plates.regime_field.data.iter())
-            .filter(|(_, &regime)| regime == TectonicRegime::ActiveCompressional)
-            .map(|(&value, _)| value)
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.regime_field.data[*idx] == TectonicRegime::ActiveCompressional
+                    && plates.crust_field[*idx] != CrustType::Oceanic
+            })
+            .map(|(_, &value)| value)
             .collect();
         let cs: Vec<f32> = elev
             .iter()
-            .zip(plates.regime_field.data.iter())
-            .filter(|(_, &regime)| regime == TectonicRegime::CratonicShield)
-            .map(|(&value, _)| value)
+            .enumerate()
+            .filter(|(idx, _)| plates.regime_field.data[*idx] == TectonicRegime::CratonicShield)
+            .map(|(_, &value)| value)
             .collect();
 
         assert!(!ac.is_empty());
@@ -607,8 +575,7 @@ mod tests {
             .enumerate()
             .filter(|(idx, _)| {
                 plates.crust_field[*idx] == CrustType::PassiveMargin
-                    && distance_to_continent[*idx] <= 1.0
-                    && distance_to_ocean[*idx] > 1.0
+                    && distance_to_continent[*idx] < distance_to_ocean[*idx]
             })
             .map(|(_, &value)| value)
             .collect();
@@ -617,8 +584,7 @@ mod tests {
             .enumerate()
             .filter(|(idx, _)| {
                 plates.crust_field[*idx] == CrustType::PassiveMargin
-                    && distance_to_ocean[*idx] <= 1.0
-                    && distance_to_continent[*idx] > 1.0
+                    && distance_to_ocean[*idx] < distance_to_continent[*idx]
             })
             .map(|(_, &value)| value)
             .collect();

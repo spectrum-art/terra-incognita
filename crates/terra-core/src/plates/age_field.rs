@@ -61,11 +61,12 @@ fn north_south_step_km(height: usize) -> f32 {
     (std::f64::consts::PI * EARTH_RADIUS_KM / height as f64) as f32
 }
 
-fn neighbors4_with_cost(idx: usize, width: usize, height: usize) -> [(Option<usize>, f32); 4] {
+fn neighbors8_with_cost(idx: usize, width: usize, height: usize) -> [(Option<usize>, f32); 8] {
     let row = idx / width;
     let col = idx % width;
     let north_south = north_south_step_km(height);
     let east_west = east_west_step_km(row, width, height);
+    let diagonal = north_south.hypot(east_west);
     [
         (
             if row > 0 {
@@ -91,7 +92,79 @@ fn neighbors4_with_cost(idx: usize, width: usize, height: usize) -> [(Option<usi
             Some(row * width + if col + 1 < width { col + 1 } else { 0 }),
             east_west,
         ),
+        (
+            if row > 0 {
+                Some((row - 1) * width + if col > 0 { col - 1 } else { width - 1 })
+            } else {
+                None
+            },
+            diagonal,
+        ),
+        (
+            if row > 0 {
+                Some((row - 1) * width + if col + 1 < width { col + 1 } else { 0 })
+            } else {
+                None
+            },
+            diagonal,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + if col > 0 { col - 1 } else { width - 1 })
+            } else {
+                None
+            },
+            diagonal,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + if col + 1 < width { col + 1 } else { 0 })
+            } else {
+                None
+            },
+            diagonal,
+        ),
     ]
+}
+
+pub(crate) fn distance_to_mask_km(width: usize, height: usize, seeds: &[bool]) -> Vec<f32> {
+    let n = width * height;
+    let mut distance_km = vec![f32::INFINITY; n];
+    let mut heap = BinaryHeap::new();
+
+    for (idx, &is_seed) in seeds.iter().enumerate() {
+        if !is_seed {
+            continue;
+        }
+        distance_km[idx] = 0.0;
+        heap.push(QueueNode {
+            distance_km: 0.0,
+            idx,
+            source_idx: idx,
+        });
+    }
+
+    while let Some(node) = heap.pop() {
+        if node.distance_km > distance_km[node.idx] {
+            continue;
+        }
+        for (neighbor, step_km) in neighbors8_with_cost(node.idx, width, height) {
+            let Some(neighbor) = neighbor else {
+                continue;
+            };
+            let next_distance = node.distance_km + step_km;
+            if next_distance < distance_km[neighbor] {
+                distance_km[neighbor] = next_distance;
+                heap.push(QueueNode {
+                    distance_km: next_distance,
+                    idx: neighbor,
+                    source_idx: node.source_idx,
+                });
+            }
+        }
+    }
+
+    distance_km
 }
 
 /// Compute spherical approximate distance-to-seed on the equirectangular grid.
@@ -118,7 +191,7 @@ pub fn distance_to_seeds_km(width: usize, height: usize, seeds: &[usize]) -> Dis
         if node.distance_km > distance_km[node.idx] {
             continue;
         }
-        for (neighbor, step_km) in neighbors4_with_cost(node.idx, width, height) {
+        for (neighbor, step_km) in neighbors8_with_cost(node.idx, width, height) {
             let Some(neighbor) = neighbor else {
                 continue;
             };
@@ -179,6 +252,18 @@ mod tests {
         let field = distance_to_seeds_km(16, 8, &[10]);
         assert_eq!(field.distance_km[10], 0.0);
         assert_eq!(field.nearest_source[10], 10);
+    }
+
+    #[test]
+    fn mask_distance_uses_diagonals() {
+        let mut seeds = vec![false; 9];
+        seeds[0] = true;
+        let distances = distance_to_mask_km(3, 3, &seeds);
+        let east_west = east_west_step_km(0, 3, 3);
+        let north_south = north_south_step_km(3);
+        let diagonal = north_south.hypot(east_west);
+        assert!((distances[1] - east_west).abs() < 1e-3);
+        assert!((distances[4] - diagonal).abs() < 1e-3);
     }
 
     #[test]
