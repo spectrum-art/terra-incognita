@@ -1,6 +1,7 @@
 //! Rebuilt plate simulation pipeline orchestrator.
 
 pub mod age_field;
+pub mod boundary_curves;
 pub mod continent_placement;
 pub mod continents;
 pub mod erodibility_field;
@@ -11,6 +12,7 @@ pub mod regime_field;
 
 use crate::sphere::Vec3;
 use age_field::{compute_thermal_age, distance_to_seeds_km, DistanceField};
+use boundary_curves::{extract_boundary_polylines, BoundaryPolyline};
 use continent_placement::place_continents;
 use continents::CrustType;
 use erodibility_field::generate_erodibility_field;
@@ -39,6 +41,7 @@ pub struct PlateSimulation {
     pub n_plates: usize,
     pub plate_velocities: Vec<(f32, f32)>,
     pub boundary_field: Vec<BoundaryCharacter>,
+    pub boundary_polylines: Vec<BoundaryPolyline>,
     pub is_boundary: Vec<bool>,
     pub continental_mask: Vec<bool>,
     pub crust_field: Vec<CrustType>,
@@ -125,6 +128,13 @@ pub fn simulate_plates(
         &divergent_distance.distance_km,
         &all_boundary_distance.distance_km,
     );
+    let boundary_polylines = extract_boundary_polylines(
+        &boundary_field,
+        &dynamics.is_boundary,
+        &geometry.plate_ids,
+        width,
+        height,
+    );
     let convergent_rate_at_nearest =
         rate_at_nearest_sources(&boundary_field, &convergent_distance, width * height);
     let overriding_side = convergent_distance
@@ -162,6 +172,7 @@ pub fn simulate_plates(
         n_plates: geometry.n_plates,
         plate_velocities: dynamics.plate_velocities,
         boundary_field,
+        boundary_polylines,
         is_boundary: dynamics.is_boundary,
         continental_mask: placement.continental_mask,
         crust_field: placement.crust_field,
