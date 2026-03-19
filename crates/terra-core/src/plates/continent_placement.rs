@@ -1,9 +1,10 @@
 //! Continental block placement on warped plates.
 //!
 //! This module is intentionally standalone for Prompt 3 diagnostics. It places
-//! contiguous continental blocks on selected plates, derives crust types from
-//! the resulting land/ocean layout plus boundary character, and emits optional
-//! divergent-boundary offset metadata for later downstream use.
+//! continent-scale landmasses from layered spherical distance fields, derives
+//! crust types from the resulting land/ocean layout plus boundary character,
+//! and emits optional divergent-boundary offset metadata for later downstream
+//! use.
 
 use crate::plates::age_field::cell_to_vec3;
 use crate::plates::continents::CrustType;
@@ -14,9 +15,17 @@ use noise::{NoiseFn, Perlin};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::VecDeque;
 
 const CONTINENT_WEIGHT_SIGMA: f64 = 0.8;
+const SHAPE_WARP_BASE_FREQUENCY: f64 = 3.0;
+const SHAPE_WARP_MIN_DEG: f64 = 15.0;
+const SHAPE_WARP_MAX_DEG: f64 = 25.0;
+const CONVERGENT_PULL_MIN_DEG: f64 = 8.0;
+const CONVERGENT_PULL_MAX_DEG: f64 = 12.0;
+const CONVERGENT_PULL_RADIUS_DEG: f64 = 20.0;
+const CONVERGENT_SEGMENT_SAMPLE_LIMIT: usize = 96;
+const CONVERGENT_SEGMENT_CAPTURE_FACTOR: f64 = 1.25;
 const COASTLINE_BASE_FREQUENCY: f64 = 6.0;
 const COASTLINE_OCTAVES: usize = 4;
 const COASTLINE_FALLOFF: f64 = 0.5;
@@ -86,28 +95,19 @@ pub struct ContinentPlacement {
     pub divergent_transform_offsets: Vec<DivergentTransformOffset>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct PriorityCell {
-    score: f64,
-    idx: usize,
+#[derive(Clone)]
+struct ContinentGrowthConfig {
+    low_frequency_noise: Perlin,
+    coastline_noise: Perlin,
+    warp_amplitude_rad: f64,
+    pull_strength_rad: f64,
 }
 
-impl Eq for PriorityCell {}
-
-impl Ord for PriorityCell {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .score
-            .partial_cmp(&self.score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| self.idx.cmp(&other.idx))
-    }
-}
-
-impl PartialOrd for PriorityCell {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+struct ContinentGrowthInputs<'a> {
+    geometry: &'a PlateGeometry,
+    dynamics: &'a PlateDynamics,
+    points: &'a [Vec3],
+    row_weights: &'a [f64],
 }
 
 /// Place continental blocks on plates.
@@ -159,12 +159,20 @@ pub fn place_continents(
         target_land_area,
         &mut rng,
     );
-    let coastline_noise = Perlin::new((seed ^ CONTINENT_SEED_SALT.rotate_left(13)) as u32);
-
     let mut continental_mask = vec![false; total_cells];
     let mut continents = Vec::with_capacity(continental_plates.len());
+    let growth_inputs = ContinentGrowthInputs {
+        geometry,
+        dynamics,
+        points: &points,
+        row_weights: &row_weights,
+    };
 
-    for (&plate_id, &target_area) in continental_plates.iter().zip(target_continent_areas.iter()) {
+    for (continent_index, (&plate_id, &target_area)) in continental_plates
+        .iter()
+        .zip(target_continent_areas.iter())
+        .enumerate()
+    {
         let members = &plate_members[usize::from(plate_id)];
         if members.is_empty() || target_area <= 0.0 {
             continue;
@@ -176,20 +184,21 @@ pub fn place_continents(
             choose_center_point(dynamics, &points, members, centroid, bias, &mut rng);
         let center_idx = nearest_plate_cell(&points, members, center_point);
         let target_area = target_area.max(cell_area(center_idx, &row_weights, width));
+        let growth_config = continent_growth_config(seed, continent_index);
         let continent_cells = grow_continent(
-            geometry,
-            &points,
-            &row_weights,
-            &coastline_noise,
+            &growth_inputs,
             plate_id,
+            bias,
             center_idx,
             target_area,
+            &growth_config,
         );
         for idx in &continent_cells {
             continental_mask[*idx] = true;
         }
-        let land_area = continent_cells
+        let host_land_area = continent_cells
             .iter()
+            .filter(|&&idx| geometry.plate_ids[idx] == plate_id)
             .map(|&idx| cell_area(idx, &row_weights, width))
             .sum::<f64>();
         let host_area = plate_areas[usize::from(plate_id)].max(1e-9);
@@ -198,7 +207,7 @@ pub fn place_continents(
             center_idx,
             bias,
             target_area_fraction: (target_area / total_area) as f32,
-            plate_land_fraction: (land_area / host_area) as f32,
+            plate_land_fraction: (host_land_area / host_area) as f32,
         });
     }
 
@@ -484,58 +493,210 @@ fn nearest_plate_cell(points: &[Vec3], members: &[usize], target: Vec3) -> usize
         .unwrap_or(0)
 }
 
+fn continent_growth_config(seed: u64, continent_index: usize) -> ContinentGrowthConfig {
+    let salted_seed = seed
+        ^ CONTINENT_SEED_SALT
+        ^ ((continent_index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let mut rng = StdRng::seed_from_u64(salted_seed);
+    let warp_amplitude_rad = rng
+        .gen_range(SHAPE_WARP_MIN_DEG..=SHAPE_WARP_MAX_DEG)
+        .to_radians();
+    let pull_strength_rad = rng
+        .gen_range(CONVERGENT_PULL_MIN_DEG..=CONVERGENT_PULL_MAX_DEG)
+        .to_radians();
+
+    ContinentGrowthConfig {
+        low_frequency_noise: Perlin::new((salted_seed ^ 0x51A7_0C13) as u32),
+        coastline_noise: Perlin::new((salted_seed ^ 0xC05A_571E) as u32),
+        warp_amplitude_rad,
+        pull_strength_rad,
+    }
+}
+
 fn grow_continent(
-    geometry: &PlateGeometry,
-    points: &[Vec3],
-    row_weights: &[f64],
-    coastline_noise: &Perlin,
+    inputs: &ContinentGrowthInputs<'_>,
     plate_id: u8,
+    bias: ContinentBias,
     center_idx: usize,
     target_area: f64,
+    growth_config: &ContinentGrowthConfig,
 ) -> Vec<usize> {
-    let mut selected = Vec::new();
-    let mut queued = vec![false; geometry.plate_ids.len()];
-    let mut frontier = BinaryHeap::new();
-    frontier.push(PriorityCell {
-        score: 0.0,
-        idx: center_idx,
-    });
-    queued[center_idx] = true;
-    let center_point = points[center_idx];
-    let mut accumulated_area = 0.0_f64;
+    let center_point = inputs.points[center_idx];
+    let convergent_segment = (bias == ContinentBias::ConvergentSide)
+        .then(|| {
+            convergent_pull_segment(
+                inputs.geometry,
+                inputs.dynamics,
+                inputs.points,
+                plate_id,
+                center_idx,
+            )
+        })
+        .flatten();
+    let mut scored_cells = Vec::with_capacity(inputs.points.len());
 
-    while let Some(PriorityCell { idx, .. }) = frontier.pop() {
-        if geometry.plate_ids[idx] != plate_id {
-            continue;
-        }
-        if selected.contains(&idx) {
-            continue;
-        }
+    for (idx, &point) in inputs.points.iter().enumerate() {
+        let score = if idx == center_idx {
+            f64::NEG_INFINITY
+        } else {
+            growth_priority(
+                center_point,
+                point,
+                &convergent_segment,
+                &growth_config.low_frequency_noise,
+                &growth_config.coastline_noise,
+                growth_config.warp_amplitude_rad,
+                growth_config.pull_strength_rad,
+            )
+        };
+        scored_cells.push((score, idx));
+    }
+
+    scored_cells.sort_by(|(score_a, idx_a), (score_b, idx_b)| {
+        score_a
+            .partial_cmp(score_b)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| idx_a.cmp(idx_b))
+    });
+
+    let mut selected = Vec::new();
+    let mut accumulated_area = 0.0_f64;
+    for (_, idx) in scored_cells {
         selected.push(idx);
-        accumulated_area += cell_area(idx, row_weights, geometry.width);
+        accumulated_area += cell_area(idx, inputs.row_weights, inputs.geometry.width);
         if accumulated_area >= target_area {
             break;
-        }
-
-        for neighbor in neighbors4(idx, geometry.width, geometry.height) {
-            if queued[neighbor] || geometry.plate_ids[neighbor] != plate_id {
-                continue;
-            }
-            queued[neighbor] = true;
-            frontier.push(PriorityCell {
-                score: growth_priority(center_point, points[neighbor], coastline_noise),
-                idx: neighbor,
-            });
         }
     }
 
     selected
 }
 
-fn growth_priority(center: Vec3, point: Vec3, coastline_noise: &Perlin) -> f64 {
-    let radial_distance = great_circle_distance_rad(center, point);
-    let modifier = 1.0 + COASTLINE_AMPLITUDE * fractal_noise(point, coastline_noise);
-    radial_distance / modifier.clamp(0.6, 1.4)
+fn growth_priority(
+    center: Vec3,
+    point: Vec3,
+    convergent_segment: &Option<Vec<Vec3>>,
+    low_frequency_noise: &Perlin,
+    coastline_noise: &Perlin,
+    warp_amplitude_rad: f64,
+    pull_strength_rad: f64,
+) -> f64 {
+    let base_distance = great_circle_distance_rad(center, point);
+    let warped_distance =
+        base_distance - warp_amplitude_rad * low_frequency_shape_noise(point, low_frequency_noise);
+    let pulled_distance = if let Some(segment_points) = convergent_segment {
+        let boundary_distance = min_distance_to_points(point, segment_points);
+        let pull_radius_rad = CONVERGENT_PULL_RADIUS_DEG.to_radians();
+        let pull = pull_strength_rad * (1.0 - boundary_distance / pull_radius_rad).clamp(0.0, 1.0);
+        warped_distance - pull
+    } else {
+        warped_distance
+    };
+    let coastline_modifier = 1.0 + COASTLINE_AMPLITUDE * fractal_noise(point, coastline_noise);
+    pulled_distance / coastline_modifier.clamp(0.72, 1.28)
+}
+
+fn low_frequency_shape_noise(point: Vec3, perlin: &Perlin) -> f64 {
+    perlin
+        .get([
+            point.x * SHAPE_WARP_BASE_FREQUENCY,
+            point.y * SHAPE_WARP_BASE_FREQUENCY,
+            point.z * SHAPE_WARP_BASE_FREQUENCY,
+        ])
+        .clamp(-1.0, 1.0)
+}
+
+fn convergent_pull_segment(
+    geometry: &PlateGeometry,
+    dynamics: &PlateDynamics,
+    points: &[Vec3],
+    plate_id: u8,
+    center_idx: usize,
+) -> Option<Vec<Vec3>> {
+    let anchor_idx = geometry
+        .plate_ids
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &own_plate)| {
+            if own_plate != plate_id
+                || !is_convergent_boundary(dynamics.boundary_field[idx], dynamics.is_boundary[idx])
+            {
+                return None;
+            }
+            Some((
+                idx,
+                great_circle_distance_rad(points[idx], points[center_idx]),
+            ))
+        })
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+        .map(|(idx, _)| idx)?;
+
+    let component = convergent_component(anchor_idx, geometry, dynamics);
+    if component.is_empty() {
+        return None;
+    }
+
+    let anchor_point = points[anchor_idx];
+    let capture_radius =
+        CONVERGENT_PULL_RADIUS_DEG.to_radians() * CONVERGENT_SEGMENT_CAPTURE_FACTOR;
+    let mut segment: Vec<usize> = component
+        .iter()
+        .copied()
+        .filter(|&idx| great_circle_distance_rad(points[idx], anchor_point) <= capture_radius)
+        .collect();
+    if segment.is_empty() {
+        segment.push(anchor_idx);
+    }
+    segment.sort_by(|&a, &b| {
+        great_circle_distance_rad(points[a], anchor_point)
+            .partial_cmp(&great_circle_distance_rad(points[b], anchor_point))
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let step = (segment.len() / CONVERGENT_SEGMENT_SAMPLE_LIMIT).max(1);
+    let sampled: Vec<Vec3> = segment
+        .into_iter()
+        .step_by(step)
+        .take(CONVERGENT_SEGMENT_SAMPLE_LIMIT)
+        .map(|idx| points[idx])
+        .collect();
+    Some(sampled)
+}
+
+fn convergent_component(
+    start_idx: usize,
+    geometry: &PlateGeometry,
+    dynamics: &PlateDynamics,
+) -> Vec<usize> {
+    let mut visited = vec![false; geometry.plate_ids.len()];
+    let mut queue = VecDeque::from([start_idx]);
+    let mut component = Vec::new();
+    visited[start_idx] = true;
+
+    while let Some(idx) = queue.pop_front() {
+        component.push(idx);
+        for neighbor in neighbors8(idx, geometry.width, geometry.height) {
+            if visited[neighbor]
+                || !is_convergent_boundary(
+                    dynamics.boundary_field[neighbor],
+                    dynamics.is_boundary[neighbor],
+                )
+            {
+                continue;
+            }
+            visited[neighbor] = true;
+            queue.push_back(neighbor);
+        }
+    }
+
+    component
+}
+
+fn min_distance_to_points(point: Vec3, samples: &[Vec3]) -> f64 {
+    samples
+        .iter()
+        .map(|&sample| great_circle_distance_rad(point, sample))
+        .fold(f64::INFINITY, f64::min)
 }
 
 fn fractal_noise(point: Vec3, perlin: &Perlin) -> f64 {
@@ -574,33 +735,26 @@ fn classify_crust_types(
         .iter()
         .enumerate()
         .filter_map(|(idx, _)| {
-            let character = dynamics.boundary_field[idx];
-            (dynamics.is_boundary[idx]
-                && character.convergent_rate > character.transform_rate.abs())
-            .then_some(idx)
+            is_convergent_boundary(dynamics.boundary_field[idx], dynamics.is_boundary[idx])
+                .then_some(idx)
         })
         .collect();
 
     let distance_to_ocean = multi_source_grid_distance(width, height, &oceanic_seeds, None);
-    let distance_to_convergent = multi_source_grid_distance(
-        width,
-        height,
-        &convergent_boundary_seeds,
-        Some(&geometry.plate_ids),
-    );
+    let distance_to_convergent =
+        multi_source_grid_distance(width, height, &convergent_boundary_seeds, None);
 
     let mut crust = vec![CrustType::Oceanic; continental_mask.len()];
     for idx in 0..continental_mask.len() {
         if !continental_mask[idx] {
             continue;
         }
-        let ocean_distance = distance_to_ocean[idx];
-        if ocean_distance > MARGIN_WIDTH_CELLS {
-            crust[idx] = CrustType::Continental;
-        } else if distance_to_convergent[idx] <= MARGIN_WIDTH_CELLS {
+        if distance_to_convergent[idx] <= MARGIN_WIDTH_CELLS {
             crust[idx] = CrustType::ActiveMargin;
-        } else {
+        } else if distance_to_ocean[idx] <= MARGIN_WIDTH_CELLS {
             crust[idx] = CrustType::PassiveMargin;
+        } else {
+            crust[idx] = CrustType::Continental;
         }
     }
     crust
@@ -724,6 +878,10 @@ fn is_divergent_boundary(character: BoundaryCharacter, is_boundary: bool) -> boo
     is_boundary && -character.convergent_rate > character.transform_rate.abs()
 }
 
+fn is_convergent_boundary(character: BoundaryCharacter, is_boundary: bool) -> bool {
+    is_boundary && character.convergent_rate > character.transform_rate.abs()
+}
+
 fn neighbors8(idx: usize, width: usize, height: usize) -> Vec<usize> {
     let row = idx / width;
     let col = idx % width;
@@ -811,57 +969,30 @@ mod tests {
     }
 
     #[test]
-    fn continental_pixels_only_on_selected_plates() {
-        let (geometry, _, placement) = sample_inputs(42);
-        for (idx, is_land) in placement.continental_mask.iter().enumerate() {
-            if *is_land {
-                assert!(
-                    placement
-                        .continental_plates
-                        .contains(&geometry.plate_ids[idx]),
-                    "continental pixel on non-selected plate {}",
-                    geometry.plate_ids[idx]
-                );
-            }
+    fn continent_centers_are_land() {
+        let (_, _, placement) = sample_inputs(42);
+        for continent in &placement.continents {
+            assert!(
+                placement.continental_mask[continent.center_idx],
+                "continent center {} should remain continental",
+                continent.center_idx
+            );
         }
     }
 
     #[test]
-    fn continent_is_contiguous() {
+    fn host_plates_retain_some_land() {
         let (geometry, _, placement) = sample_inputs(42);
         for &plate_id in &placement.continental_plates {
-            let cells: Vec<usize> = placement
+            let host_land_cells = placement
                 .continental_mask
                 .iter()
                 .enumerate()
-                .filter_map(|(idx, is_land)| {
-                    (*is_land && geometry.plate_ids[idx] == plate_id).then_some(idx)
-                })
-                .collect();
-            if cells.is_empty() {
-                continue;
-            }
-            let mut visited = vec![false; placement.continental_mask.len()];
-            let mut queue = VecDeque::from([cells[0]]);
-            visited[cells[0]] = true;
-            let mut seen = 0usize;
-            while let Some(idx) = queue.pop_front() {
-                seen += 1;
-                for neighbor in neighbors4(idx, geometry.width, geometry.height) {
-                    if visited[neighbor]
-                        || !placement.continental_mask[neighbor]
-                        || geometry.plate_ids[neighbor] != plate_id
-                    {
-                        continue;
-                    }
-                    visited[neighbor] = true;
-                    queue.push_back(neighbor);
-                }
-            }
-            assert_eq!(
-                seen,
-                cells.len(),
-                "plate {plate_id} continent has multiple connected components"
+                .filter(|(idx, is_land)| **is_land && geometry.plate_ids[*idx] == plate_id)
+                .count();
+            assert!(
+                host_land_cells > 0,
+                "host plate {plate_id} should keep some continental area"
             );
         }
     }
@@ -882,7 +1013,7 @@ mod tests {
                         .then_some(idx)
                 })
                 .collect::<Vec<_>>(),
-            Some(&geometry.plate_ids),
+            None,
         );
         let ocean_distance = multi_source_grid_distance(
             geometry.width,

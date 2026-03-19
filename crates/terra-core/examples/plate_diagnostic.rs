@@ -48,7 +48,7 @@ const PALETTE: [Rgb; 20] = [
 
 fn main() -> Result<()> {
     let cwd = env::current_dir().context("failed to read current working directory")?;
-    let seeds = [42_u64, 7, 99, 312_300, 655_773];
+    let seeds = [42_u64, 7, 99];
 
     for seed in seeds {
         let geometry = generate_plate_geometry(N_PLATES, seed, WARP_AMPLITUDE_DEG, WIDTH, HEIGHT);
