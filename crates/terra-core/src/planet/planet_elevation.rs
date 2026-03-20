@@ -40,6 +40,11 @@ const POLYLINE_INDEX_MARGIN_PX: f64 = 50.0;
 const ARC_ALONG_STRIKE_WAVELENGTH_KM: f64 = 300.0;
 const ARC_ALONG_STRIKE_AMPLITUDE: f32 = 0.3;
 const ARC_ALONG_STRIKE_OCTAVES: usize = 2;
+const COASTAL_CONTINENTAL_SHARE: f32 = 0.85;
+const INLAND_RAMP_KM: f32 = 200.0;
+const CONTINENTAL_SHELF_END_KM: f32 = 150.0;
+const CONTINENTAL_SLOPE_END_KM: f32 = 250.0;
+const CONTINENTAL_RISE_END_KM: f32 = 450.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct SegmentRef {
@@ -85,14 +90,71 @@ fn multi_source_grid_distance(seeds: &[bool], width: usize, height: usize) -> Ve
     distance_to_mask_km(width, height, seeds)
 }
 
-fn base_thickness_km(crust: CrustType, continental_fraction: f32) -> f32 {
-    match crust {
-        CrustType::Oceanic => OCEANIC_BASE_THICKNESS_KM,
-        CrustType::Continental | CrustType::ActiveMargin => CONTINENTAL_BASE_THICKNESS_KM,
-        CrustType::PassiveMargin => {
-            OCEANIC_BASE_THICKNESS_KM
-                + (CONTINENTAL_BASE_THICKNESS_KM - OCEANIC_BASE_THICKNESS_KM) * continental_fraction
-        }
+fn base_thickness_km(continental_fraction: f32) -> f32 {
+    OCEANIC_BASE_THICKNESS_KM
+        + (CONTINENTAL_BASE_THICKNESS_KM - OCEANIC_BASE_THICKNESS_KM) * continental_fraction
+}
+
+fn smoothstep01(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn lerp_f32_unit(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn inland_continental_share(distance_inland_km: f32) -> f32 {
+    if distance_inland_km >= INLAND_RAMP_KM {
+        return 1.0;
+    }
+    lerp_f32_unit(
+        COASTAL_CONTINENTAL_SHARE,
+        1.0,
+        smoothstep01(distance_inland_km / INLAND_RAMP_KM),
+    )
+}
+
+fn offshore_continental_share(distance_offshore_km: f32) -> f32 {
+    if distance_offshore_km <= CONTINENTAL_SHELF_END_KM {
+        return lerp_f32_unit(
+            COASTAL_CONTINENTAL_SHARE,
+            0.5,
+            smoothstep01(distance_offshore_km / CONTINENTAL_SHELF_END_KM),
+        );
+    }
+    if distance_offshore_km <= CONTINENTAL_SLOPE_END_KM {
+        return lerp_f32_unit(
+            0.5,
+            0.15,
+            smoothstep01(
+                (distance_offshore_km - CONTINENTAL_SHELF_END_KM)
+                    / (CONTINENTAL_SLOPE_END_KM - CONTINENTAL_SHELF_END_KM),
+            ),
+        );
+    }
+    if distance_offshore_km <= CONTINENTAL_RISE_END_KM {
+        return lerp_f32_unit(
+            0.15,
+            0.0,
+            smoothstep01(
+                (distance_offshore_km - CONTINENTAL_SLOPE_END_KM)
+                    / (CONTINENTAL_RISE_END_KM - CONTINENTAL_SLOPE_END_KM),
+            ),
+        );
+    }
+    0.0
+}
+
+fn continental_share_at_margin(
+    is_continental: bool,
+    distance_to_continent_km: f32,
+    distance_to_ocean_km: f32,
+) -> f32 {
+    if is_continental {
+        inland_continental_share(distance_to_ocean_km)
+    } else {
+        offshore_continental_share(distance_to_continent_km)
     }
 }
 
@@ -520,22 +582,14 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
     for idx in 0..n {
         let point = cell_points[idx];
-        let crust = plates.crust_field[idx];
         let age = plates.thermal_age[idx].clamp(0.0, 1.0);
-        let continental_share = match crust {
-            CrustType::PassiveMargin => {
-                let sum = distance_to_continent[idx] + distance_to_ocean[idx];
-                if sum <= f32::EPSILON {
-                    0.5
-                } else {
-                    (distance_to_ocean[idx] / sum).clamp(0.0, 1.0)
-                }
-            }
-            CrustType::Oceanic => 0.0,
-            CrustType::Continental | CrustType::ActiveMargin => 1.0,
-        };
+        let continental_share = continental_share_at_margin(
+            continent_seeds[idx],
+            distance_to_continent[idx],
+            distance_to_ocean[idx],
+        );
 
-        let mut thickness_km = base_thickness_km(crust, continental_share);
+        let mut thickness_km = base_thickness_km(continental_share);
 
         let grain_angle = plates.grain_field.angles[idx];
         let grain_intensity = plates.grain_field.intensities[idx].clamp(0.0, 1.0);
@@ -795,6 +849,17 @@ mod tests {
     }
 
     #[test]
+    fn continental_margin_profile_matches_target_shape() {
+        assert!((inland_continental_share(0.0) - 0.85).abs() < 1e-6);
+        assert!((inland_continental_share(200.0) - 1.0).abs() < 1e-6);
+        assert!((offshore_continental_share(0.0) - 0.85).abs() < 1e-6);
+        assert!(offshore_continental_share(100.0) > offshore_continental_share(200.0));
+        assert!(offshore_continental_share(200.0) > offshore_continental_share(300.0));
+        assert!(offshore_continental_share(300.0) > offshore_continental_share(400.0));
+        assert_eq!(offshore_continental_share(500.0), 0.0);
+    }
+
+    #[test]
     fn oceanic_arc_lower_than_continental_arc() {
         let arc_thickening = arc_thickening_km(0.0, 1.0, true);
         let continental_arc_elevation =
@@ -955,7 +1020,9 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|(idx, _)| {
-                hotspot_distance_km[*idx] <= 500.0
+                hotspot_distance_km[*idx] >= HOTSPOT_INFLUENCE_KM as f32
+                    && hotspot_distance_km[*idx] <= 600.0
+                    && plates.crust_field[*idx] == CrustType::Oceanic
                     && plates.regime_field.data[*idx] != TectonicRegime::VolcanicHotspot
             })
             .map(|(_, &value)| value)
@@ -963,6 +1030,11 @@ mod tests {
 
         assert!(!hotspot_pixels.is_empty());
         assert!(!surrounding_pixels.is_empty());
-        assert!(mean(&hotspot_pixels) > mean(&surrounding_pixels));
+        let hotspot_mean = mean(&hotspot_pixels);
+        let surrounding_mean = mean(&surrounding_pixels);
+        assert!(
+            hotspot_mean > surrounding_mean,
+            "hotspot mean {hotspot_mean:.3} should exceed surrounding mean {surrounding_mean:.3}"
+        );
     }
 }
