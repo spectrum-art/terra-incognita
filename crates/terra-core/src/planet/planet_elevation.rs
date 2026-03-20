@@ -23,13 +23,18 @@ const EARTH_RADIUS_KM: f64 = 6371.0;
 const OCEANIC_BASE_THICKNESS_KM: f32 = 7.0;
 const CONTINENTAL_BASE_THICKNESS_KM: f32 = 35.0;
 
-const ARC_INFLUENCE_KM: f64 = 600.0;
+const CONVERGENT_QUERY_RADIUS_KM: f64 = 1500.0;
+const COMPRESSION_SIGMA_KM: f64 = 500.0;
+const VOLCANIC_ARC_SIGMA_KM: f64 = 120.0;
 const RIDGE_RIFT_INFLUENCE_KM: f64 = 300.0;
 const RIDGE_THERMAL_INFLUENCE_KM: f64 = 500.0;
 const HOTSPOT_INFLUENCE_KM: f64 = 300.0;
 const HOTSPOT_EDIFICE_INFLUENCE_KM: f64 = 140.0;
 
-const MAX_ARC_THICKENING_KM: f32 = 18.0;
+const MAX_COMPRESSIONAL_SHORTENING: f32 = 0.9;
+const CONVERGENT_REFERENCE_RATE_CM_YR: f32 = 6.0;
+const SUBDUCTING_SIDE_SHORTENING_SCALE: f32 = 0.4;
+const MAX_VOLCANIC_ARC_ADDITION_KM: f32 = 12.0;
 const MAX_RIFT_THINNING_KM: f32 = 15.0;
 const MIN_CONTINENTAL_THICKNESS_KM: f32 = 20.0;
 const MAX_HOTSPOT_THICKENING_KM: f32 = 10.0;
@@ -164,13 +169,53 @@ fn continental_share_from_thickness_km(thickness_km: f32) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-fn arc_thickening_km(distance_km: f64, modulation: f32, overriding_side: bool) -> f32 {
-    if distance_km >= ARC_INFLUENCE_KM {
+fn gaussian_taper(distance_km: f64, sigma_km: f64) -> f32 {
+    (-0.5 * (distance_km / sigma_km).powi(2)).exp() as f32
+}
+
+fn convergent_rate_scale(convergent_rate_cm_yr: f32) -> f32 {
+    (convergent_rate_cm_yr.max(0.0) / CONVERGENT_REFERENCE_RATE_CM_YR)
+        .sqrt()
+        .clamp(0.0, 1.0)
+}
+
+fn compressional_shortening_factor(
+    distance_km: f64,
+    convergent_rate_cm_yr: f32,
+    overriding_side: bool,
+) -> f32 {
+    let rate_scale = convergent_rate_scale(convergent_rate_cm_yr);
+    if rate_scale <= 0.0 {
         return 0.0;
     }
-    let taper = (-3.0 * (distance_km / ARC_INFLUENCE_KM).powi(2)).exp() as f32;
-    let side_scale = if overriding_side { 1.0 } else { 0.3 };
-    MAX_ARC_THICKENING_KM * taper * modulation.max(0.7) * side_scale
+    let side_scale = if overriding_side {
+        1.0
+    } else {
+        SUBDUCTING_SIDE_SHORTENING_SCALE
+    };
+    MAX_COMPRESSIONAL_SHORTENING
+        * rate_scale
+        * side_scale
+        * gaussian_taper(distance_km, COMPRESSION_SIGMA_KM)
+}
+
+fn volcanic_arc_addition_km(
+    distance_km: f64,
+    convergent_rate_cm_yr: f32,
+    along_strike_modulation: f32,
+    overriding_side: bool,
+) -> f32 {
+    if !overriding_side {
+        return 0.0;
+    }
+    let rate_scale = convergent_rate_scale(convergent_rate_cm_yr);
+    if rate_scale <= 0.0 {
+        return 0.0;
+    }
+    MAX_VOLCANIC_ARC_ADDITION_KM
+        * rate_scale
+        * along_strike_modulation.max(0.0)
+        * gaussian_taper(distance_km, VOLCANIC_ARC_SIGMA_KM)
 }
 
 fn rift_thinning_km(distance_km: f64, continental_share: f32) -> f32 {
@@ -444,7 +489,7 @@ fn nearest_convergent_arc_sample(
         );
         let lon_q = pixel_lon_rad(qx, query.width);
         let distance_km = equirectangular_distance_km(lat_p, lon_p, lat_q, lon_q);
-        if distance_km >= ARC_INFLUENCE_KM {
+        if distance_km >= CONVERGENT_QUERY_RADIUS_KM {
             continue;
         }
 
@@ -598,14 +643,16 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
         let col = idx % width;
         let arc_sample = nearest_convergent_arc_sample(row, col, &arc_query);
         if let Some(sample) = arc_sample {
-            let modulation =
-                1.0 + 0.2 * boundary_modulation(&perlin, point, grain_angle, grain_intensity, true);
-            let rate_scale = (sample.convergent_rate.max(0.0) / 6.0)
-                .sqrt()
-                .clamp(0.0, 1.5);
-            thickness_km += arc_thickening_km(
+            let shortening = compressional_shortening_factor(
                 sample.distance_km,
-                modulation * rate_scale * sample.along_strike_modulation,
+                sample.convergent_rate,
+                sample.overriding_side,
+            );
+            thickness_km *= 1.0 + shortening;
+            thickness_km += volcanic_arc_addition_km(
+                sample.distance_km,
+                sample.convergent_rate,
+                sample.along_strike_modulation,
                 sample.overriding_side,
             );
         }
@@ -860,15 +907,21 @@ mod tests {
     }
 
     #[test]
-    fn oceanic_arc_lower_than_continental_arc() {
-        let arc_thickening = arc_thickening_km(0.0, 1.0, true);
-        let continental_arc_elevation =
-            (CONTINENTAL_BASE_THICKNESS_KM + arc_thickening - OCEANIC_BASE_THICKNESS_KM) * 0.15;
-        let oceanic_arc_elevation =
-            (OCEANIC_BASE_THICKNESS_KM + arc_thickening - OCEANIC_BASE_THICKNESS_KM) * 0.15;
+    fn continental_convergence_outruns_oceanic_island_arc() {
+        let shortening =
+            compressional_shortening_factor(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, true);
+        let arc_addition =
+            volcanic_arc_addition_km(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, 1.0, true);
+        let continental_thickness =
+            CONTINENTAL_BASE_THICKNESS_KM * (1.0 + shortening) + arc_addition;
+        let oceanic_thickness = OCEANIC_BASE_THICKNESS_KM * (1.0 + shortening) + arc_addition;
+        let continental_elevation = (continental_thickness - OCEANIC_BASE_THICKNESS_KM) * 0.15;
+        let oceanic_elevation = (oceanic_thickness - OCEANIC_BASE_THICKNESS_KM) * 0.15;
 
-        assert!(arc_thickening >= MAX_ARC_THICKENING_KM);
-        assert!(continental_arc_elevation > oceanic_arc_elevation + 4.0);
+        assert!(shortening > 0.85);
+        assert!(arc_addition >= MAX_VOLCANIC_ARC_ADDITION_KM);
+        assert!(continental_elevation / oceanic_elevation > 3.0);
+        assert!(oceanic_elevation < 3.0);
     }
 
     #[test]
