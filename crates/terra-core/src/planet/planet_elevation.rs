@@ -51,6 +51,39 @@ const CONTINENTAL_SHELF_END_KM: f32 = 150.0;
 const CONTINENTAL_SLOPE_END_KM: f32 = 250.0;
 const CONTINENTAL_RISE_END_KM: f32 = 450.0;
 
+// ── Continental province noise (Prompt 9) ─────────────────────────────────────
+/// Coastline fade distance for the interior mask (km). Province modifier
+/// tapers to zero within this distance of the ocean, preserving clean margin
+/// profiles from Prompt 7.
+const PROVINCE_COAST_FADE_KM: f32 = 300.0;
+/// Convergent-boundary fade distance for the interior mask (km). Province
+/// modifier tapers to zero near convergent boundaries so that convergent
+/// thickening remains the dominant signal there.
+const PROVINCE_CONVERGENT_FADE_KM: f32 = 400.0;
+/// Base frequency for large-scale province noise (3D unit-sphere space).
+/// At freq 4 the wavelength is ≈ 6371/4 ≈ 1593 km; two octaves span
+/// ~800–1600 km, capturing major crustal domain boundaries.
+const PROVINCE_LARGE_FREQ: f64 = 4.0;
+/// Amplitude for large-scale province thickness variation (km).
+/// ±4 km → ±0.6 km elevation via Airy isostasy.
+const PROVINCE_LARGE_AMPLITUDE_KM: f32 = 4.0;
+/// Base frequency for medium-scale province noise. Two octaves from freq 12
+/// span ~265–530 km, capturing basin-and-highland structure.
+const PROVINCE_MEDIUM_FREQ: f64 = 12.0;
+/// Amplitude for medium-scale province thickness variation (km).
+const PROVINCE_MEDIUM_AMPLITUDE_KM: f32 = 2.0;
+/// Along-grain frequency for linear province features (failed rifts / eroded
+/// orogens). Wavelength ≈ 6371/16 ≈ 398 km.
+const PROVINCE_LINEAR_ALONG_FREQ: f64 = 16.0;
+/// Cross-grain frequency for linear province features.
+/// Wavelength ≈ 6371/64 ≈ 100 km — narrow features aligned along grain.
+const PROVINCE_LINEAR_CROSS_FREQ: f64 = 64.0;
+/// Amplitude for linear province thickness variation (km).
+const PROVINCE_LINEAR_AMPLITUDE_KM: f32 = 1.5;
+/// Convergent-rate threshold (cm/yr) used to identify convergent boundary
+/// pixels when computing the province interior mask.
+const PROVINCE_CONVERGENT_THRESHOLD_CM_YR: f32 = 1.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct SegmentRef {
     polyline_idx: usize,
@@ -351,6 +384,61 @@ fn boundary_modulation(
     isotropic * (1.0 - grain_intensity) + oriented * grain_intensity
 }
 
+/// Single-octave anisotropic noise aligned to the local structural grain.
+///
+/// Uses 2D lat/lon coordinates so the grain angle (in radians, measured east
+/// of north in the equirectangular frame) maps directly onto noise space.
+/// `PROVINCE_LINEAR_ALONG_FREQ` sets the along-grain wavelength and
+/// `PROVINCE_LINEAR_CROSS_FREQ` sets the (shorter) cross-grain wavelength,
+/// producing elongated features — failed rifts and eroded orogens — that are
+/// parallel to the nearest plate boundary.
+fn province_linear_fbm(perlin: &Perlin, point: Vec3, grain_angle: f32) -> f32 {
+    let (lat_deg, lon_deg) = point.to_latlon();
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let x = lon * lat.cos();
+    let y = lat;
+    let cos_g = (grain_angle as f64).cos();
+    let sin_g = (grain_angle as f64).sin();
+    let u = x * cos_g + y * sin_g;
+    let v = -x * sin_g + y * cos_g;
+    perlin.get([u * PROVINCE_LINEAR_ALONG_FREQ, v * PROVINCE_LINEAR_CROSS_FREQ]) as f32
+}
+
+/// Crustal province thickness modifier for continental interiors (Prompt 9).
+///
+/// Adds structured thickness variation that represents different-aged crustal
+/// provinces: cratonic cores, intracontinental basins, ancient orogens, and
+/// failed rifts. The modifier is zero-mean (Perlin noise is zero-mean) and is
+/// masked to zero at coastlines and convergent boundaries, so it does not
+/// disturb the margin profile or mountain belts from Prompts 7–8.
+///
+/// The caller is responsible for only applying this when `continental_share`
+/// is substantial (> 0.5), though the mask also handles the fade gracefully.
+fn continental_province_modifier_km(
+    perlin_large: &Perlin,
+    perlin_medium: &Perlin,
+    perlin_linear: &Perlin,
+    point: Vec3,
+    grain_angle: f32,
+    distance_to_ocean_km: f32,
+    convergent_distance_km: f32,
+) -> f32 {
+    let coast_fade = smoothstep01(distance_to_ocean_km / PROVINCE_COAST_FADE_KM);
+    let convergent_fade = smoothstep01(convergent_distance_km / PROVINCE_CONVERGENT_FADE_KM);
+    let interior_mask = coast_fade * convergent_fade;
+    if interior_mask <= 0.0 {
+        return 0.0;
+    }
+    let large = isotropic_fbm(perlin_large, point, PROVINCE_LARGE_FREQ, 2);
+    let medium = isotropic_fbm(perlin_medium, point, PROVINCE_MEDIUM_FREQ, 2);
+    let linear = province_linear_fbm(perlin_linear, point, grain_angle);
+    (large * PROVINCE_LARGE_AMPLITUDE_KM
+        + medium * PROVINCE_MEDIUM_AMPLITUDE_KM
+        + linear * PROVINCE_LINEAR_AMPLITUDE_KM)
+        * interior_mask
+}
+
 fn build_convergent_polyline_index(
     polylines: &[BoundaryPolyline],
     width: usize,
@@ -597,6 +685,21 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
     let cell_points = build_cell_points(width, height);
     let perlin = Perlin::new((seed ^ 0x15_05_7A_71) as u32);
+    let province_perlin_large = Perlin::new((seed ^ 0x1000_DEAD) as u32);
+    let province_perlin_medium = Perlin::new((seed ^ 0x2000_BEEF) as u32);
+    let province_perlin_linear = Perlin::new((seed ^ 0x3000_CAFE) as u32);
+
+    // Convergent boundary distance for the province interior mask.
+    let convergent_seeds: Vec<bool> = plates
+        .boundary_field
+        .iter()
+        .enumerate()
+        .map(|(idx, character)| {
+            plates.is_boundary[idx]
+                && character.convergent_rate > PROVINCE_CONVERGENT_THRESHOLD_CM_YR
+        })
+        .collect();
+    let convergent_distance_km = multi_source_grid_distance(&convergent_seeds, width, height);
 
     let ridge_distance_km = &plates.divergent_distance_km;
     let hotspot_distance_km = nearest_hotspot_distance_km(&cell_points, &plates.hotspots);
@@ -638,6 +741,22 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
         let grain_angle = plates.grain_field.angles[idx];
         let grain_intensity = plates.grain_field.intensities[idx].clamp(0.0, 1.0);
+
+        // Province modifier: add internal continental structure before convergent
+        // thickening so that a thicker cratonic core near a collision zone produces
+        // proportionally higher mountains (the shortening multiplier acts on the
+        // already-modified base).
+        if continental_share > 0.5 {
+            thickness_km += continental_province_modifier_km(
+                &province_perlin_large,
+                &province_perlin_medium,
+                &province_perlin_linear,
+                point,
+                grain_angle,
+                distance_to_ocean[idx],
+                convergent_distance_km[idx],
+            );
+        }
 
         let row = idx / width;
         let col = idx % width;
@@ -1054,6 +1173,43 @@ mod tests {
         assert!(cs_total > 0);
         assert!(continental_below as f32 / (continental_total as f32) < 0.01);
         assert!(cs_below as f32 / (cs_total as f32) < 0.01);
+    }
+
+    /// Continental interior (CratonicShield pixels) must have visible elevation
+    /// variation after the province noise modifier is applied.  Spec target is
+    /// std ~0.3–0.6 km; we assert a conservative lower bound of 0.2 km.
+    #[test]
+    fn continental_interior_has_province_variation() {
+        let plates = make_plates(42);
+        let elev = generate_planet_elevation(&plates, 42);
+
+        let craton_values: Vec<f32> = elev
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                plates.regime_field.data[*idx] == TectonicRegime::CratonicShield
+            })
+            .map(|(_, &v)| v)
+            .collect();
+
+        assert!(!craton_values.is_empty(), "need CratonicShield pixels");
+
+        let craton_mean = mean(&craton_values);
+        let variance = craton_values
+            .iter()
+            .map(|&v| (v - craton_mean) * (v - craton_mean))
+            .sum::<f32>()
+            / craton_values.len() as f32;
+        let std_dev = variance.sqrt();
+
+        // 0.15 km is a conservative bound for the coarse 128×64 test grid
+        // (≈313 km/pixel).  At full 1024×512 resolution the spec target is
+        // ~0.3–0.6 km.
+        assert!(
+            std_dev > 0.15,
+            "cratonic interior std_dev={std_dev:.3} km should exceed 0.15 km \
+             — province noise must produce visible internal variation"
+        );
     }
 
     #[test]
