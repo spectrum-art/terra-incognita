@@ -27,19 +27,39 @@ const CONVERGENT_QUERY_RADIUS_KM: f64 = 1500.0;
 const COMPRESSION_SIGMA_KM: f64 = 500.0;
 const VOLCANIC_ARC_SIGMA_KM: f64 = 120.0;
 const RIDGE_RIFT_INFLUENCE_KM: f64 = 300.0;
-const RIDGE_THERMAL_INFLUENCE_KM: f64 = 500.0;
 const HOTSPOT_INFLUENCE_KM: f64 = 300.0;
 const HOTSPOT_EDIFICE_INFLUENCE_KM: f64 = 140.0;
 
 const MAX_COMPRESSIONAL_SHORTENING: f32 = 0.9;
 const CONVERGENT_REFERENCE_RATE_CM_YR: f32 = 6.0;
 const SUBDUCTING_SIDE_SHORTENING_SCALE: f32 = 0.4;
-const MAX_VOLCANIC_ARC_ADDITION_KM: f32 = 12.0;
+const MAX_VOLCANIC_ARC_ADDITION_KM: f32 = 8.0;
 const MAX_RIFT_THINNING_KM: f32 = 15.0;
 const MIN_CONTINENTAL_THICKNESS_KM: f32 = 20.0;
 const MAX_HOTSPOT_THICKENING_KM: f32 = 10.0;
 const HOTSPOT_EDIFICE_UPLIFT_KM: f32 = 2.2;
-const OCEANIC_BASELINE_SUBSIDENCE_KM: f32 = 1.0;
+// ── Parsons–Sclater ocean depth-age model (Prompt 10) ────────────────────────
+/// Half-spreading rate used to convert divergent-boundary distance to age.
+/// 3 cm/yr is a typical global mean; 30 km/Ma.
+const SPREADING_HALF_RATE_KM_PER_MA: f64 = 30.0;
+/// Slope of the sqrt(age) subsidence branch (km per sqrt(Ma)).
+const PS_YOUNG_SLOPE: f64 = 0.35;
+/// Asymptotic depth for old oceanic crust in the plate-cooling model (km).
+const PS_OLD_ASYMPTOTE_KM: f64 = 3.2;
+/// E-folding time for the asymptotic branch (Ma).
+const PS_OLD_TIMESCALE_MA: f64 = 62.8;
+/// Age threshold between the sqrt and asymptotic branches (Ma).
+const PS_TRANSITION_AGE_MA: f64 = 80.0;
+/// Reference age used to zero-centre the correction so that mean ocean depth
+/// is unchanged when the PS field has this age on average (Ma).
+const PS_REFERENCE_AGE_MA: f64 = 60.0;
+/// Maximum pseudo-age cap — prevents runaway subsidence in cells very far
+/// from any divergent boundary.
+const PS_MAX_AGE_MA_CAP: f64 = 300.0;
+/// Baseline depth offset applied after the PS correction.  Pushes the average
+/// ocean floor below the isostatic datum (pure oceanic crust gives 0 km before
+/// this offset) so that ocean pixels sit below sea level as expected.
+const OCEANIC_DEPTH_OFFSET_KM: f32 = 1.0;
 const POLYLINE_INDEX_CELL_SIZE: usize = 32;
 const POLYLINE_INDEX_MARGIN_PX: f64 = 50.0;
 const ARC_ALONG_STRIKE_WAVELENGTH_KM: f64 = 300.0;
@@ -292,8 +312,17 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-fn oceanic_thermal_uplift_km(age: f32, ridge_modulation: f32) -> f32 {
-    2.5 * (1.0 - age.clamp(0.0, 1.0).sqrt()) * ridge_modulation
+/// Seafloor subsidence below the ridge crest as a function of pseudo-age,
+/// using the Parsons–Sclater (1977) plate cooling model.
+///
+/// For age < `PS_TRANSITION_AGE_MA` the depth increases as sqrt(age).
+/// For older crust the depth asymptotes to `PS_OLD_ASYMPTOTE_KM`.
+fn parsons_sclater_subsidence_km(age_ma: f64) -> f32 {
+    if age_ma < PS_TRANSITION_AGE_MA {
+        (PS_YOUNG_SLOPE * age_ma.sqrt()) as f32
+    } else {
+        (PS_OLD_ASYMPTOTE_KM * (1.0 - (-age_ma / PS_OLD_TIMESCALE_MA).exp())) as f32
+    }
 }
 
 fn nearest_hotspot_distance_km(points: &[Vec3], hotspots: &[Vec3]) -> Vec<f32> {
@@ -331,78 +360,48 @@ fn isotropic_fbm(perlin: &Perlin, point: Vec3, base_frequency: f64, octaves: usi
     (sum / normalizer.max(1e-6)) as f32
 }
 
-fn oriented_fbm(
-    perlin: &Perlin,
-    point: Vec3,
-    angle_rad: f64,
-    base_frequency: f64,
-    octaves: usize,
-) -> f32 {
-    let (lat_deg, lon_deg) = point.to_latlon();
-    let lat = lat_deg.to_radians();
-    let lon = lon_deg.to_radians();
-    let x = lon * lat.cos();
-    let y = lat;
-
-    let mut sum = 0.0_f64;
-    let mut amplitude = 1.0_f64;
-    let mut frequency = base_frequency;
-    let mut normalizer = 0.0_f64;
-    let cos_angle = angle_rad.cos();
-    let sin_angle = angle_rad.sin();
-
-    for _ in 0..octaves {
-        let u = x * cos_angle + y * sin_angle;
-        let v = -x * sin_angle + y * cos_angle;
-        sum += perlin.get([u * frequency, v * frequency * 0.35]) * amplitude;
-        normalizer += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-
-    (sum / normalizer.max(1e-6)) as f32
-}
-
-fn boundary_modulation(
-    perlin: &Perlin,
-    point: Vec3,
-    grain_angle: f32,
-    grain_intensity: f32,
-    rotate_by_quarter_turn: bool,
-) -> f32 {
-    let isotropic = isotropic_fbm(perlin, point, 10.0, 3);
-    if grain_intensity <= 0.0 {
-        return isotropic;
-    }
-
-    let angle = if rotate_by_quarter_turn {
-        grain_angle as f64 + std::f64::consts::FRAC_PI_2
-    } else {
-        grain_angle as f64
-    };
-    let oriented = oriented_fbm(perlin, point, angle, 12.0, 3);
-    isotropic * (1.0 - grain_intensity) + oriented * grain_intensity
-}
-
 /// Single-octave anisotropic noise aligned to the local structural grain.
 ///
-/// Uses 2D lat/lon coordinates so the grain angle (in radians, measured east
-/// of north in the equirectangular frame) maps directly onto noise space.
-/// `PROVINCE_LINEAR_ALONG_FREQ` sets the along-grain wavelength and
-/// `PROVINCE_LINEAR_CROSS_FREQ` sets the (shorter) cross-grain wavelength,
-/// producing elongated features — failed rifts and eroded orogens — that are
-/// parallel to the nearest plate boundary.
+/// Uses the sphere-surface tangent-plane approach so the grain direction is
+/// computed in true Cartesian space, avoiding the polar singularity that
+/// afflicts equirectangular parameterisations (`lon * cos(lat) → 0` at poles).
+/// Projects the 3D unit-sphere point onto the along-grain and cross-grain
+/// tangent vectors at each cell, then samples 3D Perlin with different
+/// frequencies in each direction, producing elongated features (failed rifts,
+/// eroded orogens) aligned with the structural grain.
 fn province_linear_fbm(perlin: &Perlin, point: Vec3, grain_angle: f32) -> f32 {
     let (lat_deg, lon_deg) = point.to_latlon();
     let lat = lat_deg.to_radians();
     let lon = lon_deg.to_radians();
-    let x = lon * lat.cos();
-    let y = lat;
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    let (sin_lon, cos_lon) = lon.sin_cos();
+
+    // Local east and north unit vectors in Cartesian space.
+    // east = ∂(sphere point)/∂lon  (normalised)
+    // north = ∂(sphere point)/∂lat (normalised)
+    let (east_x, east_y, east_z) = (-sin_lon, cos_lon, 0.0_f64);
+    let (north_x, north_y, north_z) = (-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat);
+
+    // Rotate by grain_angle to get along-grain and cross-grain directions.
     let cos_g = (grain_angle as f64).cos();
     let sin_g = (grain_angle as f64).sin();
-    let u = x * cos_g + y * sin_g;
-    let v = -x * sin_g + y * cos_g;
-    perlin.get([u * PROVINCE_LINEAR_ALONG_FREQ, v * PROVINCE_LINEAR_CROSS_FREQ]) as f32
+    let along = (
+        cos_g * north_x + sin_g * east_x,
+        cos_g * north_y + sin_g * east_y,
+        cos_g * north_z + sin_g * east_z,
+    );
+    let cross = (
+        -sin_g * north_x + cos_g * east_x,
+        -sin_g * north_y + cos_g * east_y,
+        -sin_g * north_z + cos_g * east_z,
+    );
+
+    // Project 3D sphere point onto the two tangent directions.
+    let u = point.x * along.0 + point.y * along.1 + point.z * along.2;
+    let v = point.x * cross.0 + point.y * cross.1 + point.z * cross.2;
+
+    // Low frequency along grain (long features), high frequency across (narrow).
+    perlin.get([u * PROVINCE_LINEAR_ALONG_FREQ, v * PROVINCE_LINEAR_CROSS_FREQ, 0.0]) as f32
 }
 
 /// Crustal province thickness modifier for continental interiors (Prompt 9).
@@ -726,11 +725,14 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
     let distance_to_continent = multi_source_grid_distance(&continent_seeds, width, height);
     let distance_to_ocean = multi_source_grid_distance(&ocean_seeds, width, height);
 
+    // Pre-compute reference subsidence once — used inside the pixel loop to
+    // zero-centre the PS correction so the average ocean depth stays unchanged.
+    let reference_subsidence = parsons_sclater_subsidence_km(PS_REFERENCE_AGE_MA);
+
     let mut elevations = vec![0.0_f32; n];
 
     for idx in 0..n {
         let point = cell_points[idx];
-        let age = plates.thermal_age[idx].clamp(0.0, 1.0);
         let continental_share = continental_share_at_margin(
             continent_seeds[idx],
             distance_to_continent[idx],
@@ -740,7 +742,6 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
         let mut thickness_km = base_thickness_km(continental_share);
 
         let grain_angle = plates.grain_field.angles[idx];
-        let grain_intensity = plates.grain_field.intensities[idx].clamp(0.0, 1.0);
 
         // Province modifier: add internal continental structure before convergent
         // thickening so that a thicker cratonic core near a collision zone produces
@@ -796,16 +797,19 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
         let final_continental_share = continental_share_from_thickness_km(thickness_km);
         let oceanic_share = 1.0 - final_continental_share;
 
-        let ridge_modulation = if distance_ridge < RIDGE_THERMAL_INFLUENCE_KM {
-            let ridge_noise =
-                boundary_modulation(&perlin, point, grain_angle, grain_intensity, false);
-            1.0 + 0.1 * ridge_noise
-        } else {
-            1.0
-        };
-        let thermal_uplift_km = (oceanic_thermal_uplift_km(age, ridge_modulation)
-            - OCEANIC_BASELINE_SUBSIDENCE_KM)
-            * oceanic_share;
+        // Parsons–Sclater depth-age correction for oceanic pixels (Prompt 10).
+        // Convert distance from the nearest divergent boundary to a pseudo-age,
+        // compute the expected subsidence relative to a reference age, and apply
+        // it as a direct elevation offset scaled by oceanic_share so it tapers
+        // naturally through the continental margin profile from Prompt 7.
+        let age_ma = (distance_ridge / SPREADING_HALF_RATE_KM_PER_MA).min(PS_MAX_AGE_MA_CAP);
+        let subsidence_km = parsons_sclater_subsidence_km(age_ma);
+        // Positive correction → shallower (at ridge crest).
+        // Negative correction → deeper (abyssal plain).
+        // The OCEANIC_DEPTH_OFFSET_KM baseline shifts the reference depth below
+        // the isostatic datum so the ocean floor sits below sea level.
+        let ps_correction_km =
+            (reference_subsidence - subsidence_km - OCEANIC_DEPTH_OFFSET_KM) * oceanic_share;
 
         let mut edifice_km = 0.0_f32;
         if distance_hotspot < HOTSPOT_EDIFICE_INFLUENCE_KM {
@@ -814,7 +818,7 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
         let texture_km = 0.05 * isotropic_fbm(&perlin, point, 8.0, 2);
 
-        elevations[idx] = isostatic_elevation_km + thermal_uplift_km + edifice_km + texture_km;
+        elevations[idx] = isostatic_elevation_km + ps_correction_km + edifice_km + texture_km;
     }
 
     elevations

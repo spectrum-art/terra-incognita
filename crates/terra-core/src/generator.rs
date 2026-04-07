@@ -49,7 +49,7 @@ impl Default for GlobalParams {
         Self {
             seed: 42,
             tectonic_activity: 0.5,
-            water_abundance: 0.55,
+            water_abundance: 0.65,
             surface_age: 0.50,
             climate_diversity: 0.50,
             glaciation: 0.30,
