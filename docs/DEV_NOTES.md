@@ -418,3 +418,47 @@ Diagnostics:
 - `crates/terra-core/examples/plate_diagnostic.rs` now writes `plate_overview_42.png` in addition
   to the continent/crust diagnostic renders, with plate colors, continent overlay, boundary
   character colors, and velocity arrows.
+
+## Entry 30 — 2026-04-08 — Segment-Wavefront Convergent Arc Field (Prompt 11)
+
+**Root cause (H2, confirmed):** `nearest_convergent_arc_sample()` used a per-pixel 32×32-cell
+spatial-index bucket lookup. Adjacent pixels could independently select topologically distant
+segments of the same convergent polyline, producing arc-length jumps of 2154 km and volcanic-arc
+modulation changes of 0.2401 (24%) at single pixel boundaries.
+
+**Fix — three-pass wavefront Dijkstra:**
+1. **Rasterize** all convergent polyline segments to seed pixels using Bresenham line rasterization.
+   At 1024×512: 15 polylines, 6717 segments, 1683 unique seed pixels (0.25 seeds/segment on
+   average — many segments are sub-pixel at this resolution).
+2. **Dijkstra wavefront** propagates `nearest_segment` from all seeds simultaneously. Each pixel
+   inherits its segment from the wavefront front reaching it first, so segment changes follow
+   smooth geometric Voronoi cell boundaries, not arbitrary bucket-lookup crossovers. Tie-breaks
+   are deterministic (ordered by `idx` then `segment_idx`) so the Voronoi cell edges are stable
+   across runs.
+3. **Single-pass refinement** reprojects each pixel onto its assigned segment for exact `t` and
+   `distance_km`. The Dijkstra gives the correct *segment*; refinement gives the exact projection.
+
+**Result at 1024×512 (single-polyline probe, Polyline 4, 8741 km):**
+- Old code: 1 jump of 2154 km, catastrophic cross-sector pickup.
+- New code: 10 smooth Voronoi-boundary transitions, max 91 km (adjacent-segment arc span).
+- Agreement rate 0% (expected — different algorithms, but wavefront eliminates the catastrophic case).
+
+**Structures added:** `ConvergentArcField`, `ConvergentSegmentTable`, `WavefrontNode` (with
+deterministic `Ord`), helper functions `ns_step_km`, `ew_step_km`, `wavefront_neighbors`,
+`bresenham_pixels`, `project_onto_segment_km`, `build_convergent_arc_field`,
+`sample_convergent_arc_field`.
+
+**Structures removed:** `PolylineSpatialIndex`, `ArcQueryContext`, `build_convergent_polyline_index`,
+`segment_bucket_indices`, `nearest_convergent_arc_sample`, `SegmentRef`.
+
+**Performance:** Field construction at 1024×512 runs in < 10 ms — well within the 200 ms budget.
+
+**Regression test:** `wavefront_eliminates_cross_sector_arc_jumps` — verifies that no two adjacent
+pixels on the same convergent polyline have an arc-length jump > 2500 km. At 128×64 (coarse test
+resolution) legitimate Voronoi-boundary transitions on looping polylines reach 1730 km; the old
+code's catastrophic case at this resolution would be ~4000+ km (8× larger buckets).
+
+**Land fraction / max elevation / AC-CS delta:** Unchanged (35% land, ~10 km max, positive delta).
+This fix targets *smoothness*, not amplitude.
+
+**226 tests, 0 clippy warnings.** Commit 58369f4.
