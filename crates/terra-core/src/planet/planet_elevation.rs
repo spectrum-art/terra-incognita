@@ -8,6 +8,9 @@
 //!
 //! Output is returned in physical kilometres above a structural datum.
 
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
 use noise::{NoiseFn, Perlin};
 
 use crate::plates::{
@@ -60,8 +63,6 @@ const PS_MAX_AGE_MA_CAP: f64 = 300.0;
 /// ocean floor below the isostatic datum (pure oceanic crust gives 0 km before
 /// this offset) so that ocean pixels sit below sea level as expected.
 const OCEANIC_DEPTH_OFFSET_KM: f32 = 1.0;
-const POLYLINE_INDEX_CELL_SIZE: usize = 32;
-const POLYLINE_INDEX_MARGIN_PX: f64 = 50.0;
 const ARC_ALONG_STRIKE_WAVELENGTH_KM: f64 = 300.0;
 const ARC_ALONG_STRIKE_AMPLITUDE: f32 = 0.3;
 const ARC_ALONG_STRIKE_OCTAVES: usize = 2;
@@ -104,19 +105,6 @@ const PROVINCE_LINEAR_AMPLITUDE_KM: f32 = 1.5;
 /// pixels when computing the province interior mask.
 const PROVINCE_CONVERGENT_THRESHOLD_CM_YR: f32 = 1.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct SegmentRef {
-    polyline_idx: usize,
-    start_vertex: usize,
-}
-
-#[derive(Clone, Debug)]
-struct PolylineSpatialIndex {
-    cell_size: usize,
-    grid_width: usize,
-    buckets: Vec<Vec<SegmentRef>>,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct ArcSample {
     distance_km: f64,
@@ -125,13 +113,49 @@ struct ArcSample {
     along_strike_modulation: f32,
 }
 
-struct ArcQueryContext<'a> {
-    width: usize,
-    height: usize,
-    spatial_index: &'a PolylineSpatialIndex,
-    polylines: &'a [BoundaryPolyline],
-    perlin: &'a Perlin,
-    seed: u64,
+/// Priority-queue node for the convergent-arc wavefront Dijkstra.
+/// Ordered by smallest distance_km, with idx and segment_idx as tie-breaks
+/// so that Voronoi cell edges are deterministic across runs.
+#[derive(Clone, Copy, PartialEq)]
+struct WavefrontNode {
+    distance_km: f32,
+    idx: usize,
+    segment_idx: u32,
+}
+impl Eq for WavefrontNode {}
+impl Ord for WavefrontNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .distance_km
+            .partial_cmp(&self.distance_km)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| self.idx.cmp(&other.idx))
+            .then_with(|| self.segment_idx.cmp(&other.segment_idx))
+    }
+}
+impl PartialOrd for WavefrontNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Flat table of all convergent polyline segments, in construction order.
+struct ConvergentSegmentTable {
+    polyline_idx: Vec<u32>,
+    start_vertex: Vec<u32>,
+}
+
+/// Precomputed per-pixel nearest-convergent-segment field, produced by
+/// Dijkstra wavefront propagation from rasterised segment seeds.
+struct ConvergentArcField {
+    /// Exact great-circle distance to the nearest convergent segment (km).
+    /// `f32::INFINITY` means no convergent boundary within the query radius.
+    distance_km: Vec<f32>,
+    /// Index into `ConvergentSegmentTable`. `u32::MAX` = no segment.
+    nearest_segment: Vec<u32>,
+    /// Projection parameter t ∈ [0,1] along the nearest segment.
+    /// Refined by exact reprojection after Dijkstra completes.
+    t_along_segment: Vec<f32>,
 }
 
 fn build_cell_points(width: usize, height: usize) -> Vec<Vec3> {
@@ -438,85 +462,6 @@ fn continental_province_modifier_km(
         * interior_mask
 }
 
-fn build_convergent_polyline_index(
-    polylines: &[BoundaryPolyline],
-    width: usize,
-    height: usize,
-) -> PolylineSpatialIndex {
-    let cell_size = POLYLINE_INDEX_CELL_SIZE;
-    let grid_width = width.div_ceil(cell_size);
-    let grid_height = height.div_ceil(cell_size);
-    let mut buckets = vec![Vec::new(); grid_width * grid_height];
-
-    for (polyline_idx, polyline) in polylines.iter().enumerate() {
-        if polyline.dominant_character != BoundaryType::Convergent || polyline.vertices.len() < 2 {
-            continue;
-        }
-        let segment_count = polyline.vertices.len() - 1 + usize::from(polyline.is_closed);
-        for start_vertex in 0..segment_count {
-            let a = &polyline.vertices[start_vertex];
-            let b = &polyline.vertices[(start_vertex + 1) % polyline.vertices.len()];
-            let segment = SegmentRef {
-                polyline_idx,
-                start_vertex,
-            };
-            for bucket_idx in segment_bucket_indices(a.x, a.y, b.x, b.y, width, height, &{
-                (cell_size, grid_width, grid_height)
-            }) {
-                buckets[bucket_idx].push(segment);
-            }
-        }
-    }
-
-    for bucket in &mut buckets {
-        bucket.sort_unstable();
-        bucket.dedup();
-    }
-
-    PolylineSpatialIndex {
-        cell_size,
-        grid_width,
-        buckets,
-    }
-}
-
-fn segment_bucket_indices(
-    ax: f64,
-    ay: f64,
-    bx: f64,
-    by: f64,
-    width: usize,
-    height: usize,
-    grid: &(usize, usize, usize),
-) -> Vec<usize> {
-    let (cell_size, grid_width, grid_height) = *grid;
-    let width_f = width as f64;
-    let (ax, bx) = unwrap_segment_endpoints(ax, bx, ax, width_f);
-    let min_x = ax.min(bx) - POLYLINE_INDEX_MARGIN_PX;
-    let max_x = ax.max(bx) + POLYLINE_INDEX_MARGIN_PX;
-    let min_y = (ay.min(by) - POLYLINE_INDEX_MARGIN_PX).floor().max(0.0);
-    let max_y = (ay.max(by) + POLYLINE_INDEX_MARGIN_PX)
-        .ceil()
-        .min(height.saturating_sub(1) as f64);
-
-    let start_cell_x = (min_x / cell_size as f64).floor() as isize;
-    let end_cell_x = (max_x / cell_size as f64).floor() as isize;
-    let start_cell_y = (min_y / cell_size as f64).floor() as isize;
-    let end_cell_y = (max_y / cell_size as f64).floor() as isize;
-
-    let mut indices = Vec::new();
-    for cell_y in start_cell_y..=end_cell_y {
-        if !(0..grid_height as isize).contains(&cell_y) {
-            continue;
-        }
-        for cell_x in start_cell_x..=end_cell_x {
-            let wrapped_x = cell_x.rem_euclid(grid_width as isize) as usize;
-            indices.push(cell_y as usize * grid_width + wrapped_x);
-        }
-    }
-    indices
-}
-
 fn unwrap_segment_endpoints(ax: f64, bx: f64, px: f64, width: f64) -> (f64, f64) {
     let mut ax = ax;
     let mut bx = bx;
@@ -531,91 +476,6 @@ fn unwrap_segment_endpoints(ax: f64, bx: f64, px: f64, width: f64) -> (f64, f64)
     ax += shift * width;
     bx += shift * width;
     (ax, bx)
-}
-
-fn nearest_convergent_arc_sample(
-    row: usize,
-    col: usize,
-    query: &ArcQueryContext<'_>,
-) -> Option<ArcSample> {
-    let bucket_x = col / query.spatial_index.cell_size;
-    let bucket_y = row / query.spatial_index.cell_size;
-    let bucket_idx = bucket_y * query.spatial_index.grid_width
-        + bucket_x.min(query.spatial_index.grid_width - 1);
-    let candidates = &query.spatial_index.buckets[bucket_idx];
-    if candidates.is_empty() {
-        return None;
-    }
-
-    let px = col as f64;
-    let py = row as f64;
-    let lat_p = pixel_lat_rad(py, query.height);
-    let lon_p = pixel_lon_rad(px, query.width);
-    let mut best = None::<ArcSample>;
-
-    for &segment in candidates {
-        let polyline = &query.polylines[segment.polyline_idx];
-        let a = &polyline.vertices[segment.start_vertex];
-        let b = &polyline.vertices[(segment.start_vertex + 1) % polyline.vertices.len()];
-        let (ax, bx) = unwrap_segment_endpoints(a.x, b.x, px, query.width as f64);
-        let ay = a.y;
-        let by = b.y;
-        let dx = bx - ax;
-        let dy = by - ay;
-        let denom = dx * dx + dy * dy;
-        let t = if denom <= f64::EPSILON {
-            0.0
-        } else {
-            (((px - ax) * dx + (py - ay) * dy) / denom).clamp(0.0, 1.0)
-        };
-        let qx = ax + t * dx;
-        let qy = ay + t * dy;
-        let lat_q = pixel_lat_rad(
-            qy.clamp(0.0, query.height.saturating_sub(1) as f64),
-            query.height,
-        );
-        let lon_q = pixel_lon_rad(qx, query.width);
-        let distance_km = equirectangular_distance_km(lat_p, lon_p, lat_q, lon_q);
-        if distance_km >= CONVERGENT_QUERY_RADIUS_KM {
-            continue;
-        }
-
-        let convergent_rate = lerp_f32(a.convergent_rate, b.convergent_rate, t as f32);
-        if convergent_rate <= 0.0 {
-            continue;
-        }
-
-        let normal = normalize_2d((
-            lerp_f32(a.normal.0, b.normal.0, t as f32),
-            lerp_f32(a.normal.1, b.normal.1, t as f32),
-        ));
-        let east_km = normalize_lon_delta(lon_p - lon_q) * EARTH_RADIUS_KM * lat_q.cos();
-        let north_km = (lat_p - lat_q) * EARTH_RADIUS_KM;
-        let overriding_side = east_km * normal.0 as f64 + north_km * normal.1 as f64 >= 0.0;
-        let arc_start = polyline.arc_lengths[segment.start_vertex];
-        let arc_end = polyline.arc_lengths[(segment.start_vertex + 1) % polyline.arc_lengths.len()];
-        let arc_length_km = arc_start + (arc_end - arc_start) * t;
-        let along_strike_modulation = along_strike_modulation_km(
-            query.perlin,
-            query.seed,
-            segment.polyline_idx,
-            arc_length_km,
-        );
-
-        if best
-            .map(|current| distance_km < current.distance_km)
-            .unwrap_or(true)
-        {
-            best = Some(ArcSample {
-                distance_km,
-                convergent_rate,
-                overriding_side,
-                along_strike_modulation,
-            });
-        }
-    }
-
-    best
 }
 
 fn along_strike_modulation_km(
@@ -672,6 +532,359 @@ fn normalize_2d(vector: (f32, f32)) -> (f32, f32) {
     }
 }
 
+fn lerp_f64(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+// ── Convergent-arc wavefront field construction ────────────────────────────────
+
+fn bresenham_pixels(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
+    let mut pixels = Vec::new();
+    let dx = (x1 - x0).abs();
+    let dy = (y1 - y0).abs();
+    let sx: i32 = if x0 < x1 { 1 } else { -1 };
+    let sy: i32 = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+    let (mut x, mut y) = (x0, y0);
+    loop {
+        pixels.push((x, y));
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
+    pixels
+}
+
+/// Project pixel centre (px, py) onto segment (ax,ay)→(bx,by) in pixel
+/// coordinates.  ax and bx must already be unwrapped relative to px.
+/// Returns `(t ∈ [0,1], distance_km)`.
+#[allow(clippy::too_many_arguments)]
+fn project_onto_segment_km(
+    px: f64,
+    py: f64,
+    ax: f64,
+    ay: f64,
+    bx: f64,
+    by: f64,
+    width: usize,
+    height: usize,
+) -> (f64, f64) {
+    let sdx = bx - ax;
+    let sdy = by - ay;
+    let denom = sdx * sdx + sdy * sdy;
+    let t = if denom <= f64::EPSILON {
+        0.0_f64
+    } else {
+        ((px - ax) * sdx + (py - ay) * sdy) / denom
+    }
+    .clamp(0.0, 1.0);
+    let qx = ax + t * sdx;
+    let qy = ay + t * sdy;
+    let lat_p = pixel_lat_rad(py, height);
+    let lon_p = pixel_lon_rad(px, width);
+    let lat_q = pixel_lat_rad(qy.clamp(0.0, (height - 1) as f64), height);
+    let lon_q = pixel_lon_rad(qx, width);
+    (t, equirectangular_distance_km(lat_p, lon_p, lat_q, lon_q))
+}
+
+/// Build the convergent-arc wavefront field for all convergent polylines.
+///
+/// **Algorithm (three passes):**
+/// 1. *Rasterise* every convergent segment to seed pixels using Bresenham.
+///    Each seed pixel stores the segment whose foot-of-perpendicular is
+///    closest to that pixel.
+/// 2. *Dijkstra* propagates `(distance_km, segment_idx)` outward from all
+///    seeds simultaneously.  Each pixel inherits its segment from the seed
+///    whose wavefront arrives first, forming a segment-Voronoi diagram.
+///    Propagation stops at `CONVERGENT_QUERY_RADIUS_KM`.
+/// 3. *Refinement*: for each pixel, reproject its centre onto the segment
+///    assigned by Dijkstra to recover exact `(t, distance_km)` values,
+///    correcting the step-cost approximation accumulated during propagation.
+fn build_convergent_arc_field(
+    polylines: &[BoundaryPolyline],
+    width: usize,
+    height: usize,
+) -> (ConvergentArcField, ConvergentSegmentTable) {
+    let n = width * height;
+
+    // ── Pass 1: build the flat segment table and rasterise seeds. ─────────────
+    let mut seg_polyline_idx: Vec<u32> = Vec::new();
+    let mut seg_start_vertex: Vec<u32> = Vec::new();
+
+    let mut seed_dist = vec![f32::INFINITY; n];
+    let mut seed_seg = vec![u32::MAX; n];
+
+    for (pi, polyline) in polylines.iter().enumerate() {
+        if polyline.dominant_character != BoundaryType::Convergent
+            || polyline.vertices.len() < 2
+        {
+            continue;
+        }
+        let seg_count = polyline.vertices.len() - 1 + usize::from(polyline.is_closed);
+        for sv in 0..seg_count {
+            let seg_idx = seg_polyline_idx.len() as u32;
+            seg_polyline_idx.push(pi as u32);
+            seg_start_vertex.push(sv as u32);
+
+            let a = &polyline.vertices[sv];
+            let b = &polyline.vertices[(sv + 1) % polyline.vertices.len()];
+
+            // Unwrap bx relative to ax as the reference point for rasterisation.
+            let (ax_f, bx_f) = unwrap_segment_endpoints(a.x, b.x, a.x, width as f64);
+            let x0i = ax_f.round() as i32;
+            let y0i = a.y.round() as i32;
+            let x1i = bx_f.round() as i32;
+            let y1i = b.y.round() as i32;
+
+            for (px_uw, py) in bresenham_pixels(x0i, y0i, x1i, y1i) {
+                if py < 0 || py >= height as i32 {
+                    continue;
+                }
+                let col = px_uw.rem_euclid(width as i32) as usize;
+                let row = py as usize;
+                let pixel_idx = row * width + col;
+
+                // Re-unwrap relative to the pixel for an accurate projection.
+                let (ax_px, bx_px) =
+                    unwrap_segment_endpoints(a.x, b.x, col as f64, width as f64);
+                let (_, dist_km) = project_onto_segment_km(
+                    col as f64, row as f64, ax_px, a.y, bx_px, b.y, width, height,
+                );
+                let dist32 = dist_km as f32;
+                if dist32 < seed_dist[pixel_idx] {
+                    seed_dist[pixel_idx] = dist32;
+                    seed_seg[pixel_idx] = seg_idx;
+                }
+            }
+        }
+    }
+
+    // ── Pass 2: Dijkstra wavefront from all seed pixels. ──────────────────────
+    let mut heap = BinaryHeap::new();
+    for idx in 0..n {
+        if seed_dist[idx] < f32::INFINITY {
+            heap.push(WavefrontNode {
+                distance_km: seed_dist[idx],
+                idx,
+                segment_idx: seed_seg[idx],
+            });
+        }
+    }
+
+    while let Some(node) = heap.pop() {
+        if node.distance_km > seed_dist[node.idx] {
+            continue;
+        }
+        if node.distance_km as f64 >= CONVERGENT_QUERY_RADIUS_KM {
+            continue;
+        }
+        for (neighbor_opt, step_km) in wavefront_neighbors(node.idx, width, height) {
+            let Some(neighbor) = neighbor_opt else { continue };
+            let next_dist = node.distance_km + step_km;
+            if next_dist < seed_dist[neighbor] {
+                seed_dist[neighbor] = next_dist;
+                seed_seg[neighbor] = node.segment_idx;
+                heap.push(WavefrontNode {
+                    distance_km: next_dist,
+                    idx: neighbor,
+                    segment_idx: node.segment_idx,
+                });
+            }
+        }
+    }
+
+    // ── Pass 3: Refinement — exact reprojection onto the assigned segment. ────
+    let mut refined_dist = vec![f32::INFINITY; n];
+    let mut refined_t = vec![0.0_f32; n];
+
+    for idx in 0..n {
+        let seg_idx = seed_seg[idx];
+        if seg_idx == u32::MAX {
+            continue;
+        }
+        let pi = seg_polyline_idx[seg_idx as usize] as usize;
+        let sv = seg_start_vertex[seg_idx as usize] as usize;
+        let polyline = &polylines[pi];
+        let a = &polyline.vertices[sv];
+        let b = &polyline.vertices[(sv + 1) % polyline.vertices.len()];
+        let col = idx % width;
+        let row = idx / width;
+        let (ax_px, bx_px) =
+            unwrap_segment_endpoints(a.x, b.x, col as f64, width as f64);
+        let (t, dist_km) = project_onto_segment_km(
+            col as f64, row as f64, ax_px, a.y, bx_px, b.y, width, height,
+        );
+        refined_dist[idx] = dist_km as f32;
+        refined_t[idx] = t as f32;
+    }
+
+    let field = ConvergentArcField {
+        distance_km: refined_dist,
+        nearest_segment: seed_seg,
+        t_along_segment: refined_t,
+    };
+    let table = ConvergentSegmentTable {
+        polyline_idx: seg_polyline_idx,
+        start_vertex: seg_start_vertex,
+    };
+    (field, table)
+}
+
+fn ns_step_km(height: usize) -> f32 {
+    (std::f64::consts::PI * EARTH_RADIUS_KM / height as f64) as f32
+}
+
+fn ew_step_km(row: usize, width: usize, height: usize) -> f32 {
+    let lat_deg = 90.0 - (row as f64 + 0.5) * 180.0 / height as f64;
+    let lat_cos = lat_deg.to_radians().cos().max(1e-4);
+    (2.0 * std::f64::consts::PI * EARTH_RADIUS_KM / width as f64 * lat_cos) as f32
+}
+
+fn wavefront_neighbors(idx: usize, width: usize, height: usize) -> [(Option<usize>, f32); 8] {
+    let row = idx / width;
+    let col = idx % width;
+    let ns = ns_step_km(height);
+    let ew = ew_step_km(row, width, height);
+    let diag = ns.hypot(ew);
+    [
+        (
+            if row > 0 {
+                Some((row - 1) * width + col)
+            } else {
+                None
+            },
+            ns,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + col)
+            } else {
+                None
+            },
+            ns,
+        ),
+        (
+            Some(row * width + if col > 0 { col - 1 } else { width - 1 }),
+            ew,
+        ),
+        (
+            Some(row * width + if col + 1 < width { col + 1 } else { 0 }),
+            ew,
+        ),
+        (
+            if row > 0 {
+                Some((row - 1) * width + if col > 0 { col - 1 } else { width - 1 })
+            } else {
+                None
+            },
+            diag,
+        ),
+        (
+            if row > 0 {
+                Some((row - 1) * width + if col + 1 < width { col + 1 } else { 0 })
+            } else {
+                None
+            },
+            diag,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + if col > 0 { col - 1 } else { width - 1 })
+            } else {
+                None
+            },
+            diag,
+        ),
+        (
+            if row + 1 < height {
+                Some((row + 1) * width + if col + 1 < width { col + 1 } else { 0 })
+            } else {
+                None
+            },
+            diag,
+        ),
+    ]
+}
+
+/// Sample the precomputed convergent-arc field at pixel `idx`.
+///
+/// All per-pixel arc metadata (convergent_rate, normal, overriding_side,
+/// arc_length_km, along_strike_modulation) is derived from the stored
+/// `nearest_segment` and `t_along_segment` at sample time, so the field
+/// itself is compact (3 × f32 per pixel).
+#[allow(clippy::too_many_arguments)]
+fn sample_convergent_arc_field(
+    idx: usize,
+    width: usize,
+    height: usize,
+    field: &ConvergentArcField,
+    segments: &ConvergentSegmentTable,
+    polylines: &[BoundaryPolyline],
+    perlin: &Perlin,
+    seed: u64,
+) -> Option<ArcSample> {
+    if field.distance_km[idx] as f64 >= CONVERGENT_QUERY_RADIUS_KM {
+        return None;
+    }
+    let seg_idx = field.nearest_segment[idx];
+    if seg_idx == u32::MAX {
+        return None;
+    }
+    let t = field.t_along_segment[idx] as f64;
+    let pi = segments.polyline_idx[seg_idx as usize] as usize;
+    let sv = segments.start_vertex[seg_idx as usize] as usize;
+    let polyline = &polylines[pi];
+    let a = &polyline.vertices[sv];
+    let b = &polyline.vertices[(sv + 1) % polyline.vertices.len()];
+
+    let convergent_rate = lerp_f32(a.convergent_rate, b.convergent_rate, t as f32);
+    if convergent_rate <= 0.0 {
+        return None;
+    }
+
+    let normal = normalize_2d((
+        lerp_f32(a.normal.0, b.normal.0, t as f32),
+        lerp_f32(a.normal.1, b.normal.1, t as f32),
+    ));
+
+    // Overriding side: dot product of (pixel → foot-of-perpendicular) with the
+    // interpolated boundary normal.
+    let col = idx % width;
+    let row = idx / width;
+    let lat_p = pixel_lat_rad(row as f64, height);
+    let lon_p = pixel_lon_rad(col as f64, width);
+    let (ax_px, bx_px) = unwrap_segment_endpoints(a.x, b.x, col as f64, width as f64);
+    let qx = ax_px + t * (bx_px - ax_px);
+    let qy = a.y + t * (b.y - a.y);
+    let lat_q = pixel_lat_rad(qy.clamp(0.0, (height - 1) as f64), height);
+    let lon_q = pixel_lon_rad(qx, width);
+    let east_km = normalize_lon_delta(lon_p - lon_q) * EARTH_RADIUS_KM * lat_q.cos();
+    let north_km = (lat_p - lat_q) * EARTH_RADIUS_KM;
+    let overriding_side = east_km * normal.0 as f64 + north_km * normal.1 as f64 >= 0.0;
+
+    let arc_start = polyline.arc_lengths[sv];
+    let arc_end = polyline.arc_lengths[(sv + 1) % polyline.arc_lengths.len()];
+    let arc_length_km = lerp_f64(arc_start, arc_end, t);
+    let along_strike_modulation =
+        along_strike_modulation_km(perlin, seed, pi, arc_length_km);
+
+    Some(ArcSample {
+        distance_km: field.distance_km[idx] as f64,
+        convergent_rate,
+        overriding_side,
+        along_strike_modulation,
+    })
+}
+
 /// Generate a structural elevation field from `PlateSimulation` outputs.
 pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32> {
     let width = plates.width;
@@ -702,15 +915,8 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
 
     let ridge_distance_km = &plates.divergent_distance_km;
     let hotspot_distance_km = nearest_hotspot_distance_km(&cell_points, &plates.hotspots);
-    let polyline_index = build_convergent_polyline_index(&plates.boundary_polylines, width, height);
-    let arc_query = ArcQueryContext {
-        width,
-        height,
-        spatial_index: &polyline_index,
-        polylines: &plates.boundary_polylines,
-        perlin: &perlin,
-        seed,
-    };
+    let (convergent_arc_field, convergent_segment_table) =
+        build_convergent_arc_field(&plates.boundary_polylines, width, height);
 
     let continent_seeds: Vec<bool> = plates
         .crust_field
@@ -759,9 +965,14 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
             );
         }
 
-        let row = idx / width;
-        let col = idx % width;
-        let arc_sample = nearest_convergent_arc_sample(row, col, &arc_query);
+        let arc_sample = sample_convergent_arc_field(
+            idx, width, height,
+            &convergent_arc_field,
+            &convergent_segment_table,
+            &plates.boundary_polylines,
+            &perlin,
+            seed,
+        );
         if let Some(sample) = arc_sample {
             let shortening = compressional_shortening_factor(
                 sample.distance_km,
@@ -1213,6 +1424,112 @@ mod tests {
             std_dev > 0.15,
             "cratonic interior std_dev={std_dev:.3} km should exceed 0.15 km \
              — province noise must produce visible internal variation"
+        );
+    }
+
+    /// Regression test for the cross-sector arc-length discontinuity found in
+    /// the elevation artifact diagnostic (Hypothesis 2).
+    ///
+    /// The old per-pixel bucket lookup could assign arc-length positions > 2000 km
+    /// apart to adjacent pixels on the same convergent polyline. The wavefront
+    /// Dijkstra eliminates this: every pixel inherits its segment from a contiguous
+    /// propagating front, so same-polyline adjacent pixels can only differ by at
+    /// most the arc span of a few geometrically adjacent Voronoi cells — well below
+    /// the catastrophic 2154 km jump the old code produced.
+    ///
+    /// Threshold 2500 km: above the 1730 km legitimate Voronoi-boundary transitions
+    /// seen at coarse 128×64 resolution (a long polyline curves back on itself, so
+    /// its two arms are geometrically equidistant and the Voronoi boundary can
+    /// produce a large arc-length jump — geometrically correct behavior). Below the
+    /// catastrophic jumps the old bucket code would produce at this resolution: with
+    /// 8× fewer pixels per segment than at 1024×512, each bucket contains more
+    /// segments, making the old code's cross-sector picks even larger than the
+    /// 2154 km case observed at full resolution.
+    #[test]
+    fn wavefront_eliminates_cross_sector_arc_jumps() {
+        let plates = make_plates(42);
+        let width = plates.width;
+        let height = plates.height;
+
+        let (field, segments) =
+            build_convergent_arc_field(&plates.boundary_polylines, width, height);
+
+        // Precompute arc_length_km for each valid pixel.
+        let arc_km: Vec<Option<f64>> = (0..width * height)
+            .map(|idx| {
+                let seg_idx = field.nearest_segment[idx];
+                if seg_idx == u32::MAX
+                    || field.distance_km[idx] as f64 >= CONVERGENT_QUERY_RADIUS_KM
+                {
+                    return None;
+                }
+                let t = field.t_along_segment[idx] as f64;
+                let pi = segments.polyline_idx[seg_idx as usize] as usize;
+                let sv = segments.start_vertex[seg_idx as usize] as usize;
+                let polyline = &plates.boundary_polylines[pi];
+                let arc_start = polyline.arc_lengths[sv];
+                let arc_end =
+                    polyline.arc_lengths[(sv + 1) % polyline.arc_lengths.len()];
+                Some(arc_start + (arc_end - arc_start) * t)
+            })
+            .collect();
+
+        let mut max_jump = 0.0_f64;
+        let mut catastrophic = 0_usize;
+
+        for row in 0..height {
+            for col in 0..width {
+                let idx = row * width + col;
+                let seg_here = field.nearest_segment[idx];
+                if seg_here == u32::MAX
+                    || field.distance_km[idx] as f64 >= CONVERGENT_QUERY_RADIUS_KM
+                {
+                    continue;
+                }
+                let poly_here = segments.polyline_idx[seg_here as usize] as usize;
+                let Some(km_here) = arc_km[idx] else {
+                    continue;
+                };
+
+                // Check horizontal neighbour (wrap longitude).
+                let idx_e = row * width + (col + 1) % width;
+                if let Some(km_e) = arc_km[idx_e] {
+                    let seg_e = field.nearest_segment[idx_e];
+                    if seg_e != u32::MAX
+                        && segments.polyline_idx[seg_e as usize] as usize == poly_here
+                    {
+                        let jump = (km_here - km_e).abs();
+                        max_jump = max_jump.max(jump);
+                        if jump > 2500.0 {
+                            catastrophic += 1;
+                        }
+                    }
+                }
+
+                // Check vertical neighbour (no wrap at poles).
+                if row + 1 < height {
+                    let idx_s = (row + 1) * width + col;
+                    if let Some(km_s) = arc_km[idx_s] {
+                        let seg_s = field.nearest_segment[idx_s];
+                        if seg_s != u32::MAX
+                            && segments.polyline_idx[seg_s as usize] as usize == poly_here
+                        {
+                            let jump = (km_here - km_s).abs();
+                            max_jump = max_jump.max(jump);
+                            if jump > 2500.0 {
+                                catastrophic += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            catastrophic,
+            0,
+            "wavefront should eliminate cross-sector arc-length jumps > 2500 km; \
+             max same-polyline adjacent-pixel jump was {max_jump:.0} km"
         );
     }
 
