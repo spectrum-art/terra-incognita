@@ -27,6 +27,10 @@ const OCEANIC_BASE_THICKNESS_KM: f32 = 7.0;
 const CONTINENTAL_BASE_THICKNESS_KM: f32 = 35.0;
 
 const CONVERGENT_QUERY_RADIUS_KM: f64 = 1500.0;
+/// Half-width of the smooth overriding/subducting side transition in km.
+/// The full transition (side_weight 0→1) spans ±SIDE_TRANSITION_WIDTH_KM
+/// (~160 km total), eliminating the zigzag artifact at the boundary plane.
+const SIDE_TRANSITION_WIDTH_KM: f64 = 80.0;
 const COMPRESSION_SIGMA_KM: f64 = 500.0;
 const VOLCANIC_ARC_SIGMA_KM: f64 = 120.0;
 const RIDGE_RIFT_INFLUENCE_KM: f64 = 300.0;
@@ -109,7 +113,10 @@ const PROVINCE_CONVERGENT_THRESHOLD_CM_YR: f32 = 1.0;
 struct ArcSample {
     distance_km: f64,
     convergent_rate: f32,
-    overriding_side: bool,
+    /// Continuous side weight: 1.0 = fully overriding side,
+    /// 0.0 = fully subducting side. Smooth transition over
+    /// SIDE_TRANSITION_WIDTH_KM centered on the boundary plane.
+    side_weight: f32,
     along_strike_modulation: f32,
 }
 
@@ -259,17 +266,14 @@ fn convergent_rate_scale(convergent_rate_cm_yr: f32) -> f32 {
 fn compressional_shortening_factor(
     distance_km: f64,
     convergent_rate_cm_yr: f32,
-    overriding_side: bool,
+    side_weight: f32,
 ) -> f32 {
     let rate_scale = convergent_rate_scale(convergent_rate_cm_yr);
     if rate_scale <= 0.0 {
         return 0.0;
     }
-    let side_scale = if overriding_side {
-        1.0
-    } else {
-        SUBDUCTING_SIDE_SHORTENING_SCALE
-    };
+    let side_scale =
+        SUBDUCTING_SIDE_SHORTENING_SCALE + (1.0 - SUBDUCTING_SIDE_SHORTENING_SCALE) * side_weight;
     MAX_COMPRESSIONAL_SHORTENING
         * rate_scale
         * side_scale
@@ -280,9 +284,9 @@ fn volcanic_arc_addition_km(
     distance_km: f64,
     convergent_rate_cm_yr: f32,
     along_strike_modulation: f32,
-    overriding_side: bool,
+    side_weight: f32,
 ) -> f32 {
-    if !overriding_side {
+    if side_weight <= 0.0 {
         return 0.0;
     }
     let rate_scale = convergent_rate_scale(convergent_rate_cm_yr);
@@ -292,6 +296,7 @@ fn volcanic_arc_addition_km(
     MAX_VOLCANIC_ARC_ADDITION_KM
         * rate_scale
         * along_strike_modulation.max(0.0)
+        * side_weight
         * gaussian_taper(distance_km, VOLCANIC_ARC_SIGMA_KM)
 }
 
@@ -817,7 +822,7 @@ fn wavefront_neighbors(idx: usize, width: usize, height: usize) -> [(Option<usiz
 
 /// Sample the precomputed convergent-arc field at pixel `idx`.
 ///
-/// All per-pixel arc metadata (convergent_rate, normal, overriding_side,
+/// All per-pixel arc metadata (convergent_rate, normal, side_weight,
 /// arc_length_km, along_strike_modulation) is derived from the stored
 /// `nearest_segment` and `t_along_segment` at sample time, so the field
 /// itself is compact (3 × f32 per pixel).
@@ -869,7 +874,9 @@ fn sample_convergent_arc_field(
     let lon_q = pixel_lon_rad(qx, width);
     let east_km = normalize_lon_delta(lon_p - lon_q) * EARTH_RADIUS_KM * lat_q.cos();
     let north_km = (lat_p - lat_q) * EARTH_RADIUS_KM;
-    let overriding_side = east_km * normal.0 as f64 + north_km * normal.1 as f64 >= 0.0;
+    let side_dot_km = east_km * normal.0 as f64 + north_km * normal.1 as f64;
+    let side_t = (side_dot_km / SIDE_TRANSITION_WIDTH_KM).clamp(-1.0, 1.0);
+    let side_weight = smoothstep01((side_t * 0.5 + 0.5) as f32);
 
     let arc_start = polyline.arc_lengths[sv];
     let arc_end = polyline.arc_lengths[(sv + 1) % polyline.arc_lengths.len()];
@@ -880,7 +887,7 @@ fn sample_convergent_arc_field(
     Some(ArcSample {
         distance_km: field.distance_km[idx] as f64,
         convergent_rate,
-        overriding_side,
+        side_weight,
         along_strike_modulation,
     })
 }
@@ -977,14 +984,14 @@ pub fn generate_planet_elevation(plates: &PlateSimulation, seed: u64) -> Vec<f32
             let shortening = compressional_shortening_factor(
                 sample.distance_km,
                 sample.convergent_rate,
-                sample.overriding_side,
+                sample.side_weight,
             );
             thickness_km *= 1.0 + shortening;
             thickness_km += volcanic_arc_addition_km(
                 sample.distance_km,
                 sample.convergent_rate,
                 sample.along_strike_modulation,
-                sample.overriding_side,
+                sample.side_weight,
             );
         }
 
@@ -1243,9 +1250,9 @@ mod tests {
     #[test]
     fn continental_convergence_outruns_oceanic_island_arc() {
         let shortening =
-            compressional_shortening_factor(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, true);
+            compressional_shortening_factor(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, 1.0);
         let arc_addition =
-            volcanic_arc_addition_km(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, 1.0, true);
+            volcanic_arc_addition_km(0.0, CONVERGENT_REFERENCE_RATE_CM_YR, 1.0, 1.0);
         let continental_thickness =
             CONTINENTAL_BASE_THICKNESS_KM * (1.0 + shortening) + arc_addition;
         let oceanic_thickness = OCEANIC_BASE_THICKNESS_KM * (1.0 + shortening) + arc_addition;
@@ -1530,6 +1537,186 @@ mod tests {
             0,
             "wavefront should eliminate cross-sector arc-length jumps > 2500 km; \
              max same-polyline adjacent-pixel jump was {max_jump:.0} km"
+        );
+    }
+
+    /// Re-run of the Hypothesis-2 perpendicular probe on the production wavefront field.
+    ///
+    /// Walks ±20 pixels in the boundary-normal direction across Polyline A (longest)
+    /// and Polyline B (second-longest) for seed 42, and reports the six quality
+    /// metrics from the original H2 diagnostic.
+    ///
+    /// Previous values (per-pixel bucket lookup, 1024×512):
+    ///   Polyline A: flips=2, switches=2,  max_jump=2154 km, >80km=1, mean_mod=0.0499, max_mod=0.0713
+    ///   Polyline B: flips=1, switches=17, max_jump=223 km,  >80km=5, mean_mod=0.0386, max_mod=0.2401
+    ///
+    /// Hard assertion: no arc-length jumps > 1000 km on the same polyline (the old
+    /// bucket code produced 2154 km; the wavefront eliminates catastrophic jumps).
+    ///
+    /// Run with `cargo test h2_wavefront_probe -- --nocapture` to see full output.
+    #[test]
+    fn h2_wavefront_probe() {
+        // 256×128 gives ~156 km/pixel; the 1500 km arc influence zone spans ≈10 px each side.
+        let plates = simulate_plates(42, 0.5, 0.5, 256, 128);
+        let width = plates.width;
+        let height = plates.height;
+        let (field, segments) =
+            build_convergent_arc_field(&plates.boundary_polylines, width, height);
+        let perlin = Perlin::new((42_u64 ^ 0x15_05_7A_71) as u32);
+
+        // Rank convergent polylines by total arc length, descending.
+        let mut convergent: Vec<(usize, f64)> = plates
+            .boundary_polylines
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.dominant_character == BoundaryType::Convergent)
+            .map(|(i, p)| (i, *p.arc_lengths.last().unwrap_or(&0.0)))
+            .collect();
+        convergent.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut all_pass = true;
+
+        for (rank, &(pi, total_arc)) in convergent.iter().take(2).enumerate() {
+            let polyline = &plates.boundary_polylines[pi];
+            let label = if rank == 0 { "A (longest)" } else { "B (second-longest)" };
+
+            // Find the vertex closest to the arc midpoint.
+            let mid_arc = total_arc / 2.0;
+            let mid_v = polyline
+                .arc_lengths
+                .iter()
+                .enumerate()
+                .min_by(|(_, &a), (_, &b)| {
+                    (a - mid_arc).abs().partial_cmp(&(b - mid_arc).abs()).unwrap()
+                })
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+                .min(polyline.vertices.len().saturating_sub(2));
+
+            let v = &polyline.vertices[mid_v];
+            // Boundary normal (E→+col, N→−row) as a unit vector in pixel space.
+            let nx = v.normal.0 as f64;
+            let ny = -(v.normal.1 as f64);
+            let nlen = (nx * nx + ny * ny).sqrt().max(1e-9);
+            let dx = nx / nlen;
+            let dy = ny / nlen;
+            let cx = v.x;
+            let cy = v.y;
+
+            let mut overriding_flips = 0_usize;
+            let mut seg_switches = 0_usize;
+            let mut max_arc_jump = 0.0_f64;
+            let mut jumps_gt_80 = 0_usize;
+            let mut mod_changes_at_switches: Vec<f32> = Vec::new();
+
+            let mut prev_overriding: Option<f32> = None;
+            let mut prev_seg: Option<u32> = None;
+            let mut prev_poly: Option<usize> = None;
+            let mut prev_arc_km: Option<f64> = None;
+            let mut prev_mod: Option<f32> = None;
+
+            for t in -20_i32..=20 {
+                let px = (cx + t as f64 * dx).round() as isize;
+                let py = (cy + t as f64 * dy).round() as isize;
+                if px < 0 || py < 0 || px >= width as isize || py >= height as isize {
+                    prev_overriding = None;
+                    prev_seg = None;
+                    prev_poly = None;
+                    prev_arc_km = None;
+                    prev_mod = None;
+                    continue;
+                }
+                let idx = py as usize * width + px as usize;
+                let cur_seg = field.nearest_segment[idx];
+                let sample = sample_convergent_arc_field(
+                    idx, width, height, &field, &segments,
+                    &plates.boundary_polylines, &perlin, 42,
+                );
+
+                if let Some(s) = sample {
+                    let cur_poly = segments.polyline_idx[cur_seg as usize] as usize;
+                    let sv = segments.start_vertex[cur_seg as usize] as usize;
+                    let pl = &plates.boundary_polylines[cur_poly];
+                    let t_val = field.t_along_segment[idx] as f64;
+                    let arc_km = pl.arc_lengths[sv]
+                        + (pl.arc_lengths[(sv + 1) % pl.arc_lengths.len()]
+                            - pl.arc_lengths[sv])
+                            * t_val;
+
+                    if let Some(prev_s) = prev_seg {
+                        if cur_seg != prev_s {
+                            seg_switches += 1;
+                            // Only compare arc positions within the same polyline.
+                            if Some(cur_poly) == prev_poly {
+                                if let (Some(prev_a), Some(prev_m)) = (prev_arc_km, prev_mod) {
+                                    let jump = (arc_km - prev_a).abs();
+                                    max_arc_jump = max_arc_jump.max(jump);
+                                    if jump > 80.0 {
+                                        jumps_gt_80 += 1;
+                                    }
+                                    mod_changes_at_switches
+                                        .push((s.along_strike_modulation - prev_m).abs());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(prev_o) = prev_overriding {
+                        // Count a "flip" when side_weight crosses 0.5 (the boundary plane).
+                        if (prev_o < 0.5) != (s.side_weight < 0.5) {
+                            overriding_flips += 1;
+                        }
+                    }
+
+                    prev_overriding = Some(s.side_weight);
+                    prev_seg = Some(cur_seg);
+                    prev_poly = Some(cur_poly);
+                    prev_arc_km = Some(arc_km);
+                    prev_mod = Some(s.along_strike_modulation);
+                } else {
+                    prev_overriding = None;
+                    prev_seg = None;
+                    prev_poly = None;
+                    prev_arc_km = None;
+                    prev_mod = None;
+                }
+            }
+
+            let mean_mod = if mod_changes_at_switches.is_empty() {
+                0.0_f32
+            } else {
+                mod_changes_at_switches.iter().sum::<f32>()
+                    / mod_changes_at_switches.len() as f32
+            };
+            let max_mod = mod_changes_at_switches
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max);
+
+            println!("Polyline {label} (index {pi}, {total_arc:.0} km):");
+            println!("  side_weight>0.5 flips : {overriding_flips}  [prev A=2 B=1 | target: 1]");
+            println!("  segment switches      : {seg_switches}  [prev A=2 B=17]");
+            println!("  max arc-length jump   : {max_arc_jump:.0} km  [prev A=2154 B=223 | target: <80]");
+            println!("  jumps > 80 km         : {jumps_gt_80}  [prev A=1 B=5 | target: 0]");
+            println!(
+                "  mean mod at switches  : {mean_mod:.4}  [prev A=0.0499 B=0.0386 | target: <0.05]"
+            );
+            println!(
+                "  max mod at switches   : {max_mod:.4}  [prev A=0.0713 B=0.2401 | target: <0.10]"
+            );
+            println!();
+
+            // Hard assertion: no catastrophic cross-sector jumps (old code: 2154 km).
+            if max_arc_jump > 1000.0 {
+                eprintln!(
+                    "FAIL Polyline {label}: catastrophic arc jump {max_arc_jump:.0} km > 1000 km"
+                );
+                all_pass = false;
+            }
+        }
+
+        assert!(
+            all_pass,
+            "wavefront produced a catastrophic arc-length jump — see output above"
         );
     }
 
