@@ -462,3 +462,26 @@ code's catastrophic case at this resolution would be ~4000+ km (8× larger bucke
 This fix targets *smoothness*, not amplitude.
 
 **226 tests, 0 clippy warnings.** Commit 58369f4.
+
+## Entry 31 — 2026-04-10 — Smooth Overriding-Side Transition (Prompt 12)
+
+**Root cause:** `ArcSample.overriding_side: bool` drove a hard binary switch in both kernel functions:
+- `compressional_shortening_factor`: `side_scale` jumped from 1.0 to 0.4 (60% drop at the boundary plane)
+- `volcanic_arc_addition_km`: switched from full amplitude to zero (100% on/off)
+
+This created a zigzag line of maximum elevation discontinuity wherever the pixel→boundary-foot dot product crossed zero, snaking along the convergent belt as polyline normals vary.
+
+**Fix:** Replace `overriding_side: bool` with `side_weight: f32` computed via smoothstep:
+- `side_dot_km = pixel · interpolated_normal` (signed perpendicular distance from boundary plane, in km)
+- `side_t = clamp(side_dot_km / SIDE_TRANSITION_WIDTH_KM, -1, 1)` — normalize to [-1, 1]
+- `side_weight = smoothstep01(side_t * 0.5 + 0.5)` — S-curve from 0 (subducting) to 1 (overriding)
+- `SIDE_TRANSITION_WIDTH_KM = 80.0` (full transition spans ±80 km ≈ ±2 pixels at 1024×512)
+
+`compressional_shortening_factor`: `side_scale = lerp(0.4, 1.0, side_weight)`.
+`volcanic_arc_addition_km`: multiply result by `side_weight` (fades arc amplitude smoothly).
+
+**Quantitative (all three seeds):** Land fraction 35%, max elevation 9.7–9.8 km, AC-CS delta positive — all within spec. The smooth boundary replaces the hard discontinuity without changing amplitude.
+
+**Note on visible diagnostics:** At 1024×512 (≈39 km/pixel), the 160 km transition zone is ~4 pixels, so the effect is subtle in the overview renders. The "lightning bolt" features visible in the ocean in the grayscale diagnostic are hotspot edifice chains (2.2 km uplift on ~0.5 km ocean floor background), not overriding-side artifacts — unchanged by this fix.
+
+**227 tests, 0 clippy warnings.** Commit 2db9d9c.
